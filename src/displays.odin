@@ -87,8 +87,8 @@ parse_preset :: proc(path: string) -> (p: Preset, ok: bool) {
 				o.enabled = true
 			case "pos", "position":
 				if i + 2 < len(f) {
-					o.x = i32(strconv.parse_int(f[i + 1]) or_else 0)
-					o.y = i32(strconv.parse_int(f[i + 2]) or_else 0)
+					o.x = i32(shell_int(f[i + 1]))
+					o.y = i32(shell_int(f[i + 2]))
 					i += 2
 				}
 			case "res", "resolution", "mode":
@@ -123,12 +123,19 @@ parse_preset :: proc(path: string) -> (p: Preset, ok: bool) {
 	return p, true
 }
 
-displays_scan :: proc() {
-	for &p in displays.presets {
-		for o in p.outputs {delete(o.name)}
-		delete(p.outputs)
-		delete(p.path); delete(p.name); delete(p.label)
+preset_destroy :: proc(p: ^Preset) {
+	for o in p.outputs {
+		delete(o.name)
+		if o.transform != "normal" {delete(o.transform)}
 	}
+	delete(p.outputs)
+	delete(p.path)
+	delete(p.name)
+	delete(p.label)
+}
+
+displays_scan :: proc() {
+	for &p in displays.presets {preset_destroy(&p)}
 	clear(&displays.presets)
 	seen: map[string]bool
 	defer delete(seen)
@@ -154,6 +161,83 @@ displays_scan :: proc() {
 		}
 	}
 	displays.selected = displays_active_preset()
+}
+
+// Integer literal or shell arithmetic like `$((3440+1440))`.
+shell_int :: proc(s: string) -> int {
+	str := s
+	if strings.has_prefix(str, "$((") && strings.has_suffix(str, "))") {
+		str = str[3:len(str) - 2]
+	}
+	p := Expr_Parser{src = str}
+	v := expr_sum(&p)
+	return v
+}
+
+@(private = "file")
+Expr_Parser :: struct {
+	src: string,
+	pos: int,
+}
+
+@(private = "file")
+expr_peek :: proc(p: ^Expr_Parser) -> u8 {
+	for p.pos < len(p.src) && p.src[p.pos] == ' ' {p.pos += 1}
+	return p.pos < len(p.src) ? p.src[p.pos] : 0
+}
+
+@(private = "file")
+expr_sum :: proc(p: ^Expr_Parser) -> int {
+	v := expr_product(p)
+	for {
+		switch expr_peek(p) {
+		case '+':
+			p.pos += 1
+			v += expr_product(p)
+		case '-':
+			p.pos += 1
+			v -= expr_product(p)
+		case:
+			return v
+		}
+	}
+}
+
+@(private = "file")
+expr_product :: proc(p: ^Expr_Parser) -> int {
+	v := expr_atom(p)
+	for {
+		switch expr_peek(p) {
+		case '*':
+			p.pos += 1
+			v *= expr_atom(p)
+		case '/':
+			p.pos += 1
+			d := expr_atom(p)
+			v = d != 0 ? v / d : 0
+		case:
+			return v
+		}
+	}
+}
+
+@(private = "file")
+expr_atom :: proc(p: ^Expr_Parser) -> int {
+	c := expr_peek(p)
+	if c == '(' {
+		p.pos += 1
+		v := expr_sum(p)
+		if expr_peek(p) == ')' {p.pos += 1}
+		return v
+	}
+	if c == '-' {
+		p.pos += 1
+		return -expr_atom(p)
+	}
+	start := p.pos
+	for p.pos < len(p.src) && p.src[p.pos] >= '0' && p.src[p.pos] <= '9' {p.pos += 1}
+	v, _ := strconv.parse_int(p.src[start:p.pos])
+	return v
 }
 
 // Logical size of a preset output, using the current mode when the preset

@@ -3,6 +3,7 @@
 #   ./build.sh            release build  -> build/wlwidgets
 #   ./build.sh debug      debug build
 #   ./build.sh run [...]  build (debug) and run with args
+#   ./build.sh test       run unit tests
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT=$PWD
@@ -59,6 +60,7 @@ PROTOCOLS=(
 	$P/staging/fractional-scale/fractional-scale-v1.xml
 	$P/staging/single-pixel-buffer/single-pixel-buffer-v1.xml
 	$WLR/wlr-layer-shell-unstable-v1.xml
+	$WLR/wlr-virtual-pointer-unstable-v1.xml # only used by tools/vptr (UI tests)
 )
 odin build tools/wlscan -out:build/wlscan -o:speed
 ./build/wlscan src/wl wl "${PROTOCOLS[@]}"
@@ -68,9 +70,14 @@ MODE=${1:-release}
 FLAGS=(-collection:third_party=third_party -define:DEFAULT_TEMP_ALLOCATOR_BACKING_SIZE=262144 -extra-linker-flags:"$(pkg-config --libs freetype2)")
 case $MODE in
 	debug|run) FLAGS+=(-debug -o:none) ;;
+	test)
+		odin test src -out:build/wlwidgets-test "${FLAGS[@]}" -debug
+		exit $?
+		;;
 	*)         FLAGS+=(-o:speed) ;;
 esac
 odin build src -out:build/wlwidgets "${FLAGS[@]}"
+odin build tools/vptr -out:build/vptr -o:speed
 echo ">> built build/wlwidgets"
 
 if [[ $MODE == run ]]; then

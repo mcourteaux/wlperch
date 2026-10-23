@@ -217,6 +217,7 @@ pointer_listener := wl.Pointer_Listener {
 		context = g_ctx
 		plat.pointer_serial = serial
 		plat.pointer_surface = surface
+		log.debugf("pointer enter %.0f,%.0f", wl.fixed_to_f64(x), wl.fixed_to_f64(y))
 		if surface != plat.surface {
 			if plat.cursor_device != nil {
 				wl.wp_cursor_shape_device_v1_set_shape(plat.cursor_device, serial, wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT)
@@ -246,6 +247,7 @@ pointer_listener := wl.Pointer_Listener {
 	},
 	button = proc "c" (data: rawptr, self: ^wl.Pointer, serial, t, button, state: u32) {
 		context = g_ctx
+		log.debugf("pointer button %x state %d on %s", button, state, plat.pointer_surface == plat.surface ? "popup" : plat.pointer_surface == plat.catcher && plat.catcher != nil ? "backdrop" : "other")
 		if plat.pointer_surface != plat.surface {
 			if plat.pointer_surface != nil && plat.pointer_surface == plat.catcher && state == wl.POINTER_BUTTON_STATE_PRESSED {
 				plat.outside_click = true
