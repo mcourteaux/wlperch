@@ -720,6 +720,11 @@ ip_row :: proc(id, icon, name, value: string, highlight, copyable: bool, small :
 // ---- Bluetooth --------------------------------------------------------------
 
 draw_bluetooth :: proc(w: f32) {
+	// No BlueZ or no adapter: no Bluetooth support, so no card at all.
+	{
+		sync.guard(&bluetooth.mu)
+		if !bluetooth.ok || !bluetooth.adapter {return}
+	}
 	card_begin("bluetooth", w)
 	defer card_end()
 
@@ -728,13 +733,11 @@ draw_bluetooth :: proc(w: f32) {
 	sync.mutex_lock(&bluetooth.mu)
 	connected := 0
 	for d in bluetooth.devices {if d.connected {connected += 1}}
-	right := bluetooth.ok ? (bluetooth.powered ? fmt.tprintf("%d connected", connected) : "off") : ""
+	right := bluetooth.powered ? fmt.tprintf("%d connected", connected) : "off"
 	card_title(ICON_BLUETOOTH, "Bluetooth", C_BLUE, right)
 
 	inner := im.GetContentRegionAvail().x
 	switch {
-	case !bluetooth.ok:
-		label(fonts.ui, SZ_BODY, col32(C_MUTED), "BlueZ not available")
 	case !bluetooth.powered:
 		label(fonts.ui, SZ_BODY, col32(C_MUTED), "Bluetooth is powered off")
 	case len(bluetooth.devices) == 0:

@@ -23,6 +23,7 @@ Bluetooth :: struct {
 	mu:        sync.Mutex,
 	ok:        bool,
 	powered:   bool,
+	adapter:   bool, // at least one Bluetooth adapter present
 	devices:   [dynamic]BT_Device,
 	busy:      string, // address of a device being (dis)connected
 }
@@ -87,8 +88,7 @@ upower_batteries :: proc() -> [dynamic]UPower_Battery {
 	return out
 }
 
-@(private = "file")
-refresh :: proc() {
+bluetooth_refresh_now :: proc() {
 	out, ok := run({"busctl", "--system", "--json=short", "call", "org.bluez", "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects"}, 3 * time.Second, context.temp_allocator)
 	if !ok {
 		sync.guard(&bluetooth.mu)
@@ -105,10 +105,12 @@ refresh :: proc() {
 	}
 	clear(&bluetooth.devices)
 	bluetooth.powered = false
+	bluetooth.adapter = false
 	if len(objs) == 0 {return}
 	root, _ := objs[0].(json.Object)
 	for path, ifaces in root {
 		if adapter := jobj(ifaces, "org.bluez.Adapter1"); adapter != nil {
+			bluetooth.adapter = true
 			if jbool(dbus_data(jobj(adapter, "Powered"))) {bluetooth.powered = true}
 		}
 		dev := jobj(ifaces, "org.bluez.Device1")
@@ -177,7 +179,7 @@ bluetooth_toggle_connection :: proc(address: string, connect: bool) {
 bluetooth_start :: proc() {
 	thread.create_and_start(proc() {
 		for {
-			refresh()
+			bluetooth_refresh_now()
 			wake_ui()
 			free_all(context.temp_allocator)
 			// Poll while visible (batteries/connections change), rarely otherwise.

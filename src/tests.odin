@@ -116,3 +116,18 @@ test_children_get_default_sigpipe :: proc(t: ^testing.T) {
 	mask, _ := strconv.parse_u64(f[1], 16)
 	testing.expect_value(t, mask & (1 << 12), 0) // bit for signal 13 (SIGPIPE)
 }
+
+// Without BlueZ (busctl fails) the Bluetooth card must be omitted.
+@(test)
+test_bluetooth_absent :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	dir :: "/tmp/wlwidgets-test/nobt"
+	os.make_directory_all(dir)
+	testing.expect(t, os.write_entire_file(dir + "/busctl", "#!/bin/sh\nexit 1\n", os.Permissions_Default_File + {.Execute_User}) == nil)
+	old := os.get_env("PATH", context.temp_allocator)
+	os.set_env("PATH", strings.concatenate({dir, ":", old}))
+	defer os.set_env("PATH", old)
+
+	bluetooth_refresh_now()
+	testing.expect(t, !bluetooth.ok || !bluetooth.adapter, "card guard must hide the Bluetooth section")
+}
