@@ -192,7 +192,10 @@ draw_notifications :: proc(w: f32) {
 		im.SetCursorScreenPos(p)
 		im.SetNextItemAllowOverlap() // the remove and action buttons sit on top
 		clicked := im.InvisibleButton(cstr(fmt.tprintf("##n%d", n.id)), {lw, row_h})
-		hovered := im.IsItemHovered()
+		// Hover by rect: the remove button on top would otherwise un-hover the
+		// row, swapping the button back for the time under the pointer; and while
+		// it is held the window must still count as hovered so it can be released.
+		hovered := im.IsWindowHovered(im.HoveredFlags_AllowWhenBlockedByActiveItem) && im.IsMouseHoveringRect(p, {p.x + lw, p.y + row_h})
 		d := dl()
 		if hovered {
 			im.DrawList_AddRectFilled(d, p, {p.x + lw, p.y + row_h}, col32(0xffffff, 0.045), 9)
