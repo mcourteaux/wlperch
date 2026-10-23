@@ -410,3 +410,54 @@ draw_layout :: proc(rects: []Layout_Rect, p: Vec2, size: Vec2, compact := false,
 		}
 	}
 }
+
+Graph_Series :: struct {
+	h:     ^History,
+	color: u32,
+	fill:  bool,
+}
+
+// Several histories on one graph, scaled to [0, max_v]. The first series with
+// `fill` gets the gradient area; the others are lines.
+history_graph_multi :: proc(series: []Graph_Series, n: int, max_v: f32, size: Vec2) {
+	p := im.GetCursorScreenPos()
+	im.Dummy(size)
+	d := dl()
+	x0, y0, x1, y1 := p.x, p.y, p.x + size.x, p.y + size.y
+	im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, col32(0x12151b), 8)
+	for i in 1 ..< 4 {
+		gy := y0 + size.y * f32(i) / 4
+		im.DrawList_AddLine(d, {x0 + 1, gy}, {x1 - 1, gy}, col32(0xffffff, 0.035), 1)
+	}
+	im.DrawList_PushClipRect(d, {x0, y0}, {x1, y1}, true)
+	defer im.DrawList_PopClipRect(d)
+	pad: f32 = 2
+	right_inset: f32 = 7
+	step := (size.x - right_inset) / f32(n - 1)
+	uv := im.GetFontTexUvWhitePixel()
+	for s in series {
+		count := min(n, s.h.count)
+		if count < 2 {continue}
+		pts := make([]Vec2, count, context.temp_allocator)
+		for i in 0 ..< count {
+			v := clamp(history_get(s.h, count, i), 0, max_v)
+			pts[i] = {x1 - right_inset - f32(count - 1 - i) * step, y1 - pad - (size.y - pad * 2) * v / max_v}
+		}
+		if s.fill {
+			top := col32(s.color, 0.30)
+			bot := col32(s.color, 0.02)
+			for i in 0 ..< count - 1 {
+				a, b := pts[i], pts[i + 1]
+				im.DrawList_PrimReserve(d, 6, 6)
+				im.DrawList_PrimVtx(d, a, uv, top)
+				im.DrawList_PrimVtx(d, b, uv, top)
+				im.DrawList_PrimVtx(d, {b.x, y1}, uv, bot)
+				im.DrawList_PrimVtx(d, a, uv, top)
+				im.DrawList_PrimVtx(d, {b.x, y1}, uv, bot)
+				im.DrawList_PrimVtx(d, {a.x, y1}, uv, bot)
+			}
+		}
+		im.DrawList_AddPolyline(d, &pts[0], i32(count), col32(s.color), 1.6)
+		im.DrawList_AddCircleFilled(d, pts[count - 1], 3, col32(s.color))
+	}
+}

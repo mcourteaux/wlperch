@@ -55,15 +55,28 @@ switches in place. The first panel in the config is the default.
 | Panel (built-in) | Modules |
 |---|---|
 | `main` | header · audio · system · network \| weather · clocks · displays · bluetooth |
-| `perf` | cpu · memory · gpu \| processes |
+| `perf` | cpu · memory · gpu \| processes · thermals |
 | `sensors` | sensors |
 | `time` | time |
 
-Modules: `audio system network weather clocks displays bluetooth cpu gpu memory processes sensors time`.
+Modules: `audio system network weather clocks displays bluetooth cpu gpu memory processes thermals sensors time`.
 
 - **cpu, memory, gpu:** large history graphs. CPU adds load average, per-core
   bars and uptime. Memory shows used/cache/free and swap, and turns red past
   `memory_warn_percent`. GPU adds VRAM.
+- **thermals:** CPU and GPU temperature history, power history (GPU through
+  NVML, against its power limit; CPU package through the RAPL energy counter),
+  every useful hwmon temperature (motherboard inputs that are unconnected or
+  duplicated are filtered out), and the fans.
+
+  **CPU power** needs read access to `/sys/class/powercap/intel-rapl:0/energy_uj`.
+  It's root-only by default (a side-channel mitigation). To allow it, add a udev
+  rule:
+  ```
+  # /etc/udev/rules.d/90-rapl.rules
+  SUBSYSTEM=="powercap", ACTION=="add", RUN+="/bin/chmod 0444 /sys%p/energy_uj"
+  ```
+  Then run `sudo udevadm trigger --subsystem-match=powercap` or reboot.
 - **processes:** top 8 by CPU (% of one core, like `top`) and by resident
   memory. Processes are grouped by executable, e.g. `firefox ×38`. This is
   sampled every 2 s, and only while the module is on screen.
@@ -289,7 +302,7 @@ columns = audio system network | weather clocks displays bluetooth
 [panel.perf]
 title = Performance           # compact title row when there's no header
 width = 820
-columns = cpu memory gpu | processes
+columns = cpu memory gpu | processes thermals
 
 [panel.sensors]
 title = Home

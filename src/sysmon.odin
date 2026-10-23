@@ -314,8 +314,14 @@ int_to_string :: proc(i: int, allocator := context.temp_allocator) -> string {
 	return strings.clone(strconv.write_int(buf[:], i64(i), 10), allocator)
 }
 
+nvml_dev_handle :: proc() -> rawptr {
+	if nvml.lib == nil {return nil}
+	return rawptr(nvml.dev)
+}
+
 sysmon_start :: proc() {
 	sysmon.cpu_name = cpu_model_name()
+	thermals_init()
 	find_cpu_temp()
 	if nvml_open() {
 		sysmon.gpu_ok = true
@@ -328,6 +334,7 @@ sysmon_start :: proc() {
 			if sysmon.gpu_ok {
 				if nvml.lib != nil {nvml_sample()} else {drm_sample()}
 			}
+			thermals_sample()
 			wake_ui()
 			free_all(context.temp_allocator)
 			// Align samples to whole seconds so graph steps line up with the clock tick.

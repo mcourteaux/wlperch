@@ -86,3 +86,4 @@ ICON_W_HAZY :: "\U000F0F30"
 ICON_TUNE_BAR :: "\U000F056E" // md-view_dashboard (waybar button)
 ICON_LINK :: "\U000F0337" // md-link (group lock)
 ICON_PIN :: "\U000F0403" // md-pin (gathering)
+ICON_FAN :: "\U000F0210" // md-fan
