@@ -55,7 +55,7 @@ switches in place. The first panel in the config is the default.
 | Panel (built-in) | Modules |
 |---|---|
 | `main` | header · audio · system · network \| weather · clocks · displays · bluetooth |
-| `perf` | cpu · memory · gpu \| processes · thermals |
+| `perf` | cpu · memory \| gpu · thermals \| processes |
 | `sensors` | sensors |
 | `time` | time |
 
@@ -329,8 +329,8 @@ columns = audio system network | weather clocks displays bluetooth
 
 [panel.perf]
 title = Performance           # compact title row when there's no header
-width = 820
-columns = cpu memory gpu | processes thermals
+width = 1180
+columns = cpu memory | gpu thermals | processes
 
 [panel.sensors]
 title = Home

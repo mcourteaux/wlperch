@@ -9,11 +9,12 @@ import "core:log"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:sync"
 import "core:sys/linux"
 import "core:sys/posix"
 
 @(private = "file")
-STATE_MAGIC :: u32(0x57_4c_57_32) // "WLW2" (bump when Saved_State changes)
+STATE_MAGIC :: u32(0x57_4c_57_33) // "WLW3" (bump when Saved_State changes)
 
 @(private = "file")
 Saved_State :: struct {
@@ -23,6 +24,7 @@ Saved_State :: struct {
 	mem:   History,
 	swap:  History,
 	vram:  History,
+	cpu_temp, gpu_temp, cpu_power, gpu_power: History,
 }
 
 @(private = "file")
@@ -43,6 +45,11 @@ reexec_self :: proc(show_after := false) {
 		state.mem = sysmon.mem
 		state.swap = sysmon.swap
 		state.vram = sysmon.vram
+		sync.guard(&thermals.mu)
+		state.cpu_temp = thermals.cpu_temp_h
+		state.gpu_temp = thermals.gpu_temp_h
+		state.cpu_power = thermals.cpu_power_h
+		state.gpu_power = thermals.gpu_power_h
 	}
 
 	mfd, err := linux.memfd_create("wlwidgets-state", {})
@@ -127,6 +134,10 @@ resume_from_args :: proc() -> (ipc_fd: posix.FD, ok: bool, show: bool) {
 		sysmon.mem = state.mem
 		sysmon.swap = state.swap
 		sysmon.vram = state.vram
+		thermals.cpu_temp_h = state.cpu_temp
+		thermals.gpu_temp_h = state.gpu_temp
+		thermals.cpu_power_h = state.cpu_power
+		thermals.gpu_power_h = state.gpu_power
 	}
 	reap_children()
 	return posix.FD(ifd), true, show

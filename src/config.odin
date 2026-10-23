@@ -141,8 +141,8 @@ columns = audio system network | weather clocks displays bluetooth
 
 [panel.perf]
 title = Performance
-width = 820
-columns = cpu memory gpu | processes thermals
+width = 1180
+columns = cpu memory | gpu thermals | processes
 
 [panel.sensors]
 title = Home
