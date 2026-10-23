@@ -119,24 +119,8 @@ draw_time :: proc(w: f32) {
 	day_total: i64
 	for _, s in totals_today {day_total += s}
 	sub_heading(fmt.tprintf("Today   ·   %s", fmt_duration(day_total)))
-	bp := im.GetCursorScreenPos()
-	bh: f32 = 10
-	d := dl()
-	im.DrawList_AddRectFilled(d, bp, {bp.x + inner, bp.y + bh}, col32(0x12151b), bh / 2)
-	if day_total > 0 {
-		// Scale against an 8 h day so the bar reads as "how much of a workday".
-		scale := f64(max(day_total, 8 * 3600))
-		x := bp.x
-		for pr in tracker.projects {
-			s := totals_today[pr.name]
-			if s <= 0 {continue}
-			wseg := f32(f64(s) / scale) * inner
-			im.DrawList_AddRectFilled(d, {x, bp.y}, {x + wseg, bp.y + bh}, col32(pr.color), 3)
-			x += wseg
-		}
-	}
-	im.Dummy({inner, bh})
-	label(fonts.ui, SZ_SMALL, col32(C_FAINT), "bar = 8 hour workday")
+	draw_day_timeline(today, now, inner)
+	im.Dummy({1, 4})
 
 	// ---- Breaks (away from keyboard) ------------------------------------
 	{
@@ -182,6 +166,7 @@ draw_time :: proc(w: f32) {
 	// ---- Week -----------------------------------------------------------
 	sub_heading("Last 7 days")
 	gp := im.GetCursorScreenPos()
+	d := dl()
 	gh: f32 = 110
 	label_h: f32 = 18
 	days: [7]map[string]i64
@@ -231,4 +216,120 @@ draw_time :: proc(w: f32) {
 		}
 	}
 	im.Dummy({inner, gh + label_h})
+}
+
+// Today as a 24 h timeline: work in the project's color, breaks in a dim
+// version of it, breaks outside projects in gray; untracked time is the track.
+@(private = "file")
+draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
+	Seg :: struct {
+		s, e:    i64,
+		project: string,
+		idle:    bool,
+	}
+	segs: [dynamic]Seg
+	segs.allocator = context.temp_allocator
+	day_end := day_start + 86400
+	for e in tracker.entries {
+		if e.end > day_start && e.start < day_end {append(&segs, Seg{e.start, e.end, e.project, e.idle})}
+	}
+	if tracker.running >= 0 {append(&segs, Seg{tracker.seg_start, now, tracker.projects[tracker.running].name, false})}
+	if tracker.away {append(&segs, Seg{tracker.away_start, now, tracker.away_project, true})}
+	// Merge back-to-back pieces of the same kind (restarts split the log).
+	for i in 1 ..< len(segs) {
+		for j := i; j > 0 && segs[j].s < segs[j - 1].s; j -= 1 {segs[j], segs[j - 1] = segs[j - 1], segs[j]}
+	}
+	merged: [dynamic]Seg
+	merged.allocator = context.temp_allocator
+	for sg in segs {
+		if n := len(merged); n > 0 {
+			last := &merged[n - 1]
+			if last.project == sg.project && last.idle == sg.idle && sg.s - last.e <= 90 {
+				last.e = max(last.e, sg.e)
+				continue
+			}
+		}
+		append(&merged, sg)
+	}
+	segs = merged
+
+	color_of :: proc(project: string) -> (u32, bool) {
+		for pr in tracker.projects {if pr.name == project {return pr.color, true}}
+		return C_FAINT, false
+	}
+
+	p := im.GetCursorScreenPos()
+	bh: f32 = 22
+	d := dl()
+	x_of :: proc(t, day_start: i64, x0, w: f32) -> f32 {
+		return x0 + w * f32(f64(clamp(t, day_start, day_start + 86400) - day_start) / 86400)
+	}
+	im.DrawList_AddRectFilled(d, p, {p.x + inner, p.y + bh}, col32(0x12151b), 6)
+	// Hour grid.
+	for h in 1 ..< 24 {
+		x := p.x + inner * f32(h) / 24
+		a: f32 = h % 6 == 0 ? 0.10 : 0.04
+		im.DrawList_AddLine(d, {x, p.y + 3}, {x, p.y + bh - 3}, col32(0xffffff, a))
+	}
+	hovered_seg := -1
+	mouse := im.GetMousePos()
+	im.DrawList_PushClipRect(d, p, {p.x + inner, p.y + bh}, true)
+	for sg, i in segs {
+		x0 := x_of(sg.s, day_start, p.x, inner)
+		x1 := max(x_of(sg.e, day_start, p.x, inner), x0 + 1)
+		col, is_project := color_of(sg.project)
+		c: u32
+		switch {
+		case !sg.idle:     c = col32(col)
+		case is_project:   c = col32(col, 0.22) // a break during a project session
+		case:              c = col32(0x8a92a3, 0.45) // a break outside projects
+		}
+		im.DrawList_AddRectFilled(d, {x0, p.y + 2}, {x1, p.y + bh - 2}, c, 2)
+		if mouse.x >= x0 && mouse.x < x1 && mouse.y >= p.y && mouse.y < p.y + bh {hovered_seg = i}
+	}
+	// "Now" marker.
+	nx := x_of(now, day_start, p.x, inner)
+	im.DrawList_AddLine(d, {nx, p.y}, {nx, p.y + bh}, col32(C_TEXT, 0.9), 1.5)
+	im.DrawList_PopClipRect(d)
+	im.Dummy({inner, bh})
+
+	// Hour labels.
+	lp := im.GetCursorScreenPos()
+	for h := 0; h <= 24; h += 3 {
+		lbl := fmt.tprintf("%02d", h % 24)
+		if h == 24 {lbl = "24"}
+		lsz := measure(fonts.ui, 10.5, lbl)
+		x := p.x + inner * f32(h) / 24 - lsz.x / 2
+		x = clamp(x, p.x, p.x + inner - lsz.x)
+		draw_text(fonts.ui, 10.5, {x, lp.y}, col32(C_FAINT), lbl)
+	}
+	im.Dummy({inner, 14})
+
+	// Legend.
+	{
+		lg := im.GetCursorScreenPos()
+		x := lg.x
+		accent: u32 = tracker.running >= 0 ? tracker.projects[tracker.running].color : C_TEAL
+		items := [3]struct {
+			col:   u32,
+			alpha: f32,
+			text:  string,
+		}{{accent, 1, "working"}, {accent, 0.22, "break during a project"}, {0x8a92a3, 0.45, "break, no project"}}
+		for it in items {
+			im.DrawList_AddRectFilled(dl(), {x, lg.y + 4}, {x + 10, lg.y + 12}, col32(it.col, it.alpha), 2)
+			draw_text(fonts.ui, 11, {x + 14, lg.y + 1}, col32(C_FAINT), it.text)
+			x += 14 + measure(fonts.ui, 11, it.text).x + 16
+		}
+		im.Dummy({inner, 16})
+	}
+
+	if hovered_seg >= 0 {
+		sg := segs[hovered_seg]
+		hm :: proc(t: i64) -> string {
+			if r, ok := clock_read(local_region, time.unix(t, 0)); ok {return fmt.tprintf("%02d:%02d", r.dt.hour, r.dt.minute)}
+			return "?"
+		}
+		what := sg.idle ? (sg.project == NO_PROJECT ? "Break (no project)" : fmt.tprintf("Break during %s", sg.project)) : sg.project
+		tip(fmt.tprintf("%s\n%s – %s  (%s)", what, hm(sg.s), hm(sg.e), fmt_duration(sg.e - sg.s)))
+	}
 }
