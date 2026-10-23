@@ -183,8 +183,11 @@ setup_check :: proc() {
 			p.state = text == SWAY_FILE ? .Installed : .Outdated
 			detail(p, ours)
 		}
-		if main_cfg, ok := read_text(strings.concatenate({config_home(), "/sway/config"}, context.temp_allocator)); ok && !strings.contains(main_cfg, "config.d") {
-			detail(p, "your sway config doesn't include config.d/*")
+		// The stock sway config only includes /etc/sway/config.d/*: our file
+		// would never load. Install/Update adds the include line.
+		if (p.state == .Installed || p.state == .Missing) && !sway_loads_config_d() {
+			if p.state == .Installed {p.state = .Outdated}
+			detail(p, "your sway config doesn't load ~/.config/sway/config.d/* yet (Install adds that line)")
 		}
 	}
 	// Waybar
@@ -237,7 +240,7 @@ setup_check :: proc() {
 		owner := notification_owner()
 		units := other_notification_units()
 		switch {
-		case !config.notifications:
+		case !notifications_enabled():
 			p.state = .Unavailable
 			detail(p, "off in the config: [notifications] enabled = false")
 		case owner == "wlperch":
@@ -325,8 +328,64 @@ setup_create_config :: proc() {
 }
 
 setup_install_sway :: proc() {
-	ok := write_file(sway_file(), SWAY_FILE)
-	done(.Sway, ok, ok ? "installed; reload sway to activate" : "couldn't write the sway file")
+	if !write_file(sway_file(), SWAY_FILE) {
+		done(.Sway, false, "couldn't write the sway file")
+		return
+	}
+	if !sway_loads_config_d() {
+		cfg := sway_main_config()
+		text, _ := read_text(cfg)
+		if text == "" {text, _ = read_text("/etc/sway/config")} // no personal config yet: start from the stock one
+		if text != "" {backup(cfg)}
+		line := fmt.tprintf("\n# Added by wlperch setup: load the files in config.d.\ninclude %s/*\n", sway_dir())
+		if !write_file(cfg, strings.concatenate({text, line}, context.temp_allocator)) {
+			done(.Sway, false, "wrote the sway file, but couldn't add the include line to your sway config")
+			return
+		}
+	}
+	done(.Sway, true, "installed; reload sway to activate")
+}
+
+@(private = "file")
+sway_main_config :: proc() -> string {return strings.concatenate({config_home(), "/sway/config"}, context.temp_allocator)}
+
+// Does the user's sway config include ~/.config/sway/config.d/* (in any spelling)?
+sway_loads_config_d :: proc() -> bool {
+	text, ok := read_text(sway_main_config())
+	if !ok {return false}
+	dir := sway_dir()
+	for raw in strings.split_lines(text, context.temp_allocator) {
+		line := strings.trim_space(raw)
+		if !strings.has_prefix(line, "include ") {continue}
+		path := strings.trim(strings.trim_space(line[len("include "):]), `"'`)
+		path, _ = strings.replace_all(path, "${XDG_CONFIG_HOME:-$HOME/.config}", config_home(), context.temp_allocator)
+		path, _ = strings.replace_all(path, "$XDG_CONFIG_HOME", config_home(), context.temp_allocator)
+		path, _ = strings.replace_all(path, "$HOME", home(), context.temp_allocator)
+		if strings.has_prefix(path, "~/") {path = strings.concatenate({home(), path[1:]}, context.temp_allocator)}
+		// Relative includes are relative to the config's own directory.
+		if !strings.has_prefix(path, "/") {path = strings.concatenate({config_home(), "/sway/", path}, context.temp_allocator)}
+		if strings.has_prefix(path, dir) {return true}
+	}
+	return false
+}
+
+// [notifications] enabled, read straight from the file (setup doesn't load
+// the config, so it can offer to create it).
+@(private = "file")
+notifications_enabled :: proc() -> bool {
+	text, ok := read_text(config_path())
+	if !ok {return true}
+	section := ""
+	for raw in strings.split_lines(text, context.temp_allocator) {
+		line := strings.trim_space(raw)
+		if strings.has_prefix(line, "[") {section = strings.trim(line, "[] ")}
+		if section != "notifications" || !strings.has_prefix(line, "enabled") {continue}
+		if eq := strings.index_byte(line, '='); eq >= 0 {
+			v := strings.to_lower(strings.trim_space(line[eq + 1:]), context.temp_allocator)
+			return !(v == "false" || v == "no" || v == "0" || v == "off")
+		}
+	}
+	return true
 }
 
 setup_remove_sway :: proc() {
