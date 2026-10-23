@@ -29,6 +29,7 @@ MODULES := [?]Module {
 	{"clocks", draw_clocks},
 	{"displays", draw_displays},
 	{"bluetooth", draw_bluetooth},
+	{"storage", draw_storage},
 	{"cpu", draw_cpu_card},
 	{"gpu", draw_gpu_card},
 	{"memory", draw_memory_card},

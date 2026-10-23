@@ -48,6 +48,7 @@ services_start :: proc() {
 	weather_start()
 	network_start()
 	bluetooth_start()
+	storage_start()
 	procs_start()
 	sensors_start()
 	displays_scan()
@@ -60,12 +61,15 @@ on_show :: proc() {
 	weather_on_show()
 	network_on_show()
 	bluetooth_refresh_async()
+	storage_on_show()
 	nightlight_poll()
 	dnd_poll_async()
 	displays_scan()
 }
 
-on_hide :: proc() {}
+on_hide :: proc() {
+	storage_on_hide()
+}
 
 draw_ui :: proc() -> f32 {
 	io := im.GetIO()

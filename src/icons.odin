@@ -89,3 +89,6 @@ ICON_PIN :: "\U000F0403" // md-pin (gathering)
 ICON_FAN :: "\U000F0210" // md-fan
 ICON_BELL :: "\U000F009A" // md-bell
 ICON_BELL_OFF :: "\U000F009B" // md-bell_off
+ICON_HARDDISK :: "\U000F02CA" // md-harddisk
+ICON_USB_DRIVE :: "\U000F129E" // md-usb_flash_drive
+ICON_EJECT :: "\U000F01EA" // md-eject

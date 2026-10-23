@@ -114,5 +114,6 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Tested under sway with grim + vptr: layout switch, outside click, Escape, IPC toggle, HDMI output switch (both ways), volume wheel, mute, night light, copy IP, preset dropdown, scrolling, fractional 1.5x, re-exec/state hand-over
 - [x] Main panel is quick settings + misc: toggle tiles (night light, do not disturb, Bluetooth, group lock, keep workspaces), keyboard layouts, links to the other panels; system graphs moved out (perf panel)
 - [x] Perf graphs zoomable (scroll; 1 h of history), live until you look back; double-click or reopen returns to live
+- [x] Storage module: drives and mounted volumes with free space; external drives mount / open / eject via udisks; rescans while open
 - [ ] Applying a preset live (not run: desk.sh switches audio to the currently unavailable hdmi-stereo-extra2)
 - [x] Check memory/CPU usage while idle and while shown

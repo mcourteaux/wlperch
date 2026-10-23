@@ -22,6 +22,7 @@ pressing <kbd>Esc</kbd>, closes it.
 | **World clocks** | Any IANA time zones, with UTC offset, difference to local time, and a tomorrow/yesterday badge |
 | **Network** | Public IP and per-interface addresses. Click any of them to copy it (`wl-copy`). |
 | **Bluetooth** | Connected and paired devices with battery level (BlueZ `Battery1`, falling back to UPower). Click a device to connect or disconnect it. |
+| **Storage** | Each drive with its mounted volumes: free space and a fill bar (orange from 85 %, red from 95 %). Click a volume to open it in the file manager. External drives (USB / hotplug) also list unmounted volumes with a **Mount** button, and an **eject** button unmounts everything and powers the drive off (udisks, no root needed). Boot, EFI and swap partitions are hidden. While the popup is open, drives you plug in show up within a few seconds. |
 
 ### How the HDMI audio → monitor mapping works
 
@@ -54,12 +55,12 @@ switches in place. The first panel in the config is the default.
 
 | Panel (built-in) | Modules |
 |---|---|
-| `main` | header · quick · audio · network \| weather · clocks · displays · bluetooth |
+| `main` | header · quick · audio · network · storage \| weather · clocks · displays · bluetooth |
 | `perf` | cpu · memory \| gpu · thermals \| processes |
 | `sensors` | sensors |
 | `time` | time |
 
-Modules: `quick audio network weather clocks displays bluetooth cpu gpu memory processes thermals sensors time`.
+Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time`.
 
 The perf panel's graphs keep the last hour. Scroll over any of them to zoom
 (they zoom together); zooming out from the live view stays live. Dragging or
@@ -335,7 +336,7 @@ bar_room = Living             # shown by "wlwidgets status sensors"
 # Panels: the first is the default. columns: modules per column, separated by |
 [panel.main]
 header = true                 # big clock and date
-columns = quick audio network | weather clocks displays bluetooth
+columns = quick audio network storage | weather clocks displays bluetooth
 
 [panel.perf]
 title = Performance           # compact title row when there's no header
@@ -390,7 +391,7 @@ src/reexec.odin          memory-returning self re-exec with state hand-over
 src/theme.odin           fonts, palette, ImGui style
 src/widgets.odin         custom-drawn widgets
 src/ui.odin              the popup layout
-src/{audio,sysmon,procs,sensors,sway,weather,network,bluetooth,nightlight,displays,clocks}.odin  data services
+src/{audio,sysmon,procs,sensors,sway,weather,network,bluetooth,nightlight,displays,clocks,storage}.odin  data services
 ```
 
 ## Licenses
