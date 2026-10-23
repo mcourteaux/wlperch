@@ -94,9 +94,6 @@ clip :: proc(s: string, max: int) -> string {
 draw_notifications :: proc(w: f32) {
 	card_begin("notifications", w)
 	defer card_end()
-	unread := notif_unread()
-	right := notifs.dnd ? "do not disturb" : unread > 0 ? fmt.tprintf("%d new", unread) : ""
-	card_title(ICON_BELL, "Notifications", C_PURPLE, right)
 	inner := im.GetContentRegionAvail().x
 
 	// Snapshot what's new, then it counts as read.
