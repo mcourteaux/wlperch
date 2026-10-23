@@ -1,5 +1,6 @@
 // Software text rendering into ARGB8888 (premultiplied) pixel buffers, for
-// surfaces that don't use the GL renderer (placeholder windows).
+// surfaces that don't use the GL renderer (placeholder windows, notification
+// popups). Glyphs missing from Inter come from the symbol font.
 package main
 
 import "core:c"
@@ -10,25 +11,35 @@ Soft_Font :: struct {
 	ok:   bool,
 }
 
-soft_regular, soft_bold: Soft_Font
+soft_regular, soft_bold, soft_symbols: Soft_Font
 
 soft_fonts_init :: proc() {
 	if soft_regular.ok {return}
 	soft_regular.ok = bool(stbtt.InitFont(&soft_regular.info, raw_data(FONT_INTER_REGULAR), 0))
 	soft_bold.ok = bool(stbtt.InitFont(&soft_bold.info, raw_data(FONT_INTER_SEMIBOLD), 0))
+	soft_symbols.ok = bool(stbtt.InitFont(&soft_symbols.info, raw_data(FONT_SYMBOLS), 0))
+}
+
+// The font that has a glyph for r: f, else the symbol font (icons), else f.
+@(private = "file")
+pick :: proc(f: ^Soft_Font, r: rune) -> ^Soft_Font {
+	if stbtt.FindGlyphIndex(&f.info, r) != 0 || !soft_symbols.ok {return f}
+	if stbtt.FindGlyphIndex(&soft_symbols.info, r) != 0 {return &soft_symbols}
+	return f
 }
 
 soft_text_width :: proc(f: ^Soft_Font, px: f32, s: string) -> f32 {
 	if !f.ok {return 0}
-	scale := stbtt.ScaleForPixelHeight(&f.info, px)
 	w: f32
 	prev: rune = -1
 	for r in s {
+		g := pick(f, r)
+		scale := stbtt.ScaleForPixelHeight(&g.info, px)
 		adv, lsb: c.int
-		stbtt.GetCodepointHMetrics(&f.info, r, &adv, &lsb)
-		if prev >= 0 {w += f32(stbtt.GetCodepointKernAdvance(&f.info, prev, r)) * scale}
+		stbtt.GetCodepointHMetrics(&g.info, r, &adv, &lsb)
+		if prev >= 0 && g == f {w += f32(stbtt.GetCodepointKernAdvance(&f.info, prev, r)) * scale}
 		w += f32(adv) * scale
-		prev = r
+		prev = g == f ? r : -1
 	}
 	return w
 }
@@ -44,19 +55,20 @@ soft_ascent :: proc(f: ^Soft_Font, px: f32) -> f32 {
 // Draw `s` with its baseline at y, blending `rgb` (0xRRGGBB) over the pixels.
 soft_draw_text :: proc(pixels: []u32, stride, height: int, f: ^Soft_Font, px: f32, x, baseline: f32, s: string, rgb: u32, alpha: f32 = 1) {
 	if !f.ok {return}
-	scale := stbtt.ScaleForPixelHeight(&f.info, px)
 	glyph: [128 * 128]u8
 	pen := x
 	prev: rune = -1
 	for r in s {
-		if prev >= 0 {pen += f32(stbtt.GetCodepointKernAdvance(&f.info, prev, r)) * scale}
+		g := pick(f, r)
+		scale := stbtt.ScaleForPixelHeight(&g.info, px)
+		if prev >= 0 && g == f {pen += f32(stbtt.GetCodepointKernAdvance(&f.info, prev, r)) * scale}
 		adv, lsb: c.int
-		stbtt.GetCodepointHMetrics(&f.info, r, &adv, &lsb)
+		stbtt.GetCodepointHMetrics(&g.info, r, &adv, &lsb)
 		x0, y0, x1, y1: c.int
-		stbtt.GetCodepointBitmapBox(&f.info, r, scale, scale, &x0, &y0, &x1, &y1)
+		stbtt.GetCodepointBitmapBox(&g.info, r, scale, scale, &x0, &y0, &x1, &y1)
 		gw, gh := int(x1 - x0), int(y1 - y0)
 		if gw > 0 && gh > 0 && gw <= 128 && gh <= 128 {
-			stbtt.MakeCodepointBitmap(&f.info, &glyph[0], c.int(gw), c.int(gh), c.int(gw), scale, scale, r)
+			stbtt.MakeCodepointBitmap(&g.info, &glyph[0], c.int(gw), c.int(gh), c.int(gw), scale, scale, r)
 			ox := int(pen + 0.5) + int(x0)
 			oy := int(baseline + 0.5) + int(y0)
 			for gy in 0 ..< gh {
@@ -86,6 +98,6 @@ soft_draw_text :: proc(pixels: []u32, stride, height: int, f: ^Soft_Font, px: f3
 			}
 		}
 		pen += f32(adv) * scale
-		prev = r
+		prev = g == f ? r : -1
 	}
 }

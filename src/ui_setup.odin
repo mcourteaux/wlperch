@@ -23,6 +23,7 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	case .Sway:     return {ICON_KEYBOARD, "Sway integration", "One file in sway/config.d: starts the daemon, binds Mod+O (panel), Mod+P / Mod+Shift+P / Mod+Ctrl+P (project workspaces) and styles placeholder windows.", C_PURPLE, SWAY_FILE}
 	case .Waybar:   return {ICON_MONITOR, "Waybar buttons", "Panel button (turns red when memory runs low), project timer and sensors pills, and memory → system panel. Adds them to your bar with backups of your files.", C_CYAN, WAYBAR_JSONC}
 	case .Rapl:     return {ICON_LIGHTNING, "CPU power reading", "A udev rule that makes the CPU energy counter readable, so the Temperatures & power module can show CPU watts. Needs your password (root).", C_ORANGE, RAPL_RULE}
+	case .Notifications: return {ICON_BELL, "Notifications", "Shows app notifications as popups in the corner, with a history in the Notifications panel and do not disturb. Switches off dunst/mako (masks their service) so they don't take over again.", C_PURPLE, ""}
 	case .Launcher: return {ICON_HOME, "App launcher entry", "Adds \"wlwidgets setup\" to your application launcher (rofi, wofi, fuzzel…).", C_YELLOW, ""}
 	}
 	return {}
@@ -121,6 +122,13 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 	case .Rapl:
 		if s == .Missing {append(&out, Action{"Install (root)", true, proc() {setup_install_rapl(true)}})}
 		if s == .Installed {append(&out, Action{"Remove (root)", false, proc() {setup_install_rapl(false)}})}
+	case .Notifications:
+		switch s {
+		case .Missing:   append(&out, Action{"Take over", true, proc() {setup_take_notifications(true)}})
+		case .Running:
+			if len(other_notification_units()) > 0 {append(&out, Action{"Allow dunst again", false, proc() {setup_take_notifications(false)}})}
+		case .Installed, .Outdated, .Custom, .Unavailable, .Stopped, .Partial:
+		}
 	case .Launcher:
 		if s == .Missing {append(&out, Action{"Add", true, proc() {setup_install_launcher(true)}})}
 		else {append(&out, Action{"Remove", false, proc() {setup_install_launcher(false)}})}

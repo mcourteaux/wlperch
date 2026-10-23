@@ -30,6 +30,7 @@ MODULES := [?]Module {
 	{"displays", draw_displays},
 	{"bluetooth", draw_bluetooth},
 	{"storage", draw_storage},
+	{"notifications", draw_notifications},
 	{"cpu", draw_cpu_card},
 	{"gpu", draw_gpu_card},
 	{"memory", draw_memory_card},
@@ -76,6 +77,7 @@ panel_icon :: proc(p: Panel) -> string {
 	case "time":                                                     return ICON_CLOCK
 	case "weather":                                                  return ICON_W_PARTLY
 	case "audio":                                                    return ICON_SPEAKER
+	case "notifications":                                            return ICON_BELL
 	}
 	return ICON_TUNE
 }

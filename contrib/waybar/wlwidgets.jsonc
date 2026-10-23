@@ -1,7 +1,7 @@
 // wlwidgets modules for waybar. In your waybar config add:
 //     "include": ["wlwidgets.jsonc"],
 // and put the module names in a modules list, e.g.
-//     "modules-right": [ ..., "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/wlwidgets" ]
+//     "modules-right": [ ..., "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/notifications", "custom/wlwidgets" ]
 // (custom/wlwidgets last: the main panel opens under it). In style.css:
 //     @import "wlwidgets.css";
 {
@@ -26,6 +26,15 @@
         "return-type": "json",
         "format": "{}",
         "on-click": "wlwidgets toggle sensors"
+    },
+    // Bell with the unread count; opens the notification center. Right click
+    // toggles do not disturb.
+    "custom/notifications": {
+        "exec": "wlwidgets status notifications",
+        "return-type": "json",
+        "format": "{}",
+        "on-click": "wlwidgets toggle notifications",
+        "on-click-right": "wlwidgets notify dnd"
     },
     // Waybar's own memory module, opening the system panel.
     "memory": {

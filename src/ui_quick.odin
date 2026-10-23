@@ -29,7 +29,7 @@ dunstctl_path :: proc() -> string {
 }
 
 dnd_poll_async :: proc() {
-	if dunstctl_path() == "" {return}
+	if notifs.owner || dunstctl_path() == "" {return}
 	thread.create_and_start(proc() {
 		out, ok := run({"dunstctl", "is-paused"}, allocator = context.temp_allocator)
 		{
@@ -117,7 +117,10 @@ draw_quick :: proc(w: f32) {
 	}
 	{
 		sync.guard(&dnd.mu)
-		if dnd.ok {
+		if notifs.owner {
+			append(&tiles, Tile_Def{"##q:dnd", notifs.dnd ? ICON_BELL_OFF : ICON_BELL, "Do not disturb", notifs.dnd ? "Notifications held" : "Off", notifs.dnd, true, C_PURPLE,
+				"Hold notification popups (critical ones still show); they wait in the Notifications panel", proc(on: bool) {notif_set_dnd(!on)}})
+		} else if dnd.ok {
 			append(&tiles, Tile_Def{"##q:dnd", dnd.paused ? ICON_BELL_OFF : ICON_BELL, "Do not disturb", dnd.pending ? "…" : dnd.paused ? "Notifications held" : "Off", dnd.paused, true, C_PURPLE,
 				"Hold notifications (dunst) until you turn this off", proc(on: bool) {dnd_set(!on)}})
 		}

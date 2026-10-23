@@ -4,7 +4,8 @@
 
 #custom-wlwidgets,
 #custom-timer,
-#custom-sensors {
+#custom-sensors,
+#custom-notifications {
     padding: 0 10px;
     margin: 3px 1px;
     border-radius: 8px;
@@ -13,7 +14,8 @@
 }
 
 #custom-timer:hover,
-#custom-sensors:hover {
+#custom-sensors:hover,
+#custom-notifications:hover {
     background-color: rgba(255, 255, 255, 0.06);
 }
 
@@ -44,6 +46,16 @@
 @keyframes wlw-pulse {
     to { background-color: #c0465e; }
 }
+
+/* Notifications: dim bell; purple with the count when there are new ones. */
+#custom-notifications { color: #8a92a3; font-size: 15px; }
+#custom-notifications.unread {
+    color: #bb9af7;
+    font-weight: bold;
+    background-color: rgba(187, 154, 247, 0.14);
+}
+#custom-notifications.dnd { color: #5a6172; }
+#custom-notifications.off { color: #3a404c; }
 
 /* Project timer: dim when nothing is counted. */
 #custom-timer { color: #5a6172; }

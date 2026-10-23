@@ -35,9 +35,13 @@ commands:
                            (to gather misplaced windows); each move extends it
   track lock [on|off]  group-lock monitors: they follow each other into/out of projects
   track keep [on|off]  keep empty project workspaces alive with placeholder windows
-  status [sensors|timer]  print waybar JSON every few seconds for a custom module:
-                   the panel button (memory warning), a room temperature + CO2,
-                   or the running project timer
+  notify dnd [on|off]  do not disturb (popups held; they wait in the Notifications panel)
+  notify clear     empty the notification history
+  notify dismiss   close the notification popups on screen
+  status [sensors|timer|notifications]  print waybar JSON every few seconds for a
+                   custom module: the panel button (memory warning), a room
+                   temperature + CO2, the running project timer, or a bell
+                   with the unread notification count
 `
 
 App :: struct {
@@ -176,6 +180,27 @@ handle_command :: proc(line: string) -> string {
 		if i < 0 {return "unknown project\n"}
 		tracker_start(i)
 		return "ok\n"
+	case "notify":
+		sub := len(f) > 1 ? f[1] : "status"
+		switch sub {
+		case "status":
+			return fmt.tprintf("%d %d %d\n", notif_unread(), int(notifs.dnd), int(notifs.owner))
+		case "dnd":
+			mode := len(f) > 2 ? f[2] : "toggle"
+			switch mode {
+			case "on":     notif_set_dnd(true)
+			case "off":    notif_set_dnd(false)
+			case "toggle": notif_set_dnd(!notifs.dnd)
+			case:          return "usage: notify dnd [on|off]\n"
+			}
+			return notifs.dnd ? "dnd on\n" : "dnd off\n"
+		case "clear":
+			notif_clear_all()
+		case "dismiss":
+			for n in notifs.list {if n.popup {n.popup = false; n.read = true; notif_close(n.id, .Dismissed)}}
+		case:
+			return "usage: notify [status|dnd [on|off]|clear|dismiss]\n"
+		}
 	case "daemon", "ping":
 	case:
 		return "unknown command\n"
@@ -207,11 +232,13 @@ main :: proc() {
 	case "setup":
 		run_setup()
 		return
-	case "toggle", "show", "hide", "quit", "daemon", "restart", "track", "audio":
+	case "toggle", "show", "hide", "quit", "daemon", "restart", "track", "audio", "notify":
 	case "status":
 		config_load()
 		if len(os.args) > 2 && os.args[2] == "sensors" {
 			status_sensors_loop()
+		} else if len(os.args) > 2 && os.args[2] == "notifications" {
+			status_notifications_loop()
 		} else if len(os.args) > 2 && os.args[2] == "timer" {
 			clocks_init()
 			status_timer_loop()
@@ -229,6 +256,10 @@ main :: proc() {
 		app.ipc_fd = fd
 		resume_show = show
 	} else {
+		if cmd == "notify" {
+			if reply, ok := ipc_query(full); ok {fmt.print(reply)} else {fmt.eprintln("wlwidgets is not running")}
+			return
+		}
 		if ipc_send(full) {return}
 		if cmd == "quit" || cmd == "hide" || cmd == "restart" {return} // nothing running
 		// Started from a download (not the installed copy, nothing running):
@@ -271,6 +302,7 @@ main :: proc() {
 	services_start()
 	tracker_init()
 	placeholders_init()
+	notifications_start()
 	log.debugf("services_start took %v, rss %d kB", time.tick_since(t0), rss_kb())
 
 	if resume_show {
@@ -286,6 +318,7 @@ main :: proc() {
 	}
 
 	tracker_shutdown()
+	notifications_shutdown()
 	placeholders_destroy_all()
 	hide_popup()
 	if plat.gl_ready {imgl.Shutdown()}
@@ -412,11 +445,17 @@ loop_iteration :: proc() {
 		ms := int(time.duration_milliseconds(pc)) + 1
 		timeout = timeout < 0 ? ms : min(timeout, ms)
 	}
+	if nt := notifications_timeout(); nt >= 0 {
+		ms := int(time.duration_milliseconds(nt)) + 1
+		timeout = timeout < 0 ? ms : min(timeout, ms)
+	}
 
-	pfds := [3]posix.pollfd {
+	bus_fd, bus_events := notifications_fd()
+	pfds := [4]posix.pollfd {
 		{fd = platform_fd(), events = {.IN}},
 		{fd = app.wake_r, events = {.IN}},
 		{fd = app.ipc_fd, events = {.IN}},
+		{fd = posix.FD(bus_fd), events = transmute(posix.Poll_Event)bus_events},
 	}
 	n := posix.poll(&pfds[0], len(pfds), i32(timeout))
 	if n < 0 {
@@ -448,11 +487,13 @@ loop_iteration :: proc() {
 
 	tracker_tick()
 	placeholders_tick()
+	notifications_tick()
 
 	if restart_requested {
 		restart_requested = false
 		was_visible := platform_visible()
 		hide_popup()
+		notifications_save()
 		wl.display_flush(d)
 		reexec_self(was_visible)
 		log.error("restart failed")
@@ -485,12 +526,15 @@ loop_iteration :: proc() {
 			last_render_second = sec
 			render_frame()
 		}
-	} else if plat.egl_context != nil && config.release_gpu_after > 0 && time.tick_since(hidden_since) >= config.release_gpu_after {
+	} else if plat.egl_context != nil && config.release_gpu_after > 0 && time.tick_since(hidden_since) >= config.release_gpu_after && !notifications_busy() {
 		// The GPU driver keeps its memory after eglTerminate; a fresh process image doesn't.
+		// (Not while notification popups are up: they'd vanish.)
+		notifications_save()
 		reexec_self()
 		// exec failed: at least release what we can and carry on.
 		gl_down(proc() {
 			fade_reset()
+			notif_textures_reset()
 			if imgl_ready {
 				imgl.Shutdown()
 				imgl_ready = false

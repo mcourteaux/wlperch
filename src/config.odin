@@ -52,6 +52,9 @@ Config :: struct {
 	sensors_watch:      string,
 	sensors_bar_room:   string, // room shown by "wlwidgets status sensors"
 	memory_warn_pct:    int, // memory use (%) at which we draw attention
+
+	// [notifications]
+	notifications:      bool, // serve org.freedesktop.Notifications
 }
 
 config: Config
@@ -106,6 +109,12 @@ history_seconds = 120
 # Memory use (%) at which the popup and the waybar button ("wlwidgets status") turn red.
 memory_warn_percent = 90
 
+[notifications]
+# Show desktop notifications (popups + the notification center) instead of
+# dunst/mako. Only one program can do this: wlwidgets takes over as soon as the
+# other one stops ("wlwidgets setup" can switch dunst off for you).
+enabled = true
+
 [timetracker]
 # Minutes without input after which counting pauses (the idle time is not counted).
 idle_minutes = 5
@@ -131,7 +140,7 @@ bar_room = Living
 # "wlwidgets toggle <name>" opens a panel; the first one is the default.
 # columns: module names per column, columns separated by "|".
 # Modules: quick audio network weather clocks displays bluetooth storage
-#          cpu gpu memory processes thermals sensors time
+#          cpu gpu memory processes thermals sensors time notifications
 # quick = night light, do not disturb, Bluetooth, project toggles, keyboard
 #         layouts and buttons that open the other panels.
 # header = true shows the big clock and date on top;
@@ -150,6 +159,11 @@ columns = cpu memory storage | gpu thermals | processes
 title = Home
 width = 560
 columns = sensors
+
+[panel.notifications]
+title = Notifications
+width = 560
+columns = notifications
 
 [panel.time]
 title = Time
@@ -266,6 +280,8 @@ config_load :: proc() {
 
 	c.history_seconds = clamp(strconv.parse_int(get(m, defaults, "system", "history_seconds")) or_else 120, 30, 600)
 	c.memory_warn_pct = clamp(strconv.parse_int(get(m, defaults, "system", "memory_warn_percent")) or_else 90, 1, 100)
+
+	c.notifications = parse_bool(get(m, defaults, "notifications", "enabled"), true)
 
 	c.sensors_dir = expand_home(get(m, defaults, "sensors", "dir"))
 	c.sensors_watch = strings.clone(get(m, defaults, "sensors", "watch"))

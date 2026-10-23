@@ -281,6 +281,11 @@ panel_tabs :: proc(right, y, max_w: f32) {
 			isz := measure(fonts.ui, 15, icon)
 			draw_text(fonts.ui, 15, {x + (w - isz.x) / 2, y + 7}, fg, icon)
 		}
+		// Unread notifications: a dot on the bell.
+		if !active && len(p.columns) > 0 && len(p.columns[0]) > 0 && p.columns[0][0] == "notifications" && notif_unread() > 0 {
+			dx := labels ? x + 25 : x + w / 2 + 7
+			im.DrawList_AddCircleFilled(d, {dx, y + 9}, 3.5, col32(C_PURPLE))
+		}
 		x += w
 	}
 	if target >= 0 {switch_panel(target)}

@@ -114,6 +114,7 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Tested under sway with grim + vptr: layout switch, outside click, Escape, IPC toggle, HDMI output switch (both ways), volume wheel, mute, night light, copy IP, preset dropdown, scrolling, fractional 1.5x, re-exec/state hand-over
 - [x] Panel tabs at the top of every popup (labels, or icons only when narrow)
 - [x] Performance panel renamed to "system" (`toggle perf` still works); storage card lives there
+- [x] Notification server: popups (software-rendered, actions, hover pause, OSD replace + progress), notification center panel with 7-day binary history, do not disturb, waybar bell, setup takeover from dunst
 - [x] Main panel is quick settings + misc: toggle tiles (night light, do not disturb, Bluetooth, group lock, keep workspaces), keyboard layouts, links to the other panels; system graphs moved out (perf panel)
 - [x] Perf graphs zoomable (scroll; 1 h of history), live until you look back; double-click or reopen returns to live
 - [x] Storage module: drives and mounted volumes with free space; external drives mount / open / eject via udisks; rescans while open

@@ -42,6 +42,24 @@ ipc_send :: proc(cmd: string) -> bool {
 	return true
 }
 
+// Send a command and return the daemon's reply ("" and false when none is running).
+ipc_query :: proc(cmd: string, allocator := context.temp_allocator) -> (string, bool) {
+	path := ipc_socket_path()
+	fd := posix.socket(.UNIX, .STREAM)
+	if fd < 0 {return "", false}
+	defer posix.close(fd)
+	addr := make_addr(path)
+	if posix.connect(fd, cast(^posix.sockaddr)&addr, size_of(addr)) != .OK {return "", false}
+	tv := posix.timeval{tv_sec = 2}
+	posix.setsockopt(fd, posix.SOL_SOCKET, .RCVTIMEO, &tv, size_of(tv))
+	line := strings.concatenate({cmd, "\n"}, context.temp_allocator)
+	posix.send(fd, raw_data(line), len(line), {})
+	buf: [512]u8
+	n := posix.recv(fd, &buf[0], len(buf), {})
+	if n <= 0 {return "", false}
+	return strings.clone(string(buf[:n]), allocator), true
+}
+
 ipc_listen :: proc() -> posix.FD {
 	path := ipc_socket_path()
 	fd := posix.socket(.UNIX, .STREAM)

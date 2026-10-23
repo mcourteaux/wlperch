@@ -247,6 +247,7 @@ pointer_listener := wl.Pointer_Listener {
 		plat.pointer_serial = serial
 		plat.pointer_surface = surface
 		log.debugf("pointer enter %.0f,%.0f", wl.fixed_to_f64(x), wl.fixed_to_f64(y))
+		if notify_on_enter(surface, f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y))) {return}
 		if surface != plat.surface {
 			if plat.cursor_device != nil {
 				wl.wp_cursor_shape_device_v1_set_shape(plat.cursor_device, serial, wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT)
@@ -261,6 +262,10 @@ pointer_listener := wl.Pointer_Listener {
 	},
 	leave = proc "c" (data: rawptr, self: ^wl.Pointer, serial: u32, surface: ^wl.Surface) {
 		context = g_ctx
+		if notify_on_leave(surface) {
+			plat.pointer_surface = nil
+			return
+		}
 		was_popup := plat.pointer_surface == plat.surface
 		plat.pointer_surface = nil
 		if !was_popup {return}
@@ -270,12 +275,14 @@ pointer_listener := wl.Pointer_Listener {
 	},
 	motion = proc "c" (data: rawptr, self: ^wl.Pointer, t: u32, x, y: wl.Fixed) {
 		context = g_ctx
+		if notify_on_motion(plat.pointer_surface, f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y))) {return}
 		if plat.pointer_surface != plat.surface {return}
 		im.IO_AddMousePosEvent(im.GetIO(), f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y)))
 		request_redraw()
 	},
 	button = proc "c" (data: rawptr, self: ^wl.Pointer, serial, t, button, state: u32) {
 		context = g_ctx
+		if notify_on_button(plat.pointer_surface, button, state) {return}
 		log.debugf("pointer button %x state %d on %s", button, state, plat.pointer_surface == plat.surface ? "popup" : plat.pointer_surface == plat.catcher && plat.catcher != nil ? "backdrop" : "other")
 		if plat.pointer_surface != plat.surface {
 			if plat.pointer_surface != nil && plat.pointer_surface == plat.catcher && state == wl.POINTER_BUTTON_STATE_PRESSED {

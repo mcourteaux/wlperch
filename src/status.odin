@@ -102,6 +102,47 @@ status_sensors_loop :: proc() {
 	}
 }
 
+// `wlwidgets status notifications`: a bell with the unread count; bell-off
+// under do not disturb.
+status_notifications_loop :: proc() {
+	for {
+		text := ICON_BELL
+		class := "none"
+		tooltip := "Notifications"
+		if reply, ok := ipc_query("notify status"); ok {
+			f := strings.fields(reply, context.temp_allocator)
+			if len(f) >= 3 {
+				unread, _ := strconv.parse_int(f[0])
+				dnd := f[1] == "1"
+				owner := f[2] == "1"
+				switch {
+				case !owner:
+					class = "off"
+					tooltip = "Another program shows notifications (see wlwidgets setup)"
+				case dnd:
+					text = unread > 0 ? fmt.tprintf("%s %d", ICON_BELL_OFF, unread) : ICON_BELL_OFF
+					class = "dnd"
+					tooltip = unread > 0 ? fmt.tprintf("Do not disturb · %d new", unread) : "Do not disturb"
+				case unread > 0:
+					text = fmt.tprintf("%s %d", ICON_BELL, unread)
+					class = "unread"
+					tooltip = fmt.tprintf("%d new notification%s", unread, unread == 1 ? "" : "s")
+				case:
+					tooltip = "No new notifications"
+				}
+			}
+		} else {
+			class = "off"
+			tooltip = "wlwidgets is not running"
+		}
+		tooltip = strings.concatenate({tooltip, "\\nClick: notifications · right click: do not disturb"}, context.temp_allocator)
+		line := fmt.tprintf(`{{"text": "%s", "tooltip": "%s", "class": "%s"}}` + "\n", text, tooltip, class)
+		if _, err := os.write_string(os.stdout, line); err != nil {return}
+		free_all(context.temp_allocator)
+		time.sleep(time.Second)
+	}
+}
+
 // `wlwidgets status timer`: "⏱ NeonRAW 1:23" (today's time on the project
 // being counted), or a dim clock when nothing is counted.
 status_timer_loop :: proc() {

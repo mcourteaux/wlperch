@@ -39,6 +39,7 @@ Comp_Id :: enum {
 	Sway,
 	Waybar,
 	Rapl,
+	Notifications,
 	Launcher,
 }
 
@@ -227,6 +228,30 @@ setup_check :: proc() {
 			}
 			detail(p, RAPL_RULE_PATH)
 			detail(p, readable ? "CPU energy counter is readable" : "CPU energy counter is root-only")
+		}
+	}
+	// Notifications
+	{
+		p := &c[.Notifications]
+		owner := notification_owner()
+		units := other_notification_units()
+		switch {
+		case !config.notifications:
+			p.state = .Unavailable
+			detail(p, "off in the config: [notifications] enabled = false")
+		case owner == "wlwidgets":
+			p.state = .Running
+			detail(p, "wlwidgets shows your notifications")
+		case owner != "":
+			p.state = .Missing
+			detail(p, fmt.tprintf("%s shows your notifications right now", owner))
+		case:
+			p.state = .Stopped
+			detail(p, "nothing serves notifications right now (start the background service)")
+		}
+		for u in units {
+			out, _ := run({"systemctl", "--user", "is-enabled", u}, 2 * time.Second, context.temp_allocator)
+			detail(p, fmt.tprintf("%s: %s", u, strings.trim_space(out)))
 		}
 	}
 	// Launcher entry
@@ -446,6 +471,65 @@ Categories=Settings;
 	done(.Launcher, ok, ok ? "added to your app launcher" : "couldn't write the launcher entry")
 }
 
+// systemd user units of other notification daemons (from their D-Bus
+// activation files), e.g. dunst.service.
+other_notification_units :: proc() -> []string {
+	units: [dynamic]string
+	units.allocator = context.temp_allocator
+	for dir in ([]string{"/usr/share/dbus-1/services", "/usr/local/share/dbus-1/services", strings.concatenate({home(), "/.local/share/dbus-1/services"}, context.temp_allocator)}) {
+		entries, err := os.read_all_directory_by_path(dir, context.temp_allocator)
+		if err != nil {continue}
+		for e in entries {
+			text, ok := read_text(strings.concatenate({dir, "/", e.name}, context.temp_allocator))
+			if !ok || !strings.contains(text, "Name=org.freedesktop.Notifications") {continue}
+			for line in strings.split_lines(text, context.temp_allocator) {
+				if strings.has_prefix(line, "SystemdService=") {append(&units, strings.trim_space(line[len("SystemdService="):]))}
+			}
+		}
+	}
+	return units[:]
+}
+
+// Take over notifications: mask the other daemon's unit (so D-Bus can't
+// start it again) and stop it; the daemon is queued for the name and takes
+// over at once. take = false unmasks them again.
+setup_take_notifications :: proc(take: bool) {
+	units := other_notification_units()
+	if len(units) == 0 && take {
+		owner := notification_owner()
+		if owner != "" && owner != "wlwidgets" {
+			run({"pkill", "-x", owner}, 3 * time.Second, context.temp_allocator)
+			time.sleep(400 * time.Millisecond)
+			done(.Notifications, notification_owner() == "wlwidgets", fmt.tprintf("stopped %s (it isn't a systemd service; remove it from your autostart)", owner))
+		} else {
+			done(.Notifications, false, "no other notification daemon found")
+		}
+		return
+	}
+	args := make([dynamic]string, context.temp_allocator)
+	append(&args, "systemctl", "--user", take ? "mask" : "unmask")
+	if take {append(&args, "--now")}
+	for u in units {append(&args, u)}
+	out, code := run_code(args[:], 10 * time.Second, context.temp_allocator)
+	if code != 0 {
+		done(.Notifications, false, fmt.tprintf("systemctl failed: %s", strings.trim_space(out)))
+		return
+	}
+	if !take {
+		done(.Notifications, true, fmt.tprintf("%s may run again; set [notifications] enabled = false and restart wlwidgets to hand over", strings.join(units, ", ", context.temp_allocator)))
+		return
+	}
+	// The daemon was queued for the name: give it a moment.
+	owner := ""
+	for _ in 0 ..< 10 {
+		owner = notification_owner()
+		if owner == "wlwidgets" {break}
+		time.sleep(200 * time.Millisecond)
+	}
+	ok := owner == "wlwidgets"
+	done(.Notifications, ok, ok ? fmt.tprintf("wlwidgets now shows notifications (%s masked)", strings.join(units, ", ", context.temp_allocator)) : fmt.tprintf("%s masked; start the background service to take over", strings.join(units, ", ", context.temp_allocator)))
+}
+
 // Program, config, sway, waybar (files + hook), launcher, then start the daemon.
 setup_install_recommended :: proc() {
 	states: [Comp_Id]Comp_State
@@ -459,6 +543,7 @@ setup_install_recommended :: proc() {
 	if states[.Waybar] != .Installed && states[.Waybar] != .Unavailable {setup_hook_waybar()}
 	if states[.Launcher] == .Missing {setup_install_launcher(true)}
 	if states[.Service] != .Running {setup_start_service(false)}
+	if states[.Notifications] == .Missing {setup_take_notifications(true)}
 }
 
 // Open the setup window as its own process (from a panel's ⚙ button).

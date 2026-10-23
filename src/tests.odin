@@ -333,3 +333,52 @@ test_sensor_history_binary :: proc(t: ^testing.T) {
 	testing.expect(t, !history_decode(data[:len(data) - 5], &cut, cutoff))
 	testing.expect(t, !history_decode(transmute([]byte)string("nope"), &cut, cutoff))
 }
+
+@(test)
+test_notification_markup :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	testing.expect_value(t, strip_markup("<b>report.pdf</b> is ready &amp; waiting"), "report.pdf is ready & waiting")
+	testing.expect_value(t, strip_markup(`<a href="https://x">link</a> &lt;3 &#65;&#x42;`), "link <3 AB")
+	testing.expect_value(t, strip_markup("one<br/>two"), "one\ntwo")
+	testing.expect_value(t, strip_markup("a < b"), "a < b")
+	testing.expect_value(t, strip_markup("  plain  "), "plain")
+}
+
+@(test)
+test_notification_history_binary :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	now := time.to_unix_seconds(time.now())
+	px := make([]u32, ICON_PX * ICON_PX)
+	for &p, i in px {p = u32(i) | 0xff000000}
+	icon := &Notif_Icon{key = 42, size = ICON_PX, px = px, rounded = true}
+	mk :: proc(id: u32, at: i64, app, summary: string, icon: ^Notif_Icon, transient := false) -> ^Notification {
+		n := new(Notification)
+		n^ = {id = id, at = at, app = strings.clone(app), summary = strings.clone(summary), body = strings.clone("body"), icon = icon, urgency = 1, value = -1, transient = transient}
+		return n
+	}
+	list := []^Notification{
+		mk(1, now - 8 * 86400, "Old", "too old", nil),
+		mk(2, now - 3600, "Firefox", "Download complete", icon),
+		mk(3, now, "Volume", "65%", nil, transient = true),
+		mk(4, now, "Slack", "Server down", icon),
+	}
+	list[3].read = true
+	data := notifications_encode(list, 4, true)
+	// One icon stored once for two entries; the transient one isn't stored.
+	back, next_id, dnd := notifications_decode(data, now - NOTIFY_HISTORY_DAYS * 86400)
+	testing.expect_value(t, next_id, 4)
+	testing.expect(t, dnd)
+	testing.expect_value(t, len(back), 2) // "Old" aged out, "Volume" transient
+	if len(back) == 2 {
+		testing.expect_value(t, back[0].summary, "Download complete")
+		testing.expect_value(t, back[1].app, "Slack")
+		testing.expect(t, back[1].read)
+		testing.expect(t, back[0].icon != nil && back[0].icon == back[1].icon)
+		testing.expect(t, back[0].icon != nil && back[0].icon.px[5] == px[5] && back[0].icon.rounded)
+	}
+	// Damaged tail: what came before survives.
+	cut, _, _ := notifications_decode(data[:len(data) - 3], 0)
+	testing.expect_value(t, len(cut), 2) // no cutoff: Old + Firefox; Slack was cut off
+	bad, _, _ := notifications_decode(transmute([]u8)string("nope"), 0)
+	testing.expect_value(t, len(bad), 0)
+}

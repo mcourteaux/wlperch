@@ -15,13 +15,14 @@ pressing <kbd>Esc</kbd>, closes it.
 | Section | What it shows / does |
 |---|---|
 | **Header** | Big clock and date · tabs for every panel (so the bar needs only one button) · setup and restart buttons. Panels without the big header get the tabs in their title row. |
-| **Quick settings** | Toggle tiles: night light (wlsunset), do not disturb (dunst, when running), Bluetooth power, and with projects configured group lock and keep-workspaces · keyboard layout switcher (sway xkb layouts) |
+| **Quick settings** | Toggle tiles: night light (wlsunset), do not disturb (wlwidgets' own while it shows notifications, otherwise dunst's), Bluetooth power, and with projects configured group lock and keep-workspaces · keyboard layout switcher (sway xkb layouts) |
 | **Audio** | Two fix buttons: **refresh** switches the default output's card to another profile and back (cures PipeWire's occasional silent sink) and restores the default output; **restart** restarts PipeWire, WirePlumber and pipewire-pulse (`wlwidgets audio refresh/restart` from a shell or keybinding). Output and input devices (click to make default) · volume sliders (drag or scroll, up to 150 %) · mute. For HDMI/DP audio on a GPU, every plugged monitor is listed by its **name and sway connector** (`LG ULTRAWIDE · HDMI 2 · DP-3`). Picking one switches the card profile and the default sink. The full profile list is in a dropdown. |
 | **Displays** | Your current screen layout, drawn to scale · a dropdown of preset scripts (`desk.sh` & co) with a mini preview of each layout. Selecting one runs it, and the active preset is detected and ticked. |
 | **Weather** | Today's forecast from open-meteo.com (no API key): current conditions, high/low, rain, wind, humidity, sunrise/sunset, and the next 24 h |
 | **World clocks** | Any IANA time zones, with UTC offset, difference to local time, and a tomorrow/yesterday badge |
 | **Network** | Public IP and per-interface addresses. Click any of them to copy it (`wl-copy`). |
 | **Bluetooth** | Connected and paired devices with battery level (BlueZ `Battery1`, falling back to UPower). Click a device to connect or disconnect it. |
+| **Notifications** | wlwidgets is the desktop notification server (see [Notifications](#notifications)): popups in the top-right corner, and this panel keeps the history of the last 7 days, grouped by day, with unread dots, action buttons for notifications the app still listens to, remove / clear all, and do not disturb. |
 | **Storage** | Each drive with its mounted volumes: free space and a fill bar (orange from 85 %, red from 95 %). Click a volume to open it in the file manager. External drives (USB / hotplug) also list unmounted volumes with a **Mount** button, and an **eject** button unmounts everything and powers the drive off (udisks, no root needed). Boot, EFI and swap partitions are hidden. While the popup is open, drives you plug in show up within a few seconds. |
 
 ### How the HDMI audio → monitor mapping works
@@ -58,9 +59,10 @@ switches in place. The first panel in the config is the default.
 | `main` | header · quick · audio · network \| weather · clocks · displays · bluetooth |
 | `system` | cpu · memory · storage \| gpu · thermals \| processes |
 | `sensors` | sensors |
+| `notifications` | notifications |
 | `time` | time |
 
-Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time`.
+Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time notifications`.
 
 The system panel's graphs keep the last hour. Scroll over any of them to zoom
 (they zoom together); zooming out from the live view stays live. Dragging or
@@ -179,6 +181,41 @@ history survives restarts without growing. An older `sensors.tsv` is imported
 once and removed. Hover a room, the air monitor or the heater to see 24-hour
 graphs of each value.
 
+### Notifications
+
+wlwidgets serves `org.freedesktop.Notifications`, so apps' notifications
+(`notify-send`, browsers, chat apps…) show as its own popups instead of
+dunst's or mako's. Only one program can hold that name. wlwidgets queues for
+it and takes over as soon as the other daemon stops. **Setup → Notifications →
+Take over** masks the other daemon's systemd unit (`dunst.service`), so D-Bus
+can't start it again, and stops it. **Allow dunst again** unmasks it; also set
+`[notifications] enabled = false` to hand over.
+
+Popups stack in the top-right corner, newest on top, at most four at a time.
+- **Click:** runs the notification's default action, or focuses the app's window.
+- **Action buttons:** invoke that action.
+- **× or right click:** dismisses it; **middle click** dismisses all.
+- **Hover:** pauses the timeout.
+
+Timeouts are 5 s for low urgency and 8 s for normal; critical notifications stay
+until dismissed, and an app may set its own timeout.
+
+A notification that times out stays in the Notifications panel, unread. Opening
+the panel marks everything read. Volume and brightness indicators (a replace tag
+plus a value, like `notify-send -h int:value:65 -h string:x-canonical-private-synchronous:volume`)
+replace each other in place, show a progress bar and stay out of the history.
+
+**Do not disturb** holds popups (critical ones and volume/brightness indicators
+still show); everything waits in the panel. Toggle it from the panel, the Quick
+settings tile, `wlwidgets notify dnd`, or right click on the bar bell.
+
+- **Rendering:** popups are drawn in software into shared memory, so a
+  notification never wakes the GPU.
+- **Icons:** come from the app's image data, an image file (PNG/JPEG, or SVG
+  through librsvg when installed) or your icon theme.
+- **History file:** `~/.local/share/wlwidgets/notifications.bin`, binary, last
+  7 days, at most 300 entries, icons stored once.
+
 ## Installing
 
 wlwidgets installs itself. Run the binary from wherever you downloaded or built
@@ -242,6 +279,10 @@ wlwidgets track move      # move the focused window to that project's workspace 
 wlwidgets track pin       # for a minute, go/move target this project from anywhere
 wlwidgets track lock on   # group-lock monitors into/out of project workspaces
 wlwidgets track keep on   # placeholder windows keep empty project workspaces
+wlwidgets notify dnd [on|off]  # do not disturb (no argument: toggle)
+wlwidgets notify clear    # empty the notification history
+wlwidgets notify dismiss  # close the popups on screen
+wlwidgets notify status   # "<unread> <dnd 0|1> <serving 0|1>"
 wlwidgets daemon     # start in the background without showing
 wlwidgets status     # waybar JSON for the bar button (see below)
 ```
@@ -274,7 +315,7 @@ config. Hook them up with three lines:
 ```jsonc
 // config.jsonc
 "include": ["wlwidgets.jsonc"],
-"modules-right": [ ..., "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/wlwidgets" ],
+"modules-right": [ ..., "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/notifications", "custom/wlwidgets" ],
 ```
 ```css
 /* style.css, at the top */
@@ -286,9 +327,10 @@ config. Hook them up with three lines:
 | `custom/wlwidgets` | panel button; red with `92%` when memory use passes `memory_warn_percent` | main panel |
 | `custom/timer` | `⏱ ACME 1:23` while a project is counted, dim otherwise | time panel |
 | `custom/sensors` | `bar_room` temperature + latest CO₂; orange >800 ppm, red >1200 ppm | sensors panel |
+| `custom/notifications` | bell; purple with the count when there are unread notifications, bell-off under do not disturb | notifications panel (right click: do not disturb) |
 | `memory` | waybar's own module | system panel |
 
-The buttons are fed by `wlwidgets status`, `status timer` and `status sensors`,
+The buttons are fed by `wlwidgets status`, `status timer`, `status sensors` and `status notifications`,
 small standalone loops that print waybar JSON.
 
 ## Configuration
@@ -334,6 +376,9 @@ dir = ~/tuya-sensors
 watch = .venv/bin/python tuya_sensors.py --watch   # run inside dir; empty = don't
 bar_room = Living             # shown by "wlwidgets status sensors"
 
+[notifications]
+enabled = true                # serve desktop notifications (takes over from dunst/mako)
+
 # Panels: the first is the default. columns: modules per column, separated by |
 [panel.main]
 header = true                 # big clock and date
@@ -348,6 +393,11 @@ columns = cpu memory storage | gpu thermals | processes
 title = Home
 width = 560
 columns = sensors
+
+[panel.notifications]
+title = Notifications
+width = 560
+columns = notifications
 
 [panel.time]
 title = Time
@@ -393,6 +443,11 @@ src/theme.odin           fonts, palette, ImGui style
 src/widgets.odin         custom-drawn widgets
 src/ui.odin              the popup layout
 src/{audio,sysmon,procs,sensors,sway,weather,network,bluetooth,nightlight,displays,clocks,storage}.odin  data services
+src/notifications.odin   notification server (D-Bus via sd-bus), history, do not disturb
+src/notify_popup.odin    software-rendered notification popups (layer surfaces + shm)
+src/notify_icons.odin    icon lookup and decoding (theme, PNG/JPEG, SVG via librsvg)
+src/dbus.odin            minimal sd-bus bindings
+src/softtext.odin        stb_truetype text into pixel buffers (placeholders, popups)
 ```
 
 ## Licenses
