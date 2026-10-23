@@ -41,6 +41,7 @@ Tracker :: struct {
 	projects:   [dynamic]Project,
 	entries:    [dynamic]Time_Entry,
 	running:    int, // index into projects, -1 = not counting
+	last:       int, // most recently used project (target of `track go/move`)
 	seg_start:  i64,
 	last_beat:  time.Tick,
 	paused_idle: bool,
@@ -63,7 +64,7 @@ Tracker :: struct {
 	return_ws:    map[string]string, // output -> workspace to go back to when leaving
 	sync_at:      time.Tick,         // our own switch; ignore the events it causes
 }
-tracker := Tracker{running = -1}
+tracker := Tracker{running = -1, last = -1}
 
 PROJECT_COLORS := [?]u32{C_BLUE, C_GREEN, C_ORANGE, C_PURPLE, C_CYAN, C_YELLOW, C_TEAL, C_RED}
 
@@ -226,6 +227,10 @@ tracker_init :: proc() {
 		}
 		os.remove(tracker.away_path)
 	}
+	// The most recent project in the log is the default target of `track go/move`.
+	for i := len(tracker.entries) - 1; i >= 0 && tracker.last < 0; i -= 1 {
+		if !tracker.entries[i].idle {tracker.last = project_find(tracker.entries[i].project)}
+	}
 	if len(tracker.projects) > 0 && !platform_watch_idle(tracker.idle) {
 		log.warn("compositor lacks ext-idle-notify-v1: idle time will be counted")
 	}
@@ -251,6 +256,7 @@ tracker_tick :: proc() {
 		}
 		tracker.paused_idle = plat.idle && project_for_workspace(ws) >= 0
 		if want >= 0 {
+			tracker.last = want
 			tracker.running = want
 			tracker.seg_start = now
 			tracker.last_beat = time.tick_now()
@@ -349,6 +355,7 @@ project_outputs :: proc() -> (names: []string, focused: string) {
 // left-to-right order, pin them to their outputs and show them.
 tracker_start :: proc(index: int) {
 	if index < 0 || index >= len(tracker.projects) {return}
+	tracker.last = index
 	p := tracker.projects[index]
 	outs, focused := project_outputs()
 	remember_return_workspaces()
@@ -524,4 +531,29 @@ tracker_breaks :: proc(from, to: i64) -> map[string]Break_Stats {
 	}
 	if tracker.away {add(&out, tracker.away_project, tracker.away_start, time.to_unix_seconds(time.now()), from, to)}
 	return out
+}
+
+// The project a `track go/move` without a name refers to: the one on the
+// focused workspace, else the most recently used one.
+tracker_current_project :: proc() -> int {
+	ws: string
+	{
+		sync.guard(&sway.mu)
+		ws = strings.clone(sway.focused_ws, context.temp_allocator)
+	}
+	if p := project_for_workspace(ws); p >= 0 {return p}
+	return tracker.last
+}
+
+// Move the focused window to the project's workspace on this monitor
+// (creating it if needed); focus stays where it is, like `move container to workspace`.
+tracker_move_window :: proc(index: int) -> bool {
+	if index < 0 || index >= len(tracker.projects) {return false}
+	tracker.last = index
+	p := tracker.projects[index]
+	outs, focused := project_outputs()
+	n := 1
+	for o, i in outs {if o == focused {n = i + 1}}
+	ws := project_workspace(p, n)
+	return sway_command(fmt.tprintf(`workspace "%s" output %s; move container to workspace "%s"`, ws, focused, ws))
 }

@@ -87,6 +87,18 @@ the Time panel, or with `wlwidgets track <project>`:
 
 Doing it again simply recreates them after sway has removed them as empty.
 
+Project workspaces have names rather than numbers, so sway's `$mod+N`
+bindings can't reach them. Bind the "current project" commands instead. Without
+a name, they target the project you're in, or else the one you used last:
+
+```
+bindsym $mod+p exec wlwidgets track go          # go to the project's workspaces
+bindsym $mod+Shift+p exec wlwidgets track move  # send the focused window there
+```
+
+`track move` puts the window on the project's workspace for the monitor you're
+on, creating it if needed, and leaves your view alone (like `$mod+Shift+N`).
+
 **Group lock** (a toggle in the Time panel, or `wlwidgets track lock [on|off]`)
 keeps the monitors together. Switching one monitor to a project workspace
 brings the others to that project's workspaces too. Leaving it sends the others
@@ -167,6 +179,8 @@ wlwidgets toggle perf   # open a specific panel (switches if another one is open
 wlwidgets show [panel] | hide | quit
 wlwidgets restart    # new binary + re-read config; keeps graph history
 wlwidgets track ACME # open the project's workspaces (time tracking)
+wlwidgets track go        # back into the current (or last used) project's workspaces
+wlwidgets track move      # move the focused window to that project's workspace on this monitor
 wlwidgets track lock on   # group-lock monitors into/out of project workspaces
 wlwidgets track keep on   # placeholder windows keep empty project workspaces
 wlwidgets daemon     # start in the background without showing

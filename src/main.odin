@@ -26,6 +26,8 @@ commands:
   quit     stop the running daemon
   restart  restart the daemon (new binary, re-read config); keeps graph history
   track <project>  create/focus the project's workspaces (one per monitor) to track time
+  track go [project]    go to the current (or last used) project's workspaces
+  track move [project]  move the focused window to that project's workspace on this monitor
   track lock [on|off]  group-lock monitors: they follow each other into/out of projects
   track keep [on|off]  keep empty project workspaces alive with placeholder windows
   status [sensors|timer]  print waybar JSON every few seconds for a custom module:
@@ -129,6 +131,18 @@ handle_command :: proc(line: string) -> string {
 			case:          return "usage: track lock [on|off]\n"
 			}
 			return tracker.lock ? "lock on\n" : "lock off\n"
+		}
+		// track go|move [project]: the current/last project by default.
+		if f[1] == "go" || f[1] == "move" {
+			i := tracker_current_project()
+			if len(f) > 2 {i = project_find(strings.join(f[2:], " ", context.temp_allocator))}
+			if i < 0 {return "no project (name one, or work in one first)\n"}
+			if f[1] == "go" {
+				tracker_start(i)
+			} else if !tracker_move_window(i) {
+				return "move failed\n"
+			}
+			return "ok\n"
 		}
 		i := project_find(strings.join(f[1:], " ", context.temp_allocator))
 		if i < 0 {return "unknown project\n"}
