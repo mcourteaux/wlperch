@@ -1,4 +1,4 @@
-// Configuration: ~/.config/wlwidgets/config.ini (written with defaults on first run).
+// Configuration: ~/.config/wlperch/config.ini (written with defaults on first run).
 package main
 
 import "core:encoding/ini"
@@ -50,7 +50,7 @@ Config :: struct {
 	// [sensors]
 	sensors_dir:        string,
 	sensors_watch:      string,
-	sensors_bar_room:   string, // room shown by "wlwidgets status sensors"
+	sensors_bar_room:   string, // room shown by "wlperch status sensors"
 	memory_warn_pct:    int, // memory use (%) at which we draw attention
 
 	// [notifications]
@@ -59,7 +59,7 @@ Config :: struct {
 
 config: Config
 
-DEFAULT_CONFIG :: `# wlwidgets configuration
+DEFAULT_CONFIG :: `# wlperch configuration
 
 [popup]
 # Total popup width in logical pixels.
@@ -106,20 +106,20 @@ preset_glob = *.sh
 [system]
 # Length of the CPU/GPU history graphs.
 history_seconds = 120
-# Memory use (%) at which the popup and the waybar button ("wlwidgets status") turn red.
+# Memory use (%) at which the popup and the waybar button ("wlperch status") turn red.
 memory_warn_percent = 90
 
 [notifications]
 # Show desktop notifications (popups + the notification center) instead of
-# dunst/mako. Only one program can do this: wlwidgets takes over as soon as the
-# other one stops ("wlwidgets setup" can switch dunst off for you).
+# dunst/mako. Only one program can do this: wlperch takes over as soon as the
+# other one stops ("wlperch setup" can switch dunst off for you).
 enabled = true
 
 [timetracker]
 # Minutes without input after which counting pauses (the idle time is not counted).
 idle_minutes = 5
 
-# Projects for time tracking. "wlwidgets track <project>" (or the Time panel)
+# Projects for time tracking. "wlperch track <project>" (or the Time panel)
 # creates one workspace per monitor ("<name> 1", "<name> 2", ...); time counts
 # while one of them is focused. Numbered workspaces are not counted.
 #
@@ -133,11 +133,11 @@ idle_minutes = 5
 dir = ~/tuya-sensors
 # Command (run inside dir) that keeps state.json up to date; empty = don't run it.
 watch = .venv/bin/python tuya_sensors.py --watch
-# Room whose temperature "wlwidgets status sensors" shows in the bar (empty = first).
+# Room whose temperature "wlperch status sensors" shows in the bar (empty = first).
 bar_room = Living
 
 # ---- Panels -------------------------------------------------------------
-# "wlwidgets toggle <name>" opens a panel; the first one is the default.
+# "wlperch toggle <name>" opens a panel; the first one is the default.
 # columns: module names per column, columns separated by "|".
 # Modules: quick audio network weather clocks displays bluetooth storage
 #          cpu gpu memory processes thermals sensors time notifications media
@@ -171,12 +171,33 @@ width = 600
 columns = time
 `
 
+// wlperch was called wlwidgets: move its config and data (projects, time log,
+// sensor and notification history) over once.
+migrate_old_name :: proc() {
+	home := os.get_env("HOME", context.temp_allocator)
+	cfg := os.get_env("XDG_CONFIG_HOME", context.temp_allocator)
+	if cfg == "" {cfg = strings.concatenate({home, "/.config"}, context.temp_allocator)}
+	data := os.get_env("XDG_DATA_HOME", context.temp_allocator)
+	if data == "" {data = strings.concatenate({home, "/.local/share"}, context.temp_allocator)}
+	for base in ([]string{cfg, data}) {
+		old := strings.concatenate({base, "/wlwidgets"}, context.temp_allocator)
+		new := strings.concatenate({base, "/wlperch"}, context.temp_allocator)
+		if os.exists(old) && !os.exists(new) {
+			if err := os.rename(old, new); err != nil {
+				log.warnf("could not move %s to %s: %v", old, new, err)
+			} else {
+				log.infof("moved %s to %s", old, new)
+			}
+		}
+	}
+}
+
 config_path :: proc() -> string {
 	base := os.get_env("XDG_CONFIG_HOME", context.temp_allocator)
 	if base == "" {
 		base = strings.concatenate({os.get_env("HOME", context.temp_allocator), "/.config"}, context.temp_allocator)
 	}
-	return strings.concatenate({base, "/wlwidgets/config.ini"})
+	return strings.concatenate({base, "/wlperch/config.ini"})
 }
 
 expand_home :: proc(path: string) -> string {

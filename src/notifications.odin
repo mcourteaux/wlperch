@@ -304,7 +304,7 @@ on_message :: proc "c" (m: ^Sd_Bus_Message, userdata: rawptr, ret_error: ^Sd_Bus
 		}
 		return 1
 	case sd_bus_message_is_method_call(m, NOTIFY_NAME, "GetServerInformation") > 0:
-		sd_bus_reply_method_return(m, "ssss", cstring("wlwidgets"), cstring("wlwidgets"), cstring("1"), cstring("1.2"))
+		sd_bus_reply_method_return(m, "ssss", cstring("wlperch"), cstring("wlperch"), cstring("1"), cstring("1.2"))
 		return 1
 	case sd_bus_message_is_method_call(m, "org.freedesktop.DBus.Introspectable", "Introspect") > 0:
 		sd_bus_reply_method_return(m, "s", cstring(INTROSPECT_XML))

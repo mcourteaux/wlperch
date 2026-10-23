@@ -75,7 +75,7 @@ PROJECT_COLORS := [?]u32{C_BLUE, C_GREEN, C_ORANGE, C_PURPLE, C_CYAN, C_YELLOW, 
 data_dir :: proc() -> string {
 	base := os.get_env("XDG_DATA_HOME", context.temp_allocator)
 	if base == "" {base = strings.concatenate({os.get_env("HOME", context.temp_allocator), "/.local/share"}, context.temp_allocator)}
-	return strings.concatenate({base, "/wlwidgets"})
+	return strings.concatenate({base, "/wlperch"})
 }
 
 parse_hex_color :: proc(s: string) -> (u32, bool) {
@@ -606,5 +606,5 @@ tracker_pin_tick :: proc() {
 }
 
 notify :: proc(summary, body: string) {
-	run_async({"notify-send", "-a", "wlwidgets", "-t", "3000", summary, body})
+	run_async({"notify-send", "-a", "wlperch", "-t", "3000", summary, body})
 }

@@ -1,17 +1,17 @@
-// wlwidgets modules for waybar. In your waybar config add:
-//     "include": ["wlwidgets.jsonc"],
+// wlperch modules for waybar. In your waybar config add:
+//     "include": ["wlperch.jsonc"],
 // and put the module names in a modules list, e.g.
-//     "modules-right": [ ..., "group/media", "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/notifications", "custom/wlwidgets" ]
-// (custom/wlwidgets last: the main panel opens under it). In style.css:
-//     @import "wlwidgets.css";
+//     "modules-right": [ ..., "group/media", "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/notifications", "custom/wlperch" ]
+// (custom/wlperch last: the main panel opens under it). In style.css:
+//     @import "wlperch.css";
 {
     // Quick-settings button. Turns red (with the percentage) when memory use
-    // passes memory_warn_percent in ~/.config/wlwidgets/config.ini.
-    "custom/wlwidgets": {
-        "exec": "wlwidgets status",
+    // passes memory_warn_percent in ~/.config/wlperch/config.ini.
+    "custom/wlperch": {
+        "exec": "wlperch status",
         "return-type": "json",
         "format": "{}",
-        "on-click": "wlwidgets toggle"
+        "on-click": "wlperch toggle"
     },
     // Media: previous · track (click: play/pause, right click: the panel) · next.
     // Hidden while nothing is playing. (Not "custom/media": waybar's sample
@@ -21,54 +21,54 @@
         "modules": ["custom/media-prev", "custom/media-track", "custom/media-next"]
     },
     "custom/media-track": {
-        "exec": "wlwidgets status media",
+        "exec": "wlperch status media",
         "return-type": "json",
         "format": "{}",
-        "on-click": "wlwidgets media play-pause",
-        "on-click-right": "wlwidgets toggle",
-        "on-scroll-up": "wlwidgets media previous",
-        "on-scroll-down": "wlwidgets media next"
+        "on-click": "wlperch media play-pause",
+        "on-click-right": "wlperch toggle",
+        "on-scroll-up": "wlperch media previous",
+        "on-scroll-down": "wlperch media next"
     },
     "custom/media-prev": {
-        "exec": "wlwidgets status media prev",
+        "exec": "wlperch status media prev",
         "return-type": "json",
         "format": "{}",
-        "on-click": "wlwidgets media previous"
+        "on-click": "wlperch media previous"
     },
     "custom/media-next": {
-        "exec": "wlwidgets status media next",
+        "exec": "wlperch status media next",
         "return-type": "json",
         "format": "{}",
-        "on-click": "wlwidgets media next"
+        "on-click": "wlperch media next"
     },
     // Running project timer (time tracking by workspace); opens the time panel.
     "custom/timer": {
-        "exec": "wlwidgets status timer",
+        "exec": "wlperch status timer",
         "return-type": "json",
         "format": "{}",
-        "on-click": "wlwidgets toggle time"
+        "on-click": "wlperch toggle time"
     },
     // Room temperature + CO2 from Tuya sensors; opens the sensors panel.
     "custom/sensors": {
-        "exec": "wlwidgets status sensors",
+        "exec": "wlperch status sensors",
         "return-type": "json",
         "format": "{}",
-        "on-click": "wlwidgets toggle sensors"
+        "on-click": "wlperch toggle sensors"
     },
     // Bell with the unread count; opens the notification center. Right click
     // toggles do not disturb.
     "custom/notifications": {
-        "exec": "wlwidgets status notifications",
+        "exec": "wlperch status notifications",
         "return-type": "json",
         "format": "{}",
-        "on-click": "wlwidgets toggle notifications",
-        "on-click-right": "wlwidgets notify dnd"
+        "on-click": "wlperch toggle notifications",
+        "on-click-right": "wlperch notify dnd"
     },
     // Waybar's own memory module, opening the system panel.
     "memory": {
         "interval": 5,
         "format": "{used:0.1f}<small> / {total:0.0f} GiB</small>  󰍛",
         "tooltip-format": "{percentage}% used · swap {swapUsed:0.1f} / {swapTotal:0.0f} GiB",
-        "on-click": "wlwidgets toggle system"
+        "on-click": "wlperch toggle system"
     }
 }

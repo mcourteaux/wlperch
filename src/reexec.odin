@@ -1,6 +1,6 @@
 // The GPU driver doesn't give its memory back when we tear EGL down, so once
 // the popup has been hidden for a while the daemon re-executes itself. The
-// control socket is inherited (no window where `wlwidgets toggle` fails) and
+// control socket is inherited (no window where `wlperch toggle` fails) and
 // the CPU/GPU history is handed over in a memfd so the graphs stay intact.
 package main
 
@@ -52,7 +52,7 @@ reexec_self :: proc(show_after := false) {
 		state.gpu_power = thermals.gpu_power_h
 	}
 
-	mfd, err := linux.memfd_create("wlwidgets-state", {})
+	mfd, err := linux.memfd_create("wlperch-state", {})
 	if err != .NONE {
 		log.warnf("memfd_create failed: %v", err)
 		return
@@ -90,7 +90,7 @@ reexec_self :: proc(show_after := false) {
 		if os.exists(path) {exe = path}
 	}
 	args := []cstring {
-		"wlwidgets",
+		"wlperch",
 		"daemon",
 		"--resume",
 		strings.clone_to_cstring(int_to_string(int(app.ipc_fd)), context.temp_allocator),

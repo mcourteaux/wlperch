@@ -106,7 +106,7 @@ draw_notifications :: proc(w: f32) {
 
 	if !config.notifications || !notifs.owner {
 		p := im.GetCursorScreenPos()
-		msg := !config.notifications ? "Notifications are off in the config ([notifications] enabled)." : notifs.other != "" ? fmt.tprintf("%s is showing your notifications right now. wlwidgets takes over as soon as it stops.", notifs.other) : "Another program is showing your notifications right now. wlwidgets takes over as soon as it stops."
+		msg := !config.notifications ? "Notifications are off in the config ([notifications] enabled)." : notifs.other != "" ? fmt.tprintf("%s is showing your notifications right now. wlperch takes over as soon as it stops.", notifs.other) : "Another program is showing your notifications right now. wlperch takes over as soon as it stops."
 		im.DrawList_AddRectFilled(dl(), p, {p.x + inner, p.y + 78}, col32(C_ORANGE, 0.1), 9)
 		draw_text(fonts.ui, 16, {p.x + 12, p.y + 11}, col32(C_ORANGE), ICON_INFO)
 		im.SetCursorScreenPos({p.x + 38, p.y + 10})

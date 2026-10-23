@@ -532,7 +532,7 @@ catcher_create :: proc(output: ^wl.Output) {
 	plat.catcher = wl.compositor_create_surface(plat.compositor)
 	plat.catcher_buffer = wl.wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(plat.single_pixel, 0, 0, 0, 0)
 	plat.catcher_viewport = wl.wp_viewporter_get_viewport(plat.viewporter, plat.catcher)
-	plat.catcher_layer = wl.zwlr_layer_shell_v1_get_layer_surface(plat.layer_shell, plat.catcher, output, wl.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "wlwidgets-backdrop")
+	plat.catcher_layer = wl.zwlr_layer_shell_v1_get_layer_surface(plat.layer_shell, plat.catcher, output, wl.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "wlperch-backdrop")
 	wl.zwlr_layer_surface_v1_add_listener(plat.catcher_layer, &catcher_listener, nil)
 	wl.zwlr_layer_surface_v1_set_anchor(plat.catcher_layer, wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM | wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT)
 	wl.zwlr_layer_surface_v1_set_exclusive_zone(plat.catcher_layer, -1)
@@ -776,7 +776,7 @@ platform_show :: proc(placement: Popup_Placement, width, height: i32) -> bool {
 	// The backdrop must be created first so it stacks below the popup.
 	if placement.backdrop {catcher_create(output)}
 
-	plat.layer_surface = wl.zwlr_layer_shell_v1_get_layer_surface(plat.layer_shell, plat.surface, output, placement.layer, "wlwidgets")
+	plat.layer_surface = wl.zwlr_layer_shell_v1_get_layer_surface(plat.layer_shell, plat.surface, output, placement.layer, "wlperch")
 	wl.zwlr_layer_surface_v1_add_listener(plat.layer_surface, &layer_surface_listener, nil)
 	wl.zwlr_layer_surface_v1_set_size(plat.layer_surface, u32(width), u32(height))
 	wl.zwlr_layer_surface_v1_set_anchor(plat.layer_surface, placement.anchor)
@@ -882,7 +882,7 @@ win_xdg_listener := wl.Xdg_Surface_Listener {
 	},
 }
 
-// A regular application window (used by `wlwidgets setup`), rendered with the
+// A regular application window (used by `wlperch setup`), rendered with the
 // same EGL/ImGui path as the popup.
 platform_open_window :: proc(title, app_id: string, width, height: i32) -> bool {
 	if plat.surface != nil || plat.xdg_wm_base == nil {return false}

@@ -1,4 +1,4 @@
-# wlwidgets — TODO
+# wlperch — TODO
 
 Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 
@@ -11,13 +11,13 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] xkbcommon bindings for keyboard (keysyms, utf8 text, key repeat)
 - [x] Dear ImGui platform layer for Wayland (pointer, scroll, keyboard, text, cursor shapes)
 - [x] Event loop: poll(wayland fd, wake pipe, control socket, timer); 0% CPU when hidden
-- [x] Single-instance daemon + control socket: `wlwidgets toggle|show|hide|quit|daemon`
+- [x] Single-instance daemon + control socket: `wlperch toggle|show|hide|quit|daemon`
 - [x] Layer-shell popup (overlay, anchored top-right by default, configurable) on focused output — floats, never in the tiling tree
 - [x] Hide on Escape and on click outside (transparent backdrop layer; sway drops on-demand focus so keyboard is exclusive)
 - [x] Auto-size popup height to content (clamped to output height)
 - [x] HiDPI: integer buffer scale (wl_surface.preferred_buffer_scale / output scale)
 - [x] Fractional scaling (wp_fractional_scale_v1 + viewporter), tested at 1.5×
-- [x] Config file `~/.config/wlwidgets/config.ini` with defaults written on first run
+- [x] Config file `~/.config/wlperch/config.ini` with defaults written on first run
 - [x] Background sampler threads; UI reads snapshots under mutex, actions applied after unlock
 - [x] Safe subprocess helper (posix_spawn, captured stdout, timeouts, detached launches)
 - [x] Lean idle daemon: lazy EGL, NVIDIA-only glvnd vendor, re-exec after 30 s hidden (history kept via memfd), small temp arenas → ~38 MB RSS
@@ -52,7 +52,7 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] CPU % history graph (/proc/stat), current %, per-core strip, temperature
 - [x] GPU % history graph (NVML via dlopen; AMD sysfs `gpu_busy_percent` fallback), VRAM, temperature, power
 - [x] Memory usage bar
-- [x] Memory warning at configurable % (`memory_warn_percent`): red row in popup + red, pulsing waybar button via `wlwidgets status`
+- [x] Memory warning at configurable % (`memory_warn_percent`): red row in popup + red, pulsing waybar button via `wlperch status`
 - [x] Keep history sampling while popup is hidden
 
 ### Keyboard
@@ -86,12 +86,12 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 
 ## Panels (modular popups)
 - [x] `[panel.NAME]` sections: modules in columns, width, header/title; first = default
-- [x] `wlwidgets toggle|show <panel>`; switching panels in place (resize + fade)
+- [x] `wlperch toggle|show <panel>`; switching panels in place (resize + fade)
 - [x] Restart keeps the open panel
 - [x] perf panel: cpu (load, per-core, uptime), memory (history, used/cache/free, swap, warning), gpu (VRAM), processes (top CPU / memory, grouped by executable, sampled only while shown)
 - [x] sensors panel: Tuya rooms (temp/humidity/battery/age), air quality (CO2 verdict, PM, HCHO), heater; watcher kept running by the daemon
-- [x] waybar accessors: memory → perf, `wlwidgets status sensors` pill → sensors (CO2 warning classes)
-- [x] Time tracker: [project.*] config, per-monitor project workspaces (create/recreate/pin), counting while focused, idle pause via ext-idle-notify-v1, TSV log + crash-safe heartbeat, today/week views, quick switch, `wlwidgets track`, waybar timer pill
+- [x] waybar accessors: memory → perf, `wlperch status sensors` pill → sensors (CO2 warning classes)
+- [x] Time tracker: [project.*] config, per-monitor project workspaces (create/recreate/pin), counting while focused, idle pause via ext-idle-notify-v1, TSV log + crash-safe heartbeat, today/week views, quick switch, `wlperch track`, waybar timer pill
 - [x] Group lock: monitors follow each other into/out of project workspaces (toggle + `track lock`), decision logic unit-tested
 - [x] Today timeline: 24 h, zoom on scroll (15 min–24 h, around the pointer), drag to pan, double-click to reset, adaptive tick labels
 - [x] Breaks: idle periods logged per project (or "(no project)"), crash-safe; "Away from keyboard" stats (count, time away, work between breaks)
@@ -102,7 +102,7 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Sensor history graphs: readings persisted to sensors.bin (binary, last 7 days only), 24 h graphs on hover (tooltips grow the popup surface)
 
 ## Setup window (self-install)
-- [x] `wlwidgets setup` (and auto-open when run from a download): xdg_toplevel window with the same renderer
+- [x] `wlperch setup` (and auto-open when run from a download): xdg_toplevel window with the same renderer
 - [x] Components with live status + actions: program, service, config, sway file, waybar files + hook (comment-aware JSONC patch, backups), RAPL udev rule (pkexec), launcher entry
 - [x] File previews; "Install recommended"; ⚙ button in panels
 - [x] Tested end-to-end in a headless nested sway with a fake HOME
@@ -114,7 +114,7 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Tested under sway with grim + vptr: layout switch, outside click, Escape, IPC toggle, HDMI output switch (both ways), volume wheel, mute, night light, copy IP, preset dropdown, scrolling, fractional 1.5x, re-exec/state hand-over
 - [x] Panel tabs at the top of every popup (labels, or icons only when narrow)
 - [x] Performance panel renamed to "system" (`toggle perf` still works); storage card lives there
-- [x] Media card (MPRIS over sd-bus: art, title/artist/album, progress, prev/play-pause/next, player switcher), `wlwidgets media …`, waybar group/media
+- [x] Media card (MPRIS over sd-bus: art, title/artist/album, progress, prev/play-pause/next, player switcher), `wlperch media …`, waybar group/media
 - [x] Notification server: popups (software-rendered, actions, hover pause, OSD replace + progress), notification center panel with 7-day binary history, do not disturb, waybar bell, setup takeover from dunst
 - [x] Main panel is quick settings + misc: toggle tiles (night light, do not disturb, Bluetooth, group lock, keep workspaces), keyboard layouts, links to the other panels; system graphs moved out (perf panel)
 - [x] Perf graphs zoomable (scroll; 1 h of history), live until you look back; double-click or reopen returns to live

@@ -105,7 +105,7 @@ draw_ui :: proc() -> f32 {
 	im.PushStyleVar(.WindowBorderSize, 1)
 	im.PushStyleVar(.WindowRounding, 18)
 	im.PushStyleVarImVec2(.WindowPadding, {16, 16})
-	im.Begin("wlwidgets", nil, {.NoTitleBar, .NoResize, .NoMove, .NoCollapse, .NoSavedSettings})
+	im.Begin("wlperch", nil, {.NoTitleBar, .NoResize, .NoMove, .NoCollapse, .NoSavedSettings})
 	im.PopStyleVar(3)
 	im.PopStyleColor(2)
 
@@ -215,7 +215,7 @@ draw_header :: proc(width: f32) {
 
 	// Restart: picks up a newly installed binary and config changes.
 	im.SetCursorScreenPos({right - 28, y - 3})
-	if icon_button("##restart", ICON_REFRESH, C_MUTED, 28, tooltip = "Restart wlwidgets (new build, config)") {
+	if icon_button("##restart", ICON_REFRESH, C_MUTED, 28, tooltip = "Restart wlperch (new build, config)") {
 		restart_requested = true
 	}
 	im.SetCursorScreenPos({right - 60, y - 3})
@@ -302,7 +302,7 @@ draw_title_row :: proc(title: string, width: f32) {
 		tsz := measure(fonts.mono, 16, tm)
 		draw_text(fonts.mono, 16, {p.x + width - tsz.x, p.y + 5}, col32(C_MUTED), tm)
 		im.SetCursorScreenPos({p.x + width - tsz.x - 40, p.y + 1})
-		if icon_button("##restart", ICON_REFRESH, C_MUTED, 28, tooltip = "Restart wlwidgets (new build, config)") {
+		if icon_button("##restart", ICON_REFRESH, C_MUTED, 28, tooltip = "Restart wlperch (new build, config)") {
 			restart_requested = true
 		}
 		im.SetCursorScreenPos({p.x + width - tsz.x - 72, p.y + 1})

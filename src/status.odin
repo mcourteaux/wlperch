@@ -1,4 +1,4 @@
-// `wlwidgets status`: a tiny standalone loop for a waybar custom module
+// `wlperch status`: a tiny standalone loop for a waybar custom module
 // ("return-type": "json"). It draws attention when memory runs low.
 package main
 
@@ -47,7 +47,7 @@ status_loop :: proc() {
 	}
 }
 
-// `wlwidgets status sensors`: "󰔏 20.4°  ● 439" — the bar_room temperature and
+// `wlperch status sensors`: "󰔏 20.4°  ● 439" — the bar_room temperature and
 // the freshest CO2 reading; class co2-warn / co2-high when the air gets stale.
 status_sensors_loop :: proc() {
 	sensors_read_only = true
@@ -102,7 +102,7 @@ status_sensors_loop :: proc() {
 	}
 }
 
-// `wlwidgets status notifications`: a bell with the unread count; bell-off
+// `wlperch status notifications`: a bell with the unread count; bell-off
 // under do not disturb.
 status_notifications_loop :: proc() {
 	for {
@@ -118,7 +118,7 @@ status_notifications_loop :: proc() {
 				switch {
 				case !owner:
 					class = "off"
-					tooltip = "Another program shows notifications (see wlwidgets setup)"
+					tooltip = "Another program shows notifications (see wlperch setup)"
 				case dnd:
 					text = unread > 0 ? fmt.tprintf("%s %d", ICON_BELL_OFF, unread) : ICON_BELL_OFF
 					class = "dnd"
@@ -133,7 +133,7 @@ status_notifications_loop :: proc() {
 			}
 		} else {
 			class = "off"
-			tooltip = "wlwidgets is not running"
+			tooltip = "wlperch is not running"
 		}
 		tooltip = strings.concatenate({tooltip, "\\nClick: notifications · right click: do not disturb"}, context.temp_allocator)
 		line := fmt.tprintf(`{{"text": "%s", "tooltip": "%s", "class": "%s"}}` + "\n", text, tooltip, class)
@@ -143,7 +143,7 @@ status_notifications_loop :: proc() {
 	}
 }
 
-// `wlwidgets status timer`: "⏱ NeonRAW 1:23" (today's time on the project
+// `wlperch status timer`: "⏱ NeonRAW 1:23" (today's time on the project
 // being counted), or a dim clock when nothing is counted.
 status_timer_loop :: proc() {
 	dir := data_dir()

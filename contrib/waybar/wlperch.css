@@ -1,8 +1,8 @@
-/* wlwidgets modules for waybar. Import from your style.css (at the top):
- *     @import "wlwidgets.css";
- * Colors match the wlwidgets popup. */
+/* wlperch modules for waybar. Import from your style.css (at the top):
+ *     @import "wlperch.css";
+ * Colors match the wlperch popup. */
 
-#custom-wlwidgets,
+#custom-wlperch,
 #custom-timer,
 #custom-sensors,
 #custom-notifications,
@@ -26,19 +26,19 @@
 }
 
 /* Quick-settings button: accent colored. */
-#custom-wlwidgets {
+#custom-wlperch {
     color: #7aa2f7;
     background-color: rgba(122, 162, 247, 0.16);
     font-size: 17px;
     padding: 0 11px;
     margin: 3px 2px 3px 4px;
 }
-#custom-wlwidgets:hover {
+#custom-wlperch:hover {
     background-color: rgba(122, 162, 247, 0.30);
     color: #9bbcff;
 }
 /* Memory nearly exhausted: red, gently pulsing, shows the percentage. */
-#custom-wlwidgets.memory-warning {
+#custom-wlperch.memory-warning {
     color: #111318;
     background-color: #f7768e;
     font-size: 14px;

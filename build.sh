@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build wlwidgets.
-#   ./build.sh            release build  -> build/wlwidgets
+# Build wlperch.
+#   ./build.sh            release build  -> build/wlperch
 #   ./build.sh debug      debug build
 #   ./build.sh run [...]  build (debug) and run with args
 #   ./build.sh test       run unit tests
@@ -74,44 +74,44 @@ case $MODE in
 	debug|run) FLAGS+=(-debug -o:none) ;;
 	test)
 		# Single-threaded: several tests swap out global state (tracker, panels).
-		odin test src -out:build/wlwidgets-test "${FLAGS[@]}" -debug -define:ODIN_TEST_THREADS=1
+		odin test src -out:build/wlperch-test "${FLAGS[@]}" -debug -define:ODIN_TEST_THREADS=1
 		exit $?
 		;;
 	*)         FLAGS+=(-o:speed) ;;
 esac
-odin build src -out:build/wlwidgets "${FLAGS[@]}"
+odin build src -out:build/wlperch "${FLAGS[@]}"
 odin build tools/vptr -out:build/vptr -o:speed
-echo ">> built build/wlwidgets"
+echo ">> built build/wlperch"
 
 if [[ $MODE == install ]]; then
 	mkdir -p "$HOME/.local/bin"
 	# Replace atomically: a running daemon keeps its (now unlinked) binary.
-	install -m 755 build/wlwidgets "$HOME/.local/bin/.wlwidgets.new"
-	mv -f "$HOME/.local/bin/.wlwidgets.new" "$HOME/.local/bin/wlwidgets"
-	echo ">> installed ~/.local/bin/wlwidgets (restart a running daemon with: wlwidgets restart)"
+	install -m 755 build/wlperch "$HOME/.local/bin/.wlperch.new"
+	mv -f "$HOME/.local/bin/.wlperch.new" "$HOME/.local/bin/wlperch"
+	echo ">> installed ~/.local/bin/wlperch (restart a running daemon with: wlperch restart)"
 	# The sway side lives in one file; install it unless some config already has it.
 	SWAYD="${XDG_CONFIG_HOME:-$HOME/.config}/sway/config.d"
-	if [[ -d $SWAYD ]] && ! grep -qs "exec wlwidgets daemon" "$SWAYD"/*; then
-		cp contrib/sway/wlwidgets.conf "$SWAYD/wlwidgets.conf"
-		echo ">> installed $SWAYD/wlwidgets.conf (reload sway to activate)"
+	if [[ -d $SWAYD ]] && ! grep -qs "exec wlperch daemon" "$SWAYD"/*; then
+		cp contrib/sway/wlperch.conf "$SWAYD/wlperch.conf"
+		echo ">> installed $SWAYD/wlperch.conf (reload sway to activate)"
 	fi
 	# Waybar: module definitions + styling in two files next to your config.
 	# Your own config/style are never edited; we print what to add.
 	WAYBARD="${XDG_CONFIG_HOME:-$HOME/.config}/waybar"
 	if [[ -d $WAYBARD ]]; then
-		for f in wlwidgets.jsonc wlwidgets.css; do
+		for f in wlperch.jsonc wlperch.css; do
 			if [[ ! -e $WAYBARD/$f ]]; then
 				cp "contrib/waybar/$f" "$WAYBARD/$f"
 				echo ">> installed $WAYBARD/$f"
 			fi
 		done
-		if ! grep -qs 'wlwidgets.jsonc' "$WAYBARD"/config*; then
+		if ! grep -qs 'wlperch.jsonc' "$WAYBARD"/config*; then
 			cat <<'MSG'
->> waybar: to show the wlwidgets buttons, add to your waybar config
-       "include": ["wlwidgets.jsonc"],
-   put "custom/wlwidgets" (and optionally "custom/timer", "custom/sensors",
+>> waybar: to show the wlperch buttons, add to your waybar config
+       "include": ["wlperch.jsonc"],
+   put "custom/wlperch" (and optionally "custom/timer", "custom/sensors",
    "memory") in "modules-right", and add at the top of style.css
-       @import "wlwidgets.css";
+       @import "wlperch.css";
    then reload waybar (pkill -SIGUSR2 waybar).
 MSG
 		fi
@@ -120,5 +120,5 @@ fi
 
 if [[ $MODE == run ]]; then
 	shift
-	exec ./build/wlwidgets "$@"
+	exec ./build/wlperch "$@"
 fi

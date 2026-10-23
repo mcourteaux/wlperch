@@ -22,7 +22,7 @@ IPC_GET_CONFIG :: 9
 EVENT_WORKSPACE :: 0x80000000
 EVENT_WINDOW :: 0x80000003
 
-PLACEHOLDER_APP_ID :: "wlwidgets-placeholder"
+PLACEHOLDER_APP_ID :: "wlperch-placeholder"
 
 Sway_Output :: struct {
 	name, make, model: string,

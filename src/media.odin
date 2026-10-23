@@ -1,7 +1,7 @@
 // Media players over MPRIS (org.mpris.MediaPlayer2.* on the session bus):
 // what's playing, play/pause, next, previous. The daemon polls on its own
-// thread while the popup is open; `wlwidgets status media` and
-// `wlwidgets media <cmd>` talk to the bus directly.
+// thread while the popup is open; `wlperch status media` and
+// `wlperch media <cmd>` talk to the bus directly.
 package main
 
 import "core:fmt"
@@ -192,7 +192,7 @@ local_art :: proc(url: string) -> string {
 	if !strings.has_prefix(url, "http://") && !strings.has_prefix(url, "https://") {return ""}
 	base := os.get_env("XDG_CACHE_HOME", context.temp_allocator)
 	if base == "" {base = strings.concatenate({os.get_env("HOME", context.temp_allocator), "/.cache"}, context.temp_allocator)}
-	dir := strings.concatenate({base, "/wlwidgets/art"}, context.temp_allocator)
+	dir := strings.concatenate({base, "/wlperch/art"}, context.temp_allocator)
 	path := fmt.aprintf("%s/%x", dir, hash.fnv64a(transmute([]u8)url))
 	if !os.exists(path) {
 		os.make_directory_all(dir)
@@ -361,10 +361,10 @@ media_fmt_time :: proc(us: i64) -> string {
 
 // ---- CLI and waybar ----------------------------------------------------------------
 
-// `wlwidgets media play-pause|next|previous|play|pause [player]`.
+// `wlperch media play-pause|next|previous|play|pause [player]`.
 media_cli :: proc(args: []string) -> int {
 	if len(args) == 0 {
-		fmt.eprintln("usage: wlwidgets media play-pause|play|pause|next|previous")
+		fmt.eprintln("usage: wlperch media play-pause|play|pause|next|previous")
 		return 2
 	}
 	member: string
@@ -375,7 +375,7 @@ media_cli :: proc(args: []string) -> int {
 	case "next":                 member = "Next"
 	case "previous", "prev":     member = "Previous"
 	case:
-		fmt.eprintln("usage: wlwidgets media play-pause|play|pause|next|previous")
+		fmt.eprintln("usage: wlperch media play-pause|play|pause|next|previous")
 		return 2
 	}
 	bus := media_open_bus()
@@ -428,7 +428,7 @@ clip_runes :: proc(s: string, n: int) -> string {
 	return s
 }
 
-// `wlwidgets status media [prev|next]`: the track with a play/pause glyph
+// `wlperch status media [prev|next]`: the track with a play/pause glyph
 // (click toggles), or a lone previous/next button. Empty text (module
 // hidden) when nothing plays.
 status_media_loop :: proc(part: string) {

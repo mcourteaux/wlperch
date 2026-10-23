@@ -1,6 +1,6 @@
-// `wlwidgets setup`: the program installs and manages its own components.
+// `wlperch setup`: the program installs and manages its own components.
 // Started from a download (not installed yet, no daemon running), plain
-// `wlwidgets` opens this too.
+// `wlperch` opens this too.
 package main
 
 import "core:fmt"
@@ -14,12 +14,13 @@ import "core:time"
 
 import "wl"
 
-SWAY_FILE :: #load("../contrib/sway/wlwidgets.conf", string)
-WAYBAR_JSONC :: #load("../contrib/waybar/wlwidgets.jsonc", string)
-WAYBAR_CSS :: #load("../contrib/waybar/wlwidgets.css", string)
+SWAY_FILE :: #load("../contrib/sway/wlperch.conf", string)
+WAYBAR_JSONC :: #load("../contrib/waybar/wlperch.jsonc", string)
+WAYBAR_CSS :: #load("../contrib/waybar/wlperch.css", string)
 
 RAPL_RULE :: `SUBSYSTEM=="powercap", ACTION=="add", RUN+="/bin/chmod 0444 /sys%p/energy_uj"`
-RAPL_RULE_PATH :: "/etc/udev/rules.d/90-wlwidgets-rapl.rules"
+RAPL_RULE_PATH :: "/etc/udev/rules.d/90-wlperch-rapl.rules"
+RAPL_RULE_PATH_OLD :: "/etc/udev/rules.d/90-wlwidgets-rapl.rules" // from before the rename
 
 Comp_State :: enum {
 	Missing,
@@ -56,7 +57,7 @@ Setup :: struct {
 	comps:     [Comp_Id]Component,
 	checked:   time.Tick,
 	self_path: string, // the running binary
-	bin_path:  string, // ~/.local/bin/wlwidgets
+	bin_path:  string, // ~/.local/bin/wlperch
 	strs:      [dynamic]string,
 }
 setup: Setup
@@ -87,12 +88,12 @@ detail :: proc(c: ^Component, line: string) {
 }
 
 sway_dir :: proc() -> string {return strings.concatenate({config_home(), "/sway/config.d"}, context.temp_allocator)}
-sway_file :: proc() -> string {return strings.concatenate({sway_dir(), "/wlwidgets.conf"}, context.temp_allocator)}
+sway_file :: proc() -> string {return strings.concatenate({sway_dir(), "/wlperch.conf"}, context.temp_allocator)}
 waybar_dir :: proc() -> string {return strings.concatenate({config_home(), "/waybar"}, context.temp_allocator)}
 launcher_file :: proc() -> string {
 	base := os.get_env("XDG_DATA_HOME", context.temp_allocator)
 	if base == "" {base = strings.concatenate({home(), "/.local/share"}, context.temp_allocator)}
-	return strings.concatenate({base, "/applications/wlwidgets-setup.desktop"}, context.temp_allocator)
+	return strings.concatenate({base, "/applications/wlperch-setup.desktop"}, context.temp_allocator)
 }
 
 // The user's waybar config file (config.jsonc or config).
@@ -111,7 +112,7 @@ files_equal :: proc(a, b: string) -> bool {
 }
 
 is_installed_binary :: proc() -> bool {
-	return setup_self_path() == strings.concatenate({home(), "/.local/bin/wlwidgets"}, context.temp_allocator)
+	return setup_self_path() == strings.concatenate({home(), "/.local/bin/wlperch"}, context.temp_allocator)
 }
 
 setup_self_path :: proc() -> string {
@@ -167,7 +168,7 @@ setup_check :: proc() {
 			for e in entries {
 				full := strings.concatenate({sway_dir(), "/", e.name}, context.temp_allocator)
 				if full == ours {continue}
-				if text, ok := read_text(full); ok && strings.contains(text, "exec wlwidgets daemon") {custom = full}
+				if text, ok := read_text(full); ok && strings.contains(text, "exec wlperch daemon") {custom = full}
 			}
 		}
 		switch {
@@ -194,22 +195,22 @@ setup_check :: proc() {
 			p.state = .Unavailable
 			detail(p, "no ~/.config/waybar")
 		} else {
-			j := strings.concatenate({dir, "/wlwidgets.jsonc"}, context.temp_allocator)
-			css := strings.concatenate({dir, "/wlwidgets.css"}, context.temp_allocator)
+			j := strings.concatenate({dir, "/wlperch.jsonc"}, context.temp_allocator)
+			css := strings.concatenate({dir, "/wlperch.css"}, context.temp_allocator)
 			jt, jok := read_text(j)
 			ct, cok := read_text(css)
 			files_ok := jok && cok
 			cfg := waybar_config()
 			cfg_text, _ := read_text(cfg)
 			style_text, _ := read_text(strings.concatenate({dir, "/style.css"}, context.temp_allocator))
-			hooked := strings.contains(cfg_text, "wlwidgets.jsonc") && strings.contains(cfg_text, "custom/wlwidgets") && strings.contains(style_text, "wlwidgets.css")
+			hooked := strings.contains(cfg_text, "wlperch.jsonc") && strings.contains(cfg_text, "custom/wlperch") && strings.contains(style_text, "wlperch.css")
 			switch {
 			case !files_ok:                              p.state = .Missing
 			case jt != WAYBAR_JSONC || ct != WAYBAR_CSS: p.state = .Outdated
 			case !hooked:                                p.state = .Partial
 			case:                                        p.state = .Installed
 			}
-			detail(p, fmt.tprintf("%s/wlwidgets.{{jsonc,css}}", dir))
+			detail(p, fmt.tprintf("%s/wlperch.{{jsonc,css}}", dir))
 			if cfg != "" {detail(p, hooked ? fmt.tprintf("hooked into %s", cfg) : fmt.tprintf("not yet in %s", cfg))}
 		}
 	}
@@ -222,7 +223,7 @@ setup_check :: proc() {
 		} else {
 			readable := posix.access("/sys/class/powercap/intel-rapl:0/energy_uj", {.R_OK}) == .OK
 			switch {
-			case os.exists(RAPL_RULE_PATH): p.state = .Installed
+			case os.exists(RAPL_RULE_PATH) || os.exists(RAPL_RULE_PATH_OLD): p.state = .Installed
 			case readable:                  p.state = .Custom
 			case:                           p.state = .Missing
 			}
@@ -239,9 +240,9 @@ setup_check :: proc() {
 		case !config.notifications:
 			p.state = .Unavailable
 			detail(p, "off in the config: [notifications] enabled = false")
-		case owner == "wlwidgets":
+		case owner == "wlperch":
 			p.state = .Running
-			detail(p, "wlwidgets shows your notifications")
+			detail(p, "wlperch shows your notifications")
 		case owner != "":
 			p.state = .Missing
 			detail(p, fmt.tprintf("%s shows your notifications right now", owner))
@@ -279,7 +280,7 @@ done :: proc(id: Comp_Id, ok: bool, msg: string) {
 write_file :: proc(path, content: string, mode: os.Permissions = os.Permissions_Default_File) -> bool {
 	dir := path[:strings.last_index_byte(path, '/')]
 	os.make_directory_all(dir)
-	tmp := strings.concatenate({path, ".wlwidgets-tmp"}, context.temp_allocator)
+	tmp := strings.concatenate({path, ".wlperch-tmp"}, context.temp_allocator)
 	if os.write_entire_file(tmp, content, mode) != nil {return false}
 	return os.rename(tmp, path) == nil
 }
@@ -287,7 +288,7 @@ write_file :: proc(path, content: string, mode: os.Permissions = os.Permissions_
 @(private = "file")
 backup :: proc(path: string) {
 	if data, err := os.read_entire_file(path, context.temp_allocator); err == nil {
-		_ = os.write_entire_file(strings.concatenate({path, ".before-wlwidgets"}, context.temp_allocator), data)
+		_ = os.write_entire_file(strings.concatenate({path, ".before-wlperch"}, context.temp_allocator), data)
 	}
 }
 
@@ -298,7 +299,7 @@ setup_install_program :: proc() {
 		return
 	}
 	ok := write_file(setup.bin_path, string(data), os.Permissions_Read_All + os.Permissions_Execute_All + {.Write_User})
-	done(.Program, ok, ok ? "installed to ~/.local/bin" : "couldn't write ~/.local/bin/wlwidgets")
+	done(.Program, ok, ok ? "installed to ~/.local/bin" : "couldn't write ~/.local/bin/wlperch")
 }
 
 setup_start_service :: proc(restart: bool) {
@@ -340,8 +341,8 @@ setup_reload_sway :: proc() {
 
 setup_install_waybar_files :: proc() -> bool {
 	dir := waybar_dir()
-	ok := write_file(strings.concatenate({dir, "/wlwidgets.jsonc"}, context.temp_allocator), WAYBAR_JSONC) &&
-	      write_file(strings.concatenate({dir, "/wlwidgets.css"}, context.temp_allocator), WAYBAR_CSS)
+	ok := write_file(strings.concatenate({dir, "/wlperch.jsonc"}, context.temp_allocator), WAYBAR_JSONC) &&
+	      write_file(strings.concatenate({dir, "/wlperch.css"}, context.temp_allocator), WAYBAR_CSS)
 	done(.Waybar, ok, ok ? "module files installed" : "couldn't write the waybar files")
 	return ok
 }
@@ -356,9 +357,9 @@ setup_hook_waybar :: proc() {
 		return
 	}
 	text, _ := read_text(cfg)
-	if !strings.contains(text, "wlwidgets.jsonc") {
+	if !strings.contains(text, "wlperch.jsonc") {
 		if strings.contains(text, `"include"`) {
-			done(.Waybar, false, `your config already has an "include": add "wlwidgets.jsonc" to it`)
+			done(.Waybar, false, `your config already has an "include": add "wlperch.jsonc" to it`)
 			return
 		}
 		brace := strings.index_byte(text, '{')
@@ -366,26 +367,26 @@ setup_hook_waybar :: proc() {
 			done(.Waybar, false, "multi-bar configs aren't patched automatically; see the README")
 			return
 		}
-		text = strings.concatenate({text[:brace + 1], "\n    \"include\": [\"wlwidgets.jsonc\"],", text[brace + 1:]}, context.temp_allocator)
+		text = strings.concatenate({text[:brace + 1], "\n    \"include\": [\"wlperch.jsonc\"],", text[brace + 1:]}, context.temp_allocator)
 	}
-	if !strings.contains(text, `"custom/wlwidgets"`) {
+	if !strings.contains(text, `"custom/wlperch"`) {
 		key := strings.index(text, `"modules-right"`)
 		if key < 0 {
-			done(.Waybar, false, `no "modules-right" in your config: add "custom/wlwidgets" to a modules list`)
+			done(.Waybar, false, `no "modules-right" in your config: add "custom/wlperch" to a modules list`)
 			return
 		}
 		open := key + strings.index_byte(text[key:], '[')
 		if open < key {
-			done(.Waybar, false, `couldn't parse "modules-right": add "custom/wlwidgets" by hand`)
+			done(.Waybar, false, `couldn't parse "modules-right": add "custom/wlperch" by hand`)
 			return
 		}
 		close, last, ok := jsonc_array_end(text, open)
 		if !ok {
-			done(.Waybar, false, `couldn't parse "modules-right": add "custom/wlwidgets" by hand`)
+			done(.Waybar, false, `couldn't parse "modules-right": add "custom/wlperch" by hand`)
 			return
 		}
 		// Insert right after the last element (not inside a trailing comment).
-		insert := last < 0 ? `"custom/wlwidgets"` : `, "custom/wlwidgets"`
+		insert := last < 0 ? `"custom/wlperch"` : `, "custom/wlperch"`
 		cut := last < 0 ? open + 1 : last
 		_ = close
 		text = strings.concatenate({text[:cut], insert, text[cut:]}, context.temp_allocator)
@@ -396,12 +397,12 @@ setup_hook_waybar :: proc() {
 		return
 	}
 	style := strings.concatenate({waybar_dir(), "/style.css"}, context.temp_allocator)
-	if st, ok := read_text(style); ok && !strings.contains(st, "wlwidgets.css") {
+	if st, ok := read_text(style); ok && !strings.contains(st, "wlperch.css") {
 		backup(style)
-		write_file(style, strings.concatenate({"@import \"wlwidgets.css\";\n", st}, context.temp_allocator))
+		write_file(style, strings.concatenate({"@import \"wlperch.css\";\n", st}, context.temp_allocator))
 	}
 	posix.system("pkill -SIGUSR2 -x waybar")
-	done(.Waybar, true, "added to your bar (backups: *.before-wlwidgets)")
+	done(.Waybar, true, "added to your bar (backups: *.before-wlperch)")
 }
 
 setup_reload_waybar :: proc() {
@@ -420,7 +421,7 @@ setup_install_rapl :: proc(install: bool) {
 	if install {
 		script = fmt.aprintf(`mkdir -p /etc/udev/rules.d && printf '%%s\n' '%s' > %s && udevadm control --reload-rules && udevadm trigger --action=add --subsystem-match=powercap`, RAPL_RULE, RAPL_RULE_PATH)
 	} else {
-		script = fmt.aprintf(`rm -f %s && chmod 0400 /sys/class/powercap/*/energy_uj`, RAPL_RULE_PATH)
+		script = fmt.aprintf(`rm -f %s %s && chmod 0400 /sys/class/powercap/*/energy_uj`, RAPL_RULE_PATH, RAPL_RULE_PATH_OLD)
 	}
 	Job :: struct {
 		script:  string,
@@ -432,7 +433,7 @@ setup_install_rapl :: proc(install: bool) {
 		job := cast(^Job)data
 		// Capture the script's error output so failures can be shown.
 		out, code := run_code({"pkexec", "sh", "-c", strings.concatenate({job.script, " 2>&1"}, context.temp_allocator)}, 180 * time.Second, context.temp_allocator)
-		ok := job.install ? os.exists(RAPL_RULE_PATH) : !os.exists(RAPL_RULE_PATH)
+		ok := job.install ? os.exists(RAPL_RULE_PATH) : !os.exists(RAPL_RULE_PATH) && !os.exists(RAPL_RULE_PATH_OLD)
 		msg: string
 		switch {
 		case ok:          msg = job.install ? "installed; CPU power is now readable" : "removed"
@@ -460,8 +461,8 @@ setup_install_launcher :: proc(install: bool) {
 	}
 	entry := fmt.tprintf(`[Desktop Entry]
 Type=Application
-Name=wlwidgets setup
-Comment=Install and configure wlwidgets components
+Name=wlperch setup
+Comment=Install and configure wlperch components
 Exec=%s setup
 Icon=preferences-system
 Terminal=false
@@ -497,10 +498,10 @@ setup_take_notifications :: proc(take: bool) {
 	units := other_notification_units()
 	if len(units) == 0 && take {
 		owner := notification_owner()
-		if owner != "" && owner != "wlwidgets" {
+		if owner != "" && owner != "wlperch" {
 			run({"pkill", "-x", owner}, 3 * time.Second, context.temp_allocator)
 			time.sleep(400 * time.Millisecond)
-			done(.Notifications, notification_owner() == "wlwidgets", fmt.tprintf("stopped %s (it isn't a systemd service; remove it from your autostart)", owner))
+			done(.Notifications, notification_owner() == "wlperch", fmt.tprintf("stopped %s (it isn't a systemd service; remove it from your autostart)", owner))
 		} else {
 			done(.Notifications, false, "no other notification daemon found")
 		}
@@ -516,18 +517,18 @@ setup_take_notifications :: proc(take: bool) {
 		return
 	}
 	if !take {
-		done(.Notifications, true, fmt.tprintf("%s may run again; set [notifications] enabled = false and restart wlwidgets to hand over", strings.join(units, ", ", context.temp_allocator)))
+		done(.Notifications, true, fmt.tprintf("%s may run again; set [notifications] enabled = false and restart wlperch to hand over", strings.join(units, ", ", context.temp_allocator)))
 		return
 	}
 	// The daemon was queued for the name: give it a moment.
 	owner := ""
 	for _ in 0 ..< 10 {
 		owner = notification_owner()
-		if owner == "wlwidgets" {break}
+		if owner == "wlperch" {break}
 		time.sleep(200 * time.Millisecond)
 	}
-	ok := owner == "wlwidgets"
-	done(.Notifications, ok, ok ? fmt.tprintf("wlwidgets now shows notifications (%s masked)", strings.join(units, ", ", context.temp_allocator)) : fmt.tprintf("%s masked; start the background service to take over", strings.join(units, ", ", context.temp_allocator)))
+	ok := owner == "wlperch"
+	done(.Notifications, ok, ok ? fmt.tprintf("wlperch now shows notifications (%s masked)", strings.join(units, ", ", context.temp_allocator)) : fmt.tprintf("%s masked; start the background service to take over", strings.join(units, ", ", context.temp_allocator)))
 }
 
 // Program, config, sway, waybar (files + hook), launcher, then start the daemon.
@@ -549,7 +550,7 @@ setup_install_recommended :: proc() {
 // Open the setup window as its own process (from a panel's ⚙ button).
 setup_launch :: proc() {
 	exe := setup_self_path()
-	if exe == "" {exe = "wlwidgets"}
+	if exe == "" {exe = "wlperch"}
 	launch_detached({exe, "setup"})
 }
 
@@ -557,7 +558,7 @@ setup_launch :: proc() {
 
 run_setup :: proc() {
 	setup.self_path = strings.clone(setup_self_path())
-	setup.bin_path = strings.concatenate({home(), "/.local/bin/wlwidgets"})
+	setup.bin_path = strings.concatenate({home(), "/.local/bin/wlperch"})
 	fds: [2]posix.FD
 	posix.pipe(&fds)
 	app.wake_r, app.wake_w = fds[0], fds[1]
@@ -566,7 +567,7 @@ run_setup :: proc() {
 	if !platform_init() {os.exit(1)}
 	im_init()
 	setup_check()
-	if !platform_open_window("wlwidgets setup", "wlwidgets-setup", 820, 860) {
+	if !platform_open_window("wlperch setup", "wlperch-setup", 820, 860) {
 		log.error("couldn't open the setup window")
 		os.exit(1)
 	}

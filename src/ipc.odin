@@ -1,5 +1,5 @@
 // Single-instance control socket. The daemon listens on
-// $XDG_RUNTIME_DIR/wlwidgets.sock; `wlwidgets <cmd>` sends one line to it.
+// $XDG_RUNTIME_DIR/wlperch.sock; `wlperch <cmd>` sends one line to it.
 package main
 
 import "core:fmt"
@@ -12,7 +12,7 @@ ipc_socket_path :: proc() -> string {
 	if dir == "" {dir = "/tmp"}
 	disp := os.get_env("WAYLAND_DISPLAY", context.temp_allocator)
 	if disp == "" {disp = "wayland-0"}
-	return fmt.aprintf("%s/wlwidgets-%s.sock", dir, disp)
+	return fmt.aprintf("%s/wlperch-%s.sock", dir, disp)
 }
 
 @(private = "file")

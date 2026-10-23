@@ -1,4 +1,4 @@
-# wlwidgets
+# wlperch
 
 A quick-settings popup for Sway (and other wlroots compositors), written in
 [Odin](https://odin-lang.org). It speaks the Wayland protocol directly, using
@@ -15,15 +15,15 @@ pressing <kbd>Esc</kbd>, closes it.
 | Section | What it shows / does |
 |---|---|
 | **Header** | Big clock and date · tabs for every panel (so the bar needs only one button) · setup and restart buttons. Panels without the big header get the tabs in their title row. |
-| **Quick settings** | Toggle tiles: night light (wlsunset), do not disturb (wlwidgets' own while it shows notifications, otherwise dunst's), Bluetooth power, and with projects configured group lock and keep-workspaces · keyboard layout switcher (sway xkb layouts) |
-| **Media** | The playing track from any MPRIS player (Spotify, browsers, mpv, VLC…): album art (or the app's icon), title, artist, album, a progress bar, and previous / play-pause / next. With several players, a switcher picks one. Hidden while no player runs. `wlwidgets media play-pause\|next\|previous` from a shell or keybinding. |
-| **Audio** | Two fix buttons: **refresh** switches the default output's card to another profile and back (cures PipeWire's occasional silent sink) and restores the default output; **restart** restarts PipeWire, WirePlumber and pipewire-pulse (`wlwidgets audio refresh/restart` from a shell or keybinding). Output and input devices (click to make default) · volume sliders (drag or scroll, up to 150 %) · mute. For HDMI/DP audio on a GPU, every plugged monitor is listed by its **name and sway connector** (`LG ULTRAWIDE · HDMI 2 · DP-3`). Picking one switches the card profile and the default sink. The full profile list is in a dropdown. |
+| **Quick settings** | Toggle tiles: night light (wlsunset), do not disturb (wlperch' own while it shows notifications, otherwise dunst's), Bluetooth power, and with projects configured group lock and keep-workspaces · keyboard layout switcher (sway xkb layouts) |
+| **Media** | The playing track from any MPRIS player (Spotify, browsers, mpv, VLC…): album art (or the app's icon), title, artist, album, a progress bar, and previous / play-pause / next. With several players, a switcher picks one. Hidden while no player runs. `wlperch media play-pause\|next\|previous` from a shell or keybinding. |
+| **Audio** | Two fix buttons: **refresh** switches the default output's card to another profile and back (cures PipeWire's occasional silent sink) and restores the default output; **restart** restarts PipeWire, WirePlumber and pipewire-pulse (`wlperch audio refresh/restart` from a shell or keybinding). Output and input devices (click to make default) · volume sliders (drag or scroll, up to 150 %) · mute. For HDMI/DP audio on a GPU, every plugged monitor is listed by its **name and sway connector** (`LG ULTRAWIDE · HDMI 2 · DP-3`). Picking one switches the card profile and the default sink. The full profile list is in a dropdown. |
 | **Displays** | Your current screen layout, drawn to scale · a dropdown of preset scripts (`desk.sh` & co) with a mini preview of each layout. Selecting one runs it, and the active preset is detected and ticked. |
 | **Weather** | Today's forecast from open-meteo.com (no API key): current conditions, high/low, rain, wind, humidity, sunrise/sunset, and the next 24 h |
 | **World clocks** | Any IANA time zones, with UTC offset, difference to local time, and a tomorrow/yesterday badge |
 | **Network** | Public IP and per-interface addresses. Click any of them to copy it (`wl-copy`). |
 | **Bluetooth** | Connected and paired devices with battery level (BlueZ `Battery1`, falling back to UPower). Click a device to connect or disconnect it. |
-| **Notifications** | wlwidgets is the desktop notification server (see [Notifications](#notifications)): popups in the top-right corner, and this panel keeps the history of the last 7 days, grouped by day, with unread dots, action buttons for notifications the app still listens to, remove / clear all, and do not disturb. |
+| **Notifications** | wlperch is the desktop notification server (see [Notifications](#notifications)): popups in the top-right corner, and this panel keeps the history of the last 7 days, grouped by day, with unread dots, action buttons for notifications the app still listens to, remove / clear all, and do not disturb. |
 | **Storage** | Each drive with its mounted volumes: free space and a fill bar (orange from 85 %, red from 95 %). Click a volume to open it in the file manager. External drives (USB / hotplug) also list unmounted volumes with a **Mount** button, and an **eject** button unmounts everything and powers the drive off (udisks, no root needed). Boot, EFI and swap partitions are hidden. While the popup is open, drives you plug in show up within a few seconds. |
 
 ### How the HDMI audio → monitor mapping works
@@ -52,7 +52,7 @@ Applying a preset just runs the script, detached.
 ## Panels
 
 The popup is made of **panels**, each built from modules laid out in columns.
-`wlwidgets toggle <panel>` opens one. If another panel is already open, it
+`wlperch toggle <panel>` opens one. If another panel is already open, it
 switches in place. The first panel in the config is the default.
 
 | Panel (built-in) | Modules |
@@ -102,7 +102,7 @@ Define your own panels with `[panel.NAME]` sections (see Configuration).
 
 Each `[project.NAME]` gets its own workspace on every monitor, named after the
 project and numbered left to right (`ACME 1`, `ACME 2`). Starting a project from
-the Time panel, or with `wlwidgets track <project>`:
+the Time panel, or with `wlperch track <project>`:
 - creates those workspaces;
 - pins each one to its output;
 - shows them all, keeping focus on the monitor you were using.
@@ -124,16 +124,16 @@ another project's, and `$mod+Shift+p` sends windows to the pinned project. A
 notification marks the start and end, and the Time panel shows a countdown.
 `track pin off` ends it early.
 
-**Group lock** (a toggle in the Time panel, or `wlwidgets track lock [on|off]`)
+**Group lock** (a toggle in the Time panel, or `wlperch track lock [on|off]`)
 keeps the monitors together. Switching one monitor to a project workspace
 brings the others to that project's workspaces too. Leaving it sends the others
 back to what they showed before. Focus stays on the monitor you used. The
 setting is remembered.
 
-**Keep empty workspaces** (a toggle in the Time panel, or `wlwidgets track keep
+**Keep empty workspaces** (a toggle in the Time panel, or `wlperch track keep
 [on|off]`) stops sway from removing a project workspace once it's empty and you
 look away. Every empty project workspace gets a placeholder window (app_id
-`wlwidgets-placeholder`, titled "ACME 2 · placeholder"). It's a translucent tile
+`wlperch-placeholder`, titled "ACME 2 · placeholder"). It's a translucent tile
 with no border, and a centered card shows the project name in its color, the
 workspace number and a hint. The label is software-rendered (stb_truetype into
 shared memory) on a subsurface, so placeholders never need the GPU. It goes there
@@ -146,7 +146,7 @@ workspaces are not counted. Counting pauses after `idle_minutes` without input
 (through the `ext-idle-notify-v1` protocol; idle inhibitors such as a playing
 video count as activity), and the idle time itself is not counted.
 
-Finished segments are appended to `~/.local/share/wlwidgets/timelog.tsv`, one
+Finished segments are appended to `~/.local/share/wlperch/timelog.tsv`, one
 per line: start and end (UTC, ISO 8601), project, client.
 
 **Breaks are tracked too.** Every walk-away (no input for `idle_minutes`) is
@@ -166,17 +166,17 @@ The panel shows:
   the pointer), drag to pan, double-click to see the whole day again.
 - a 7-day stacked chart (hover a day for its breakdown).
 
-`wlwidgets status timer` feeds a waybar pill (`⏱ ACME 1:23`, class `running`).
+`wlperch status timer` feeds a waybar pill (`⏱ ACME 1:23`, class `running`).
 
 ### Sensors
 
-wlwidgets reads `devices.json` (names and data-point mappings only, never the
+wlperch reads `devices.json` (names and data-point mappings only, never the
 keys) and `state.json` from `[sensors] dir`, and reloads whenever
 `state.json` changes. The battery sensors sleep and only report when they wake,
 so the daemon keeps `[sensors] watch` (the tool's `--watch` mode) running and
 restarts it if it exits. Leave `watch` empty if you run the watcher yourself.
 
-Readings are kept in `~/.local/share/wlwidgets/sensors.bin`, a small binary file
+Readings are kept in `~/.local/share/wlperch/sensors.bin`, a small binary file
 holding only the last 7 days (older samples are dropped as they age out), so
 history survives restarts without growing. An older `sensors.tsv` is imported
 once and removed. Hover a room, the air monitor or the heater to see 24-hour
@@ -184,9 +184,9 @@ graphs of each value.
 
 ### Notifications
 
-wlwidgets serves `org.freedesktop.Notifications`, so apps' notifications
+wlperch serves `org.freedesktop.Notifications`, so apps' notifications
 (`notify-send`, browsers, chat apps…) show as its own popups instead of
-dunst's or mako's. Only one program can hold that name. wlwidgets queues for
+dunst's or mako's. Only one program can hold that name. wlperch queues for
 it and takes over as soon as the other daemon stops. **Setup → Notifications →
 Take over** masks the other daemon's systemd unit (`dunst.service`), so D-Bus
 can't start it again, and stops it. **Allow dunst again** unmasks it; also set
@@ -208,23 +208,23 @@ replace each other in place, show a progress bar and stay out of the history.
 
 **Do not disturb** holds popups (critical ones and volume/brightness indicators
 still show); everything waits in the panel. Toggle it from the panel, the Quick
-settings tile, `wlwidgets notify dnd`, or right click on the bar bell.
+settings tile, `wlperch notify dnd`, or right click on the bar bell.
 
 - **Rendering:** popups are drawn in software into shared memory, so a
   notification never wakes the GPU.
 - **Icons:** come from the app's image data, an image file (PNG/JPEG, or SVG
   through librsvg when installed) or your icon theme.
-- **History file:** `~/.local/share/wlwidgets/notifications.bin`, binary, last
+- **History file:** `~/.local/share/wlperch/notifications.bin`, binary, last
   7 days, at most 300 entries, icons stored once.
 
 ## Installing
 
-wlwidgets installs itself. Run the binary from wherever you downloaded or built
+wlperch installs itself. Run the binary from wherever you downloaded or built
 it:
 
 ```sh
-./wlwidgets          # not installed yet and nothing running -> opens setup
-wlwidgets setup      # later: the same window (or the ⚙ button in a panel)
+./wlperch          # not installed yet and nothing running -> opens setup
+wlperch setup      # later: the same window (or the ⚙ button in a panel)
 ```
 
 The setup window lists each component with its status (installed, update
@@ -233,13 +233,13 @@ file before it's written:
 
 | Component | What it does |
 |---|---|
-| Program | copies the running binary to `~/.local/bin/wlwidgets` (or updates it) |
+| Program | copies the running binary to `~/.local/bin/wlperch` (or updates it) |
 | Background service | starts or restarts the daemon |
-| Settings file | creates `~/.config/wlwidgets/config.ini`, or opens it |
-| Sway integration | writes `~/.config/sway/config.d/wlwidgets.conf` (daemon, bindings, placeholder style); recognises a hand-made setup; reloads sway |
-| Waybar buttons | installs `wlwidgets.jsonc/.css` and adds the include, the button and the `@import` to your bar config, keeping `*.before-wlwidgets` backups |
+| Settings file | creates `~/.config/wlperch/config.ini`, or opens it |
+| Sway integration | writes `~/.config/sway/config.d/wlperch.conf` (daemon, bindings, placeholder style); recognises a hand-made setup; reloads sway |
+| Waybar buttons | installs `wlperch.jsonc/.css` and adds the include, the button and the `@import` to your bar config, keeping `*.before-wlperch` backups |
 | CPU power reading | installs the RAPL udev rule through `pkexec` (your polkit password prompt) |
-| App launcher entry | `~/.local/share/applications/wlwidgets-setup.desktop` |
+| App launcher entry | `~/.local/share/applications/wlperch-setup.desktop` |
 
 "Install recommended" does everything except the root-owned udev rule.
 
@@ -250,10 +250,10 @@ Requirements: `odin` (tested with dev-2026-10), `clang`, `python3`, `git`,
 xkbcommon and freetype2. You also need `wayland-protocols` and `wlr-protocols`.
 
 ```sh
-./build.sh          # release build -> build/wlwidgets (+ build/vptr test tool)
+./build.sh          # release build -> build/wlperch (+ build/vptr test tool)
 ./build.sh debug    # debug build
 ./build.sh test     # unit tests
-./build.sh install  # copy to ~/.local/bin (or just run build/wlwidgets: setup)
+./build.sh install  # copy to ~/.local/bin (or just run build/wlperch: setup)
 ```
 
 On the first build, `build.sh` clones [odin-imgui](https://gitlab.com/L-4/odin-imgui)
@@ -268,77 +268,77 @@ loaded at runtime); AMD GPUs use sysfs.
 ## Running
 
 ```sh
-wlwidgets            # = toggle: show, or hide if shown (starts the daemon if needed)
-wlwidgets toggle system # open a specific panel (switches if another one is open)
-wlwidgets show [panel] | hide | quit
-wlwidgets restart    # new binary + re-read config; keeps graph history
-wlwidgets audio refresh   # fix stuck audio: card profile away and back
-wlwidgets audio restart   # restart the PipeWire stack
-wlwidgets track ACME # open the project's workspaces (time tracking)
-wlwidgets track go        # back into the current (or last used) project's workspaces
-wlwidgets track move      # move the focused window to that project's workspace on this monitor
-wlwidgets track pin       # for a minute, go/move target this project from anywhere
-wlwidgets track lock on   # group-lock monitors into/out of project workspaces
-wlwidgets track keep on   # placeholder windows keep empty project workspaces
-wlwidgets media play-pause # also play, pause, next, previous [player]
-wlwidgets notify dnd [on|off]  # do not disturb (no argument: toggle)
-wlwidgets notify clear    # empty the notification history
-wlwidgets notify dismiss  # close the popups on screen
-wlwidgets notify status   # "<unread> <dnd 0|1> <serving 0|1>"
-wlwidgets daemon     # start in the background without showing
-wlwidgets status     # waybar JSON for the bar button (see below)
+wlperch            # = toggle: show, or hide if shown (starts the daemon if needed)
+wlperch toggle system # open a specific panel (switches if another one is open)
+wlperch show [panel] | hide | quit
+wlperch restart    # new binary + re-read config; keeps graph history
+wlperch audio refresh   # fix stuck audio: card profile away and back
+wlperch audio restart   # restart the PipeWire stack
+wlperch track ACME # open the project's workspaces (time tracking)
+wlperch track go        # back into the current (or last used) project's workspaces
+wlperch track move      # move the focused window to that project's workspace on this monitor
+wlperch track pin       # for a minute, go/move target this project from anywhere
+wlperch track lock on   # group-lock monitors into/out of project workspaces
+wlperch track keep on   # placeholder windows keep empty project workspaces
+wlperch media play-pause # also play, pause, next, previous [player]
+wlperch notify dnd [on|off]  # do not disturb (no argument: toggle)
+wlperch notify clear    # empty the notification history
+wlperch notify dismiss  # close the popups on screen
+wlperch notify status   # "<unread> <dnd 0|1> <serving 0|1>"
+wlperch daemon     # start in the background without showing
+wlperch status     # waybar JSON for the bar button (see below)
 ```
 
 The first invocation becomes the daemon, and later ones just send a command over
-`$XDG_RUNTIME_DIR/wlwidgets-$WAYLAND_DISPLAY.sock`. The daemon keeps sampling
+`$XDG_RUNTIME_DIR/wlperch-$WAYLAND_DISPLAY.sock`. The daemon keeps sampling
 CPU/GPU at 1 Hz, so the graphs are already full when you open the popup.
 
 ### Sway
 
-Everything sway needs is in **one file**, [`contrib/sway/wlwidgets.conf`](contrib/sway/wlwidgets.conf):
-- `exec wlwidgets daemon`;
+Everything sway needs is in **one file**, [`contrib/sway/wlperch.conf`](contrib/sway/wlperch.conf):
+- `exec wlperch daemon`;
 - the panel toggle (`$mod+o`);
 - the project-workspace bindings (`$mod+p` / `$mod+Shift+p`);
 - the placeholder window style.
 
-`./build.sh install` copies it to `~/.config/sway/config.d/wlwidgets.conf`
-unless a config already starts the daemon. Edit it there. At runtime, wlwidgets
+`./build.sh install` copies it to `~/.config/sway/config.d/wlperch.conf`
+unless a config already starts the daemon. Edit it there. At runtime, wlperch
 itself only adds the per-workspace placement rules for placeholder windows,
 because those depend on your project names.
 
 ### Waybar
 
-The bar buttons come in two files, [`contrib/waybar/wlwidgets.jsonc`](contrib/waybar/wlwidgets.jsonc)
-(module definitions) and [`contrib/waybar/wlwidgets.css`](contrib/waybar/wlwidgets.css)
+The bar buttons come in two files, [`contrib/waybar/wlperch.jsonc`](contrib/waybar/wlperch.jsonc)
+(module definitions) and [`contrib/waybar/wlperch.css`](contrib/waybar/wlperch.css)
 (their styling, matching the popup). `./build.sh install` copies them into
 `~/.config/waybar/` if they aren't there yet. It never edits your own
 config. Hook them up with three lines:
 
 ```jsonc
 // config.jsonc
-"include": ["wlwidgets.jsonc"],
-"modules-right": [ ..., "group/media", "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/notifications", "custom/wlwidgets" ],
+"include": ["wlperch.jsonc"],
+"modules-right": [ ..., "group/media", "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/notifications", "custom/wlperch" ],
 ```
 ```css
 /* style.css, at the top */
-@import "wlwidgets.css";
+@import "wlperch.css";
 ```
 
 | Module | Shows | Click |
 |---|---|---|
-| `custom/wlwidgets` | panel button; red with `92%` when memory use passes `memory_warn_percent` | main panel |
+| `custom/wlperch` | panel button; red with `92%` when memory use passes `memory_warn_percent` | main panel |
 | `group/media` | ⏮ · `⏸ Artist — Title` · ⏭ while something plays (hidden otherwise); green while playing | play/pause (scroll: previous/next, right click: main panel); ⏮/⏭ skip |
 | `custom/timer` | `⏱ ACME 1:23` while a project is counted, dim otherwise | time panel |
 | `custom/sensors` | `bar_room` temperature + latest CO₂; orange >800 ppm, red >1200 ppm | sensors panel |
 | `custom/notifications` | bell; purple with the count when there are unread notifications, bell-off under do not disturb | notifications panel (right click: do not disturb) |
 | `memory` | waybar's own module | system panel |
 
-The buttons are fed by `wlwidgets status`, `status timer`, `status sensors`, `status notifications` and `status media [prev|next]`,
+The buttons are fed by `wlperch status`, `status timer`, `status sensors`, `status notifications` and `status media [prev|next]`,
 small standalone loops that print waybar JSON.
 
 ## Configuration
 
-The config lives at `~/.config/wlwidgets/config.ini` and is written with
+The config lives at `~/.config/wlperch/config.ini` and is written with
 defaults on the first run:
 
 ```ini
@@ -377,7 +377,7 @@ memory_warn_percent = 90      # popup + bar button turn red at this memory use
 [sensors]
 dir = ~/tuya-sensors
 watch = .venv/bin/python tuya_sensors.py --watch   # run inside dir; empty = don't
-bar_room = Living             # shown by "wlwidgets status sensors"
+bar_room = Living             # shown by "wlperch status sensors"
 
 [notifications]
 enabled = true                # serve desktop notifications (takes over from dunst/mako)
@@ -416,7 +416,7 @@ client = ACME Corp            # omit for personal projects
 color = #7aa2f7               # optional
 ```
 
-Restart the daemon (`wlwidgets quit`) to apply changes.
+Restart the daemon (`wlperch quit`) to apply changes.
 
 ## Resource use
 

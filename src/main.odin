@@ -14,9 +14,9 @@ import gl "vendor:OpenGL"
 
 import "wl"
 
-USAGE :: `wlwidgets — quick-settings popup for wlroots compositors
+USAGE :: `wlperch — quick-settings popup for wlroots compositors
 
-usage: wlwidgets [command]
+usage: wlperch [command]
 
 commands:
   toggle [panel]  show the popup (default panel or the named one), or hide it
@@ -223,9 +223,10 @@ switch_panel :: proc(index: int) {
 }
 
 main :: proc() {
-	level := os.get_env("WLWIDGETS_DEBUG", context.temp_allocator) != "" ? log.Level.Debug : log.Level.Info
+	level := os.get_env("WLPERCH_DEBUG", context.temp_allocator) != "" ? log.Level.Debug : log.Level.Info
 	context.logger = log.create_console_logger(level, {.Level, .Terminal_Color, .Time})
 
+	migrate_old_name()
 	cmd := len(os.args) > 1 ? os.args[1] : "toggle"
 	// Full command line for the daemon, e.g. "toggle perf".
 	full := len(os.args) > 1 ? strings.join(os.args[1:], " ") : "toggle"
@@ -265,7 +266,7 @@ main :: proc() {
 		resume_show = show
 	} else {
 		if cmd == "notify" {
-			if reply, ok := ipc_query(full); ok {fmt.print(reply)} else {fmt.eprintln("wlwidgets is not running")}
+			if reply, ok := ipc_query(full); ok {fmt.print(reply)} else {fmt.eprintln("wlperch is not running")}
 			return
 		}
 		if ipc_send(full) {return}

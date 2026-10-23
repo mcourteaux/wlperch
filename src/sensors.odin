@@ -175,7 +175,7 @@ mtime :: proc(path: string) -> i64 {
 
 SENSOR_HISTORY_DAYS :: 7
 
-// Set by `wlwidgets status sensors`: only the daemon writes the history file.
+// Set by `wlperch status sensors`: only the daemon writes the history file.
 sensors_read_only: bool
 
 // History file: "WLSH", u32 version, u32 key count, then per key a u16-length

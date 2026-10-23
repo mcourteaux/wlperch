@@ -6,7 +6,7 @@
 //   header  = false                  ; big clock, date, setup + restart
 //   columns = cpu gpu memory | processes
 //
-// `wlwidgets toggle system` opens it; the first panel in the file is the default.
+// `wlperch toggle system` opens it; the first panel in the file is the default.
 package main
 
 import "core:encoding/ini"

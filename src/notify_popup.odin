@@ -266,7 +266,7 @@ render :: proc(p: ^Popup, n: ^Notification) {
 	s := max(p.scale, 1)
 	bw, bh := p.w * s, p.h * s
 	size := int(bw * bh * 4)
-	fd, err := linux.memfd_create("wlwidgets-notification", {.CLOEXEC})
+	fd, err := linux.memfd_create("wlperch-notification", {.CLOEXEC})
 	if err != .NONE {return}
 	defer linux.close(fd)
 	if linux.ftruncate(fd, i64(size)) != .NONE {return}
@@ -420,7 +420,7 @@ create :: proc(n: ^Notification) -> ^Popup {
 	p.h = layout(p, n) + 2 * SHADOW_M
 	p.w = CARD_W + 2 * SHADOW_M
 	p.surface = wl.compositor_create_surface(plat.compositor)
-	p.layer = wl.zwlr_layer_shell_v1_get_layer_surface(plat.layer_shell, p.surface, nil, wl.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "wlwidgets-notification")
+	p.layer = wl.zwlr_layer_shell_v1_get_layer_surface(plat.layer_shell, p.surface, nil, wl.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "wlperch-notification")
 	wl.zwlr_layer_surface_v1_add_listener(p.layer, &layer_listener, p)
 	wl.zwlr_layer_surface_v1_set_anchor(p.layer, wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT)
 	wl.zwlr_layer_surface_v1_set_size(p.layer, u32(p.w), u32(p.h))

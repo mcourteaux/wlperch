@@ -289,7 +289,7 @@ make_label :: proc(p: ^Placeholder) {
 	lh := i32(b3 + pad * 0.8)
 
 	size := int(lw * lh * 4)
-	fd, err := linux.memfd_create("wlwidgets-label", {.CLOEXEC})
+	fd, err := linux.memfd_create("wlperch-label", {.CLOEXEC})
 	if err != .NONE {return}
 	defer linux.close(fd)
 	if linux.ftruncate(fd, i64(size)) != .NONE {return}
@@ -340,7 +340,7 @@ make_corner_buffers :: proc() {
 	if plat.shm == nil {return}
 	R :: TILE_RADIUS
 	size := R * R * 4 * 4
-	fd, err := linux.memfd_create("wlwidgets-corners", {.CLOEXEC})
+	fd, err := linux.memfd_create("wlperch-corners", {.CLOEXEC})
 	if err != .NONE {return}
 	defer linux.close(fd)
 	if linux.ftruncate(fd, i64(size)) != .NONE {return}

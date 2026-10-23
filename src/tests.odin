@@ -41,9 +41,9 @@ fi
 
 @(test)
 test_parse_preset :: proc(t: ^testing.T) {
-	dir := "/tmp/wlwidgets-test"
+	dir := "/tmp/wlperch-test"
 	os.make_directory_all(dir)
-	path := "/tmp/wlwidgets-test/desk_and_tv.sh"
+	path := "/tmp/wlperch-test/desk_and_tv.sh"
 	testing.expect(t, os.write_entire_file(path, PRESET_SAMPLE) == nil)
 	defer os.remove(path)
 
@@ -124,7 +124,7 @@ test_children_get_default_sigpipe :: proc(t: ^testing.T) {
 @(test)
 test_bluetooth_absent :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
-	dir :: "/tmp/wlwidgets-test/nobt"
+	dir :: "/tmp/wlperch-test/nobt"
 	os.make_directory_all(dir)
 	testing.expect(t, os.write_entire_file(dir + "/busctl", "#!/bin/sh\nexit 1\n", os.Permissions_Default_File + {.Execute_User}) == nil)
 	old := os.get_env("PATH", context.temp_allocator)
