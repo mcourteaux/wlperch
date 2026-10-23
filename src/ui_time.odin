@@ -53,6 +53,25 @@ draw_time :: proc(w: f32) {
 	}
 	im.Dummy({inner, 50})
 
+	// Gathering banner.
+	if tracker_pin_active() {
+		pr := tracker.projects[tracker.pinned]
+		bp := im.GetCursorScreenPos()
+		bh: f32 = 34
+		im.DrawList_AddRectFilled(dl(), bp, {bp.x + inner, bp.y + bh}, col32(pr.color, 0.14), 9)
+		draw_text(fonts.ui, 15, {bp.x + 10, bp.y + 8}, col32(pr.color), ICON_PIN)
+		msg := fmt.tprintf("Gathering into %s: Mod+Shift+P from any workspace", pr.name)
+		draw_text(fonts.ui, SZ_SMALL, {bp.x + 32, bp.y + 10}, col32(C_TEXT), msg)
+		left := fmt.tprintf("%ds", int(time.duration_seconds(tracker_pin_left()) + 0.5))
+		lsz := measure(fonts.mono, SZ_SMALL, left)
+		im.SetCursorScreenPos({bp.x + inner - lsz.x - 40, bp.y + 3})
+		if icon_button("##unpin", ICON_CLOSE, C_MUTED, 28, tooltip = "Stop gathering") {tracker_unpin()}
+		draw_text(fonts.mono, SZ_SMALL, {bp.x + inner - lsz.x - 8, bp.y + 10}, col32(C_MUTED), left)
+		im.SetCursorScreenPos(bp)
+		im.Dummy({inner, bh})
+		request_redraw(1) // countdown
+	}
+
 	// ---- Projects (quick switch) ----------------------------------------
 	sub_heading("Projects")
 	{
@@ -82,10 +101,12 @@ draw_time :: proc(w: f32) {
 		}
 		if hovered {
 			im.SetMouseCursor(.Hand)
-			tip(active ? fmt.tprintf("Bring all monitors back to %s", pr.name) : fmt.tprintf("Open %s's workspaces on all monitors", pr.name))
+			tip(active ? fmt.tprintf("Bring all monitors back to %s\nRight click: gather windows into it for a minute", pr.name) : fmt.tprintf("Open %s's workspaces on all monitors\nRight click: gather windows into it for a minute", pr.name))
 		}
 		// Also for the active project: re-syncs every monitor (e.g. one wandered off).
 		if clicked {start = i}
+		// Right click: gather windows into this project for a minute.
+		if hovered && im.IsMouseClicked(.Right) {tracker_pin(i)}
 		im.DrawList_AddCircleFilled(d, {rp.x + 6, rp.y + h / 2}, 5, col32(pr.color, active ? 1 : 0.7))
 		draw_text(active ? fonts.bold : fonts.ui, SZ_BODY, {rp.x + 20, rp.y + 8}, col32(C_TEXT), pr.name)
 		if pr.client != "" {

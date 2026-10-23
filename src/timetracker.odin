@@ -42,6 +42,8 @@ Tracker :: struct {
 	entries:    [dynamic]Time_Entry,
 	running:    int, // index into projects, -1 = not counting
 	last:       int, // most recently used project (target of `track go/move`)
+	pinned:     int, // `track pin`: target of go/move regardless of focus, -1 = none
+	pin_until:  time.Tick,
 	seg_start:  i64,
 	last_beat:  time.Tick,
 	paused_idle: bool,
@@ -64,7 +66,9 @@ Tracker :: struct {
 	return_ws:    map[string]string, // output -> workspace to go back to when leaving
 	sync_at:      time.Tick,         // our own switch; ignore the events it causes
 }
-tracker := Tracker{running = -1, last = -1}
+tracker := Tracker{running = -1, last = -1, pinned = -1}
+
+PIN_DURATION :: 60 * time.Second
 
 PROJECT_COLORS := [?]u32{C_BLUE, C_GREEN, C_ORANGE, C_PURPLE, C_CYAN, C_YELLOW, C_TEAL, C_RED}
 
@@ -239,6 +243,7 @@ tracker_init :: proc() {
 // Called every main-loop iteration: follow workspace focus and idleness.
 tracker_tick :: proc() {
 	if len(tracker.projects) == 0 {return}
+	tracker_pin_tick()
 	tracker_sync()
 	ws: string
 	{
@@ -317,6 +322,10 @@ tracker_timeout :: proc() -> time.Duration {
 	if tracker.away {
 		a := max(HEARTBEAT - time.tick_since(tracker.away_beat), 0)
 		t = t < 0 ? a : min(t, a)
+	}
+	if tracker.pinned >= 0 {
+		pl := tracker_pin_left()
+		t = t < 0 ? pl : min(t, pl)
 	}
 	return t
 }
@@ -536,6 +545,7 @@ tracker_breaks :: proc(from, to: i64) -> map[string]Break_Stats {
 // The project a `track go/move` without a name refers to: the one on the
 // focused workspace, else the most recently used one.
 tracker_current_project :: proc() -> int {
+	if tracker_pin_active() {return tracker.pinned}
 	ws: string
 	{
 		sync.guard(&sway.mu)
@@ -550,10 +560,51 @@ tracker_current_project :: proc() -> int {
 tracker_move_window :: proc(index: int) -> bool {
 	if index < 0 || index >= len(tracker.projects) {return false}
 	tracker.last = index
+	// Gathering: every move keeps the pin alive for another minute.
+	if tracker_pin_active() && tracker.pinned == index {tracker.pin_until = time.tick_add(time.tick_now(), PIN_DURATION)}
 	p := tracker.projects[index]
 	outs, focused := project_outputs()
 	n := 1
 	for o, i in outs {if o == focused {n = i + 1}}
 	ws := project_workspace(p, n)
 	return sway_command(fmt.tprintf(`workspace "%s" output %s; move container to workspace "%s"`, ws, focused, ws))
+}
+
+// ---- Pin: gather windows into one project -----------------------------------
+
+tracker_pin_active :: proc() -> bool {
+	return tracker.pinned >= 0 && time.tick_diff(time.tick_now(), tracker.pin_until) > 0
+}
+
+tracker_pin_left :: proc() -> time.Duration {
+	if !tracker_pin_active() {return 0}
+	return time.tick_diff(time.tick_now(), tracker.pin_until)
+}
+
+// Pin `index` as the target of `track go/move` for PIN_DURATION (extended by
+// each move), so you can roam other workspaces and gather windows into it.
+tracker_pin :: proc(index: int) {
+	if index < 0 || index >= len(tracker.projects) {return}
+	tracker.pinned = index
+	tracker.pin_until = time.tick_add(time.tick_now(), PIN_DURATION)
+	tracker.last = index
+	notify(fmt.tprintf("Gathering into %s", tracker.projects[index].name), "For a minute, Mod+Shift+P sends the focused window there, from any workspace.")
+	request_redraw()
+}
+
+tracker_unpin :: proc() {
+	if tracker.pinned < 0 {return}
+	name := tracker.projects[tracker.pinned].name
+	tracker.pinned = -1
+	notify(fmt.tprintf("Done gathering into %s", name), "")
+	request_redraw()
+}
+
+// Expire the pin (called from the main loop).
+tracker_pin_tick :: proc() {
+	if tracker.pinned >= 0 && !tracker_pin_active() {tracker_unpin()}
+}
+
+notify :: proc(summary, body: string) {
+	run_async({"notify-send", "-a", "wlwidgets", "-t", "3000", summary, body})
 }

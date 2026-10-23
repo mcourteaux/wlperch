@@ -28,6 +28,8 @@ commands:
   track <project>  create/focus the project's workspaces (one per monitor) to track time
   track go [project]    go to the current (or last used) project's workspaces
   track move [project]  move the focused window to that project's workspace on this monitor
+  track pin [project|off]  for a minute, go/move target this project wherever you are
+                           (to gather misplaced windows); each move extends it
   track lock [on|off]  group-lock monitors: they follow each other into/out of projects
   track keep [on|off]  keep empty project workspaces alive with placeholder windows
   status [sensors|timer]  print waybar JSON every few seconds for a custom module:
@@ -131,6 +133,18 @@ handle_command :: proc(line: string) -> string {
 			case:          return "usage: track lock [on|off]\n"
 			}
 			return tracker.lock ? "lock on\n" : "lock off\n"
+		}
+		// track pin [project|off]: gather windows into one project for a minute.
+		if f[1] == "pin" {
+			if len(f) > 2 && f[2] == "off" {
+				tracker_unpin()
+				return "ok\n"
+			}
+			i := tracker_current_project()
+			if len(f) > 2 {i = project_find(strings.join(f[2:], " ", context.temp_allocator))}
+			if i < 0 {return "no project (name one, or work in one first)\n"}
+			tracker_pin(i)
+			return "ok\n"
 		}
 		// track go|move [project]: the current/last project by default.
 		if f[1] == "go" || f[1] == "move" {

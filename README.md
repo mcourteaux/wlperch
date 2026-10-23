@@ -95,6 +95,13 @@ used last: `$mod+p` runs `track go` and `$mod+Shift+p` runs `track move`.
 `track move` puts the window on the project's workspace for the monitor you're
 on, creating it if needed, and leaves your view alone (like `$mod+Shift+N`).
 
+**Gathering misplaced windows:** `track pin` (`$mod+Ctrl+p`, or right-click a
+project in the Time panel) locks the current project as the target for a minute.
+Every move extends it. While pinned, you can visit any workspaces, including
+another project's, and `$mod+Shift+p` sends windows to the pinned project. A
+notification marks the start and end, and the Time panel shows a countdown.
+`track pin off` ends it early.
+
 **Group lock** (a toggle in the Time panel, or `wlwidgets track lock [on|off]`)
 keeps the monitors together. Switching one monitor to a project workspace
 brings the others to that project's workspaces too. Leaving it sends the others
@@ -177,6 +184,7 @@ wlwidgets restart    # new binary + re-read config; keeps graph history
 wlwidgets track ACME # open the project's workspaces (time tracking)
 wlwidgets track go        # back into the current (or last used) project's workspaces
 wlwidgets track move      # move the focused window to that project's workspace on this monitor
+wlwidgets track pin       # for a minute, go/move target this project from anywhere
 wlwidgets track lock on   # group-lock monitors into/out of project workspaces
 wlwidgets track keep on   # placeholder windows keep empty project workspaces
 wlwidgets daemon     # start in the background without showing
