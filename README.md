@@ -14,9 +14,9 @@ pressing <kbd>Esc</kbd>, closes it.
 
 | Section | What it shows / does |
 |---|---|
-| **Header** | Big clock and date · keyboard layout switcher (sway xkb layouts) · night light (wlsunset) toggle |
+| **Header** | Big clock and date · setup and restart buttons |
+| **Quick settings** | Toggle tiles: night light (wlsunset), do not disturb (dunst, when running), Bluetooth power, and with projects configured group lock and keep-workspaces · keyboard layout switcher (sway xkb layouts) · buttons that open the other panels |
 | **Audio** | Two fix buttons: **refresh** switches the default output's card to another profile and back (cures PipeWire's occasional silent sink) and restores the default output; **restart** restarts PipeWire, WirePlumber and pipewire-pulse (`wlwidgets audio refresh/restart` from a shell or keybinding). Output and input devices (click to make default) · volume sliders (drag or scroll, up to 150 %) · mute. For HDMI/DP audio on a GPU, every plugged monitor is listed by its **name and sway connector** (`LG ULTRAWIDE · HDMI 2 · DP-3`). Picking one switches the card profile and the default sink. The full profile list is in a dropdown. |
-| **System** | CPU and GPU utilisation history (default 120 s) · per-core strip · temperatures · VRAM · GPU power · memory |
 | **Displays** | Your current screen layout, drawn to scale · a dropdown of preset scripts (`desk.sh` & co) with a mini preview of each layout. Selecting one runs it, and the active preset is detected and ticked. |
 | **Weather** | Today's forecast from open-meteo.com (no API key): current conditions, high/low, rain, wind, humidity, sunrise/sunset, and the next 24 h |
 | **World clocks** | Any IANA time zones, with UTC offset, difference to local time, and a tomorrow/yesterday badge |
@@ -54,12 +54,12 @@ switches in place. The first panel in the config is the default.
 
 | Panel (built-in) | Modules |
 |---|---|
-| `main` | header · audio · system · network \| weather · clocks · displays · bluetooth |
+| `main` | header · quick · audio · network \| weather · clocks · displays · bluetooth |
 | `perf` | cpu · memory \| gpu · thermals \| processes |
 | `sensors` | sensors |
 | `time` | time |
 
-Modules: `audio system network weather clocks displays bluetooth cpu gpu memory processes thermals sensors time`.
+Modules: `quick audio network weather clocks displays bluetooth cpu gpu memory processes thermals sensors time`.
 
 - **cpu, memory, gpu:** large history graphs. CPU adds load average, per-core
   bars and uptime. Memory shows used/cache/free and swap, and turns red past
@@ -329,8 +329,8 @@ bar_room = Living             # shown by "wlwidgets status sensors"
 
 # Panels: the first is the default. columns: modules per column, separated by |
 [panel.main]
-header = true                 # big clock, night light, keyboard layouts
-columns = audio system network | weather clocks displays bluetooth
+header = true                 # big clock and date
+columns = quick audio network | weather clocks displays bluetooth
 
 [panel.perf]
 title = Performance           # compact title row when there's no header

@@ -87,3 +87,5 @@ ICON_TUNE_BAR :: "\U000F056E" // md-view_dashboard (waybar button)
 ICON_LINK :: "\U000F0337" // md-link (group lock)
 ICON_PIN :: "\U000F0403" // md-pin (gathering)
 ICON_FAN :: "\U000F0210" // md-fan
+ICON_BELL :: "\U000F009A" // md-bell
+ICON_BELL_OFF :: "\U000F009B" // md-bell_off

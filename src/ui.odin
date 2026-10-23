@@ -60,6 +60,7 @@ on_show :: proc() {
 	network_on_show()
 	bluetooth_refresh_async()
 	nightlight_poll()
+	dnd_poll_async()
 	displays_scan()
 }
 
@@ -73,6 +74,7 @@ draw_ui :: proc() -> f32 {
 	if time.tick_since(ui.nightlight_at) > 2 * time.Second {
 		ui.nightlight_at = time.tick_now()
 		nightlight_poll()
+	dnd_poll_async()
 	}
 
 	if im.IsKeyPressed(.Escape, false) {
@@ -205,56 +207,16 @@ draw_header :: proc(width: f32) {
 	right := p.x + width
 	y := p.y + 4
 
-	// Night light
-	{
-		nl_on := nightlight.running
-		_, can := nightlight_command()
-		lbl := "Night light"
-		lsz := measure(fonts.ui, SZ_BODY, lbl)
-		sw_x := right - 38
-		im.SetCursorScreenPos({sw_x, y})
-		if !can {im.BeginDisabled()}
-		if toggle_switch("##nightlight", nl_on, C_ORANGE, nightlight.pending) {
-			nightlight_set(!nl_on)
-			toast(nl_on ? "Night light off" : "Night light on")
-		}
-		if !can {
-			im.EndDisabled()
-			if im.IsItemHovered(im.HoveredFlags_AllowWhenDisabled) {tip("Waiting for location (needed for sunrise/sunset)")}
-		}
-		draw_text(fonts.ui, SZ_BODY, {sw_x - lsz.x - 10, y + 2}, col32(C_TEXT, 0.9), lbl)
-		draw_text(fonts.ui, 17, {sw_x - lsz.x - 34, y + 1}, col32(nl_on ? C_ORANGE : C_MUTED), ICON_NIGHT_LIGHT)
-
-		// Restart: picks up a newly installed binary and config changes.
-		im.SetCursorScreenPos({sw_x - lsz.x - 34 - 44, y - 3})
-		if icon_button("##restart", ICON_REFRESH, C_MUTED, 28, tooltip = "Restart wlwidgets (new build, config)") {
-			restart_requested = true
-		}
-		im.SetCursorScreenPos({sw_x - lsz.x - 34 - 76, y - 3})
-		if icon_button("##setup", ICON_COG, C_MUTED, 28, tooltip = "Setup: install / configure components") {
-			setup_launch()
-			hide_requested = true
-		}
+	// Restart: picks up a newly installed binary and config changes.
+	im.SetCursorScreenPos({right - 28, y - 3})
+	if icon_button("##restart", ICON_REFRESH, C_MUTED, 28, tooltip = "Restart wlwidgets (new build, config)") {
+		restart_requested = true
 	}
-
-	// Keyboard layouts
-	switch_to := -1
-	{
-		sync.guard(&sway.mu)
-		if len(sway.layouts) > 1 {
-			total: f32 = 4
-			for n in sway.layouts {total += measure(fonts.ui, SZ_SMALL + 1, n).x + 24}
-			x := right - total
-			ky := y + 32
-			draw_text(fonts.ui, 17, {x - 26, ky + 5}, col32(C_MUTED), ICON_KEYBOARD)
-			im.SetCursorScreenPos({x, ky})
-			if i := segmented("##kblayout", sway.layouts[:], sway.active_layout, C_BLUE); i >= 0 && i != sway.active_layout {
-				sway.active_layout = i
-				switch_to = i
-			}
-		}
+	im.SetCursorScreenPos({right - 60, y - 3})
+	if icon_button("##setup", ICON_COG, C_MUTED, 28, tooltip = "Setup: install / configure components") {
+		setup_launch()
+		hide_requested = true
 	}
-	if switch_to >= 0 {sway_switch_layout(switch_to)}
 
 	im.SetCursorScreenPos(p)
 	im.Dummy({width, 66})
@@ -462,92 +424,6 @@ profile_text :: proc(p: Audio_Profile) -> string {
 		if p.connector != "" {s = fmt.tprintf("%s (%s)", s, p.connector)}
 	}
 	return s
-}
-
-// ---- System -----------------------------------------------------------------
-
-@(private = "file")
-graph_block :: proc(name, detail: string, value: f32, hist: ^History, n: int, accent: u32, inner: f32) {
-	p := im.GetCursorScreenPos()
-	draw_text(fonts.bold, SZ_BODY, {p.x, p.y}, col32(C_TEXT), name)
-	nsz := measure(fonts.bold, SZ_BODY, name)
-	draw_text(fonts.ui, SZ_SMALL, {p.x + nsz.x + 8, p.y + 2}, col32(C_MUTED), detail)
-	val := fmt.tprintf("%d%%", int(value + 0.5))
-	vsz := measure(fonts.bold, 20, val)
-	draw_text(fonts.bold, 20, {p.x + inner - vsz.x, p.y - 4}, col32(accent), val)
-	im.Dummy({inner, 20})
-	history_graph(hist, n, accent, {inner, 58})
-}
-
-draw_system :: proc(w: f32) {
-	card_begin("system", w)
-	defer card_end()
-	card_title(ICON_CHIP, "System", C_GREEN, fmt.tprintf("last %ds", config.history_seconds))
-
-	sync.guard(&sysmon.mu)
-	inner := im.GetContentRegionAvail().x
-	n := config.history_seconds
-
-	// CPU
-	graph_block("CPU", sysmon.cpu_name, sysmon.cpu_now, &sysmon.cpu, n, C_GREEN, inner)
-	if sysmon.core_count > 0 {
-		p := im.GetCursorScreenPos()
-		gap: f32 = 2
-		cw := (inner - gap * f32(sysmon.core_count - 1)) / f32(sysmon.core_count)
-		ch: f32 = 12
-		d := dl()
-		for i in 0 ..< sysmon.core_count {
-			x := p.x + f32(i) * (cw + gap)
-			v := clamp(sysmon.cores[i], 0, 100) / 100
-			im.DrawList_AddRectFilled(d, {x, p.y}, {x + cw, p.y + ch}, col32(0x252a34), 2)
-			if v > 0.01 {
-				im.DrawList_AddRectFilled(d, {x, p.y + ch * (1 - v)}, {x + cw, p.y + ch}, load_color(sysmon.cores[i]), 2)
-			}
-		}
-		im.Dummy({inner, ch})
-	}
-	cpu_extra := fmt.tprintf("%d threads", sysmon.core_count)
-	if sysmon.cpu_temp > 0 {cpu_extra = fmt.tprintf("%s · %.0f°C", cpu_extra, sysmon.cpu_temp)}
-	label(fonts.ui, SZ_SMALL, col32(C_MUTED), cpu_extra)
-	im.Dummy({1, 4})
-
-	// GPU
-	if sysmon.gpu_ok {
-		name := strings.trim_prefix(sysmon.gpu_name, "NVIDIA ")
-		name = strings.trim_prefix(name, "GeForce ")
-		graph_block("GPU", name, sysmon.gpu_now, &sysmon.gpu, n, C_PURPLE, inner)
-		if sysmon.vram_total > 0 {
-			p := im.GetCursorScreenPos()
-			frac := f32(f64(sysmon.vram_used) / f64(sysmon.vram_total))
-			txt := fmt.tprintf("VRAM %.1f / %.1f GiB", f64(sysmon.vram_used) / (1 << 30), f64(sysmon.vram_total) / (1 << 30))
-			if sysmon.gpu_temp > 0 {txt = fmt.tprintf("%s · %.0f°C", txt, sysmon.gpu_temp)}
-			if sysmon.gpu_power > 0 {txt = fmt.tprintf("%s · %.0f W", txt, sysmon.gpu_power)}
-			draw_text(fonts.ui, SZ_SMALL, p, col32(C_MUTED), txt)
-			im.Dummy({inner, 16})
-			usage_bar(frac, col32(C_PURPLE, 0.8), {inner, 4})
-		}
-		im.Dummy({1, 4})
-	}
-
-	// Memory
-	if sysmon.mem_total > 0 {
-		p := im.GetCursorScreenPos()
-		frac := f32(f64(sysmon.mem_used) / f64(sysmon.mem_total))
-		warn := memory_warning(sysmon.mem_used, sysmon.mem_total)
-		draw_text(fonts.bold, SZ_BODY, p, col32(warn ? C_RED : C_TEXT), "Memory")
-		if warn {
-			tag := "running low"
-			tw := measure(fonts.bold, 11, tag).x
-			nx := p.x + measure(fonts.bold, SZ_BODY, "Memory").x + 8
-			im.DrawList_AddRectFilled(dl(), {nx, p.y + 1}, {nx + tw + 12, p.y + 18}, col32(C_RED, 0.18), 8)
-			draw_text(fonts.bold, 11, {nx + 6, p.y + 2}, col32(C_RED), tag)
-		}
-		txt := fmt.tprintf("%.1f / %.1f GiB · %d%%", f64(sysmon.mem_used) / (1 << 30), f64(sysmon.mem_total) / (1 << 30), int(frac * 100 + 0.5))
-		tsz := measure(fonts.ui, SZ_SMALL, txt)
-		draw_text(fonts.ui, SZ_SMALL, {p.x + inner - tsz.x, p.y + 2}, col32(warn ? C_RED : C_MUTED), txt)
-		im.Dummy({inner, 18})
-		usage_bar(frac, col32(warn ? C_RED : C_CYAN), {inner, 6})
-	}
 }
 
 // ---- Displays ---------------------------------------------------------------

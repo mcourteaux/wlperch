@@ -3,7 +3,7 @@
 //   [panel.perf]
 //   width   = 780
 //   title   = Performance            ; compact title row (when there's no header)
-//   header  = false                  ; big clock + night light + keyboard layouts
+//   header  = false                  ; big clock, date, setup + restart
 //   columns = cpu gpu memory | processes
 //
 // `wlwidgets toggle perf` opens it; the first panel in the file is the default.
@@ -22,8 +22,8 @@ Module :: struct {
 }
 
 MODULES := [?]Module {
+	{"quick", draw_quick},
 	{"audio", draw_audio},
-	{"system", draw_system},
 	{"network", draw_network},
 	{"weather", draw_weather},
 	{"clocks", draw_clocks},

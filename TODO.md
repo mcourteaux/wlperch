@@ -112,5 +112,6 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Integrated into the user's waybar: button rightmost, redundant modules removed (memory kept), bar restyled to match
 - [x] README with build/run/config instructions
 - [x] Tested under sway with grim + vptr: layout switch, outside click, Escape, IPC toggle, HDMI output switch (both ways), volume wheel, mute, night light, copy IP, preset dropdown, scrolling, fractional 1.5x, re-exec/state hand-over
+- [x] Main panel is quick settings + misc: toggle tiles (night light, do not disturb, Bluetooth, group lock, keep workspaces), keyboard layouts, links to the other panels; system graphs moved out (perf panel)
 - [ ] Applying a preset live (not run: desk.sh switches audio to the currently unavailable hdmi-stereo-extra2)
 - [x] Check memory/CPU usage while idle and while shown

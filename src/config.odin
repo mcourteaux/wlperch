@@ -130,14 +130,16 @@ bar_room = Living
 # ---- Panels -------------------------------------------------------------
 # "wlwidgets toggle <name>" opens a panel; the first one is the default.
 # columns: module names per column, columns separated by "|".
-# Modules: audio system network weather clocks displays bluetooth
+# Modules: quick audio network weather clocks displays bluetooth
 #          cpu gpu memory processes thermals sensors time
-# header = true shows the big clock, night light and keyboard layouts on top;
+# quick = night light, do not disturb, Bluetooth, project toggles, keyboard
+#         layouts and buttons that open the other panels.
+# header = true shows the big clock and date on top;
 # otherwise "title" (if set) is shown as a compact title row.
 
 [panel.main]
 header = true
-columns = audio system network | weather clocks displays bluetooth
+columns = quick audio network | weather clocks displays bluetooth
 
 [panel.perf]
 title = Performance
