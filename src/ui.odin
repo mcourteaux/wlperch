@@ -10,7 +10,12 @@ import "core:time/datetime"
 
 import im "third_party:odin-imgui"
 
-SHADOW :: 16 // transparent margin around the panel for the drop shadow
+SHADOW :: 34 // transparent margin around the panel for the drop shadow
+// The margin the popup's size and position were designed around. Anything
+// beyond it is taken out of the layer margins, so a bigger shadow doesn't
+// move or shrink the panel.
+SHADOW_BASE :: 16
+SHADOW_OFFSET_Y :: 5 // light comes from slightly above
 COL_GAP :: 12
 
 last_content_height: i32
@@ -131,14 +136,19 @@ draw_ui :: proc() -> f32 {
 	return h
 }
 
+// Soft drop shadow: stacked rounded rects whose alphas add up to a smooth,
+// roughly gaussian falloff. Offset a little downwards but wide enough to
+// still show above the panel.
 draw_shadow :: proc(pos, size: Vec2) {
 	d := im.GetBackgroundDrawList()
-	layers :: 14
+	layers :: 30
+	spread :: f32(SHADOW - 2)
 	for i in 0 ..< layers {
 		t := f32(i) / layers
-		e := f32(i) + 1
-		a := 0.045 * (1 - t) * (1 - t)
-		im.DrawList_AddRectFilled(d, {pos.x - e, pos.y - e + 4}, {pos.x + size.x + e, pos.y + size.y + e + 4}, col32(0x000000, a), 18 + e)
+		e := spread * (t + 1.0 / layers)
+		a := 0.030 * (1 - t) * (1 - t) * (1 - t * 0.5)
+		y := f32(SHADOW_OFFSET_Y) * (1 - t * 0.6)
+		im.DrawList_AddRectFilled(d, {pos.x - e, pos.y - e + y}, {pos.x + size.x + e, pos.y + size.y + e + y}, col32(0x000000, a), 18 + e)
 	}
 }
 

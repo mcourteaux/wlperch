@@ -222,13 +222,14 @@ unquote :: proc(s: string) -> string {
 }
 
 popup_size :: proc() -> (w, h: i32) {
-	return config.width, last_content_height > 0 ? last_content_height : 600
+	return config.width + 2 * (SHADOW - SHADOW_BASE), last_content_height > 0 ? last_content_height : 600
 }
 
 popup_placement :: proc() -> Popup_Placement {
 	return {
 		anchor = config.anchor,
-		margin = config.margin,
+		// Extra shadow margin overlaps the screen edge / bar instead of moving the panel.
+		margin = config.margin - (SHADOW - SHADOW_BASE),
 		layer = wl.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
 		output = config.output,
 		backdrop = config.close_on_click_outside,
