@@ -83,7 +83,7 @@ draw_ui :: proc() -> f32 {
 	im.PushStyleVar(.WindowBorderSize, 1)
 	im.PushStyleVar(.WindowRounding, 18)
 	im.PushStyleVarImVec2(.WindowPadding, {16, 16})
-	im.Begin("wlwidgets", nil, {.NoTitleBar, .NoResize, .NoMove, .NoCollapse, .NoSavedSettings, .NoScrollbar})
+	im.Begin("wlwidgets", nil, {.NoTitleBar, .NoResize, .NoMove, .NoCollapse, .NoSavedSettings})
 	im.PopStyleVar(3)
 	im.PopStyleColor(2)
 
@@ -99,13 +99,13 @@ draw_ui :: proc() -> f32 {
 	im.BeginGroup()
 	draw_audio(col_w)
 	draw_system(col_w)
-	draw_displays(col_w)
+	draw_network(col_w)
 	im.EndGroup()
 	im.SameLine()
 	im.BeginGroup()
 	draw_weather(col_w)
 	draw_clocks(col_w)
-	draw_network(col_w)
+	draw_displays(col_w)
 	draw_bluetooth(col_w)
 	im.EndGroup()
 	im.PopStyleVar()
@@ -124,6 +124,7 @@ draw_ui :: proc() -> f32 {
 			if o.focused {max_h = f32(o.h) - 40}
 		}
 	}
+	if config.max_height > 0 {max_h = min(max_h, f32(config.max_height))}
 	h = min(h, max_h)
 	last_content_height = i32(h)
 	return h

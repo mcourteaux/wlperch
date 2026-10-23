@@ -65,7 +65,7 @@ upower_batteries :: proc() -> [dynamic]UPower_Battery {
 	list, ok := run({"busctl", "--system", "--json=short", "call", "org.freedesktop.UPower", "/org/freedesktop/UPower", "org.freedesktop.UPower", "EnumerateDevices"}, 3 * time.Second, context.temp_allocator)
 	if !ok {return out}
 	v, _ := jparse(list)
-	paths := jarr(jarr(jobj(v, "data"))[0]) if len(jarr(jobj(v, "data"))) > 0 else nil
+	paths := jarr(jidx(jobj(v, "data"), 0))
 	for p in paths {
 		path := jstr(p)
 		if strings.contains(path, "DisplayDevice") || strings.contains(path, "line_power") {continue}

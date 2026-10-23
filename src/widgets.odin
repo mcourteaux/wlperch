@@ -65,7 +65,7 @@ CARD_PAD :: 14
 card_begin :: proc(id: string, width: f32) {
 	im.PushStyleVarImVec2(.WindowPadding, {CARD_PAD, CARD_PAD - 2})
 	im.PushStyleVarImVec2(.ItemSpacing, {8, 6})
-	im.BeginChild(cstr(id), {width, 0}, {.Borders, .AutoResizeY, .AlwaysUseWindowPadding}, {.NoScrollbar, .NoScrollWithMouse})
+	im.BeginChild(cstr(id), {width, 0}, {.Borders, .AutoResizeY, .AlwaysUseWindowPadding}, {.NoScrollWithMouse})
 }
 
 card_end :: proc() {
@@ -148,6 +148,7 @@ slider :: proc(id: string, v: ^f32, max_v: f32, accent: u32, width: f32) -> bool
 	im.InvisibleButton(cstr(id), {width, h})
 	hovered := im.IsItemHovered()
 	active := im.IsItemActive()
+	im.SetItemKeyOwner(.MouseWheelY) // wheel adjusts the value instead of scrolling
 	changed := false
 	if active {
 		t := clamp((im.GetMousePos().x - p.x) / width, 0, 1)

@@ -15,6 +15,13 @@ jarr :: proc(v: json.Value) -> json.Array {
 	return a
 }
 
+// Element i of a JSON array, or nil when out of range / not an array.
+jidx :: proc(v: json.Value, i: int) -> json.Value {
+	a := jarr(v)
+	if i < 0 || i >= len(a) {return nil}
+	return a[i]
+}
+
 jstr :: proc(v: json.Value, def := "") -> string {
 	if s, ok := v.(json.String); ok {return s}
 	return def

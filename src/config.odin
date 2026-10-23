@@ -21,6 +21,7 @@ Config :: struct {
 	margin:             [4]i32,
 	output:             string,
 	close_on_click_outside: bool,
+	max_height:         i32, // 0 = fit the output
 
 	// [weather]
 	location:           string, // "auto", a place name, or "lat,lon"
@@ -59,6 +60,8 @@ margin = 4 8 0 0
 # Connector to show on (e.g. DP-1). Empty = the focused output.
 output =
 close_on_click_outside = true
+# Maximum popup height in logical pixels (0 = up to the output height). Scrolls when needed.
+max_height = 0
 
 [weather]
 # "auto" (IP geolocation), a place name ("Ghent"), or "lat,lon".
@@ -167,6 +170,7 @@ config_load :: proc() {
 	}
 	c.output = strings.clone(get(m, defaults, "popup", "output"))
 	c.close_on_click_outside = parse_bool(get(m, defaults, "popup", "close_on_click_outside"), true)
+	c.max_height = i32(strconv.parse_int(get(m, defaults, "popup", "max_height")) or_else 0)
 
 	c.location = strings.clone(get(m, defaults, "weather", "location"))
 	c.units = strings.clone(get(m, defaults, "weather", "units"))

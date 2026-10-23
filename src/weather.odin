@@ -201,22 +201,22 @@ update :: proc() {
 	weather.is_day = jint(jobj(cur, "is_day")) != 0
 	weather.wind = f32(jfloat(jobj(cur, "wind_speed_10m")))
 	weather.humidity = int(jint(jobj(cur, "relative_humidity_2m")))
-	weather.hi = f32(jfloat(jarr(jobj(daily, "temperature_2m_max"))[0]))
-	weather.lo = f32(jfloat(jarr(jobj(daily, "temperature_2m_min"))[0]))
-	weather.precip_prob = int(jint(jarr(jobj(daily, "precipitation_probability_max"))[0]))
-	weather.precip_sum = f32(jfloat(jarr(jobj(daily, "precipitation_sum"))[0]))
-	weather.uv = f32(jfloat(jarr(jobj(daily, "uv_index_max"))[0]))
+	weather.hi = f32(jfloat(jidx(jobj(daily, "temperature_2m_max"), 0)))
+	weather.lo = f32(jfloat(jidx(jobj(daily, "temperature_2m_min"), 0)))
+	weather.precip_prob = int(jint(jidx(jobj(daily, "precipitation_probability_max"), 0)))
+	weather.precip_sum = f32(jfloat(jidx(jobj(daily, "precipitation_sum"), 0)))
+	weather.uv = f32(jfloat(jidx(jobj(daily, "uv_index_max"), 0)))
 	delete(weather.sunrise)
 	delete(weather.sunset)
-	weather.sunrise = strings.clone(hhmm(jstr(jarr(jobj(daily, "sunrise"))[0])))
-	weather.sunset = strings.clone(hhmm(jstr(jarr(jobj(daily, "sunset"))[0])))
+	weather.sunrise = strings.clone(hhmm(jstr(jidx(jobj(daily, "sunrise"), 0))))
+	weather.sunset = strings.clone(hhmm(jstr(jidx(jobj(daily, "sunset"), 0))))
 
 	clear(&weather.hours)
 	times := jarr(jobj(hourly, "time"))
-	temps := jarr(jobj(hourly, "temperature_2m"))
-	codes := jarr(jobj(hourly, "weather_code"))
-	probs := jarr(jobj(hourly, "precipitation_probability"))
-	days := jarr(jobj(hourly, "is_day"))
+	temps := jobj(hourly, "temperature_2m")
+	codes := jobj(hourly, "weather_code")
+	probs := jobj(hourly, "precipitation_probability")
+	days := jobj(hourly, "is_day")
 	cur_hour := len(cur_time) >= 13 ? cur_time[:13] : cur_time
 	start := 0
 	for t, i in times {
@@ -226,15 +226,15 @@ update :: proc() {
 		}
 	}
 	for i in start ..< min(start + 24, len(times)) {
-		ts := jstr(times[i])
+		ts := jstr(jidx(times, i))
 		h := 0
 		if len(ts) >= 13 {h, _ = strconv.parse_int(ts[11:13])}
 		append(&weather.hours, Weather_Hour {
 			hour = h,
-			temp = f32(jfloat(temps[i])),
-			code = int(jint(codes[i])),
-			precip = int(jint(probs[i])),
-			is_day = jint(days[i]) != 0,
+			temp = f32(jfloat(jidx(temps, i))),
+			code = int(jint(jidx(codes, i))),
+			precip = int(jint(jidx(probs, i))),
+			is_day = jint(jidx(days, i)) != 0,
 		})
 	}
 	log.debugf("weather updated: %.1f° code %d", weather.temp, weather.code)
