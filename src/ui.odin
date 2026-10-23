@@ -274,7 +274,36 @@ Audio_Action :: struct {
 draw_audio :: proc(w: f32) {
 	card_begin("audio", w)
 	defer card_end()
+	tp := im.GetCursorScreenPos()
 	card_title(ICON_SPEAKER, "Audio", C_BLUE)
+	{
+		// Fix buttons, top right of the card.
+		after := im.GetCursorScreenPos()
+		cw := im.GetContentRegionAvail().x
+		fixing: Audio_Fix
+		{
+			sync.guard(&audio.mu)
+			fixing = audio.fixing
+		}
+		if fixing != .None {
+			msg := fixing == .Refreshing ? "refreshing…" : "restarting…"
+			msz := measure(fonts.ui, SZ_SMALL, msg)
+			draw_text(fonts.ui, SZ_SMALL, {tp.x + cw - msz.x, tp.y + 3}, col32(C_ORANGE), msg)
+			request_redraw(1)
+		} else {
+			im.SetCursorScreenPos({tp.x + cw - 58, tp.y - 5})
+			if icon_button("##audiorefresh", ICON_REFRESH, C_MUTED, 26, tooltip = "Refresh audio\nswitches the output's card to another profile and back") {
+				msg, _ := audio_bounce_profile()
+				toast(msg)
+			}
+			im.SetCursorScreenPos({tp.x + cw - 28, tp.y - 5})
+			if icon_button("##audiorestart", ICON_POWER, C_MUTED, 26, tooltip = "Restart audio\nrestarts PipeWire, WirePlumber and pipewire-pulse") {
+				msg, _ := audio_restart()
+				toast(msg)
+			}
+		}
+		im.SetCursorScreenPos(after)
+	}
 
 	act: Audio_Action
 	sync.mutex_lock(&audio.mu)

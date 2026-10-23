@@ -25,6 +25,8 @@ commands:
   daemon   start the background daemon without showing the popup
   quit     stop the running daemon
   restart  restart the daemon (new binary, re-read config); keeps graph history
+  audio refresh    fix stuck audio: switch the output's card profile and back
+  audio restart    restart PipeWire, WirePlumber and pipewire-pulse
   track <project>  create/focus the project's workspaces (one per monitor) to track time
   track go [project]    go to the current (or last used) project's workspaces
   track move [project]  move the focused window to that project's workspace on this monitor
@@ -112,6 +114,17 @@ handle_command :: proc(line: string) -> string {
 		app.running = false
 	case "restart":
 		restart_requested = true
+	case "audio":
+		if len(f) < 2 {return "usage: audio refresh|restart\n"}
+		msg: string
+		ok: bool
+		switch f[1] {
+		case "refresh": msg, ok = audio_bounce_profile()
+		case "restart": msg, ok = audio_restart()
+		case:           return "usage: audio refresh|restart\n"
+		}
+		if platform_visible() {toast(msg)}
+		return ok ? "ok\n" : strings.concatenate({msg, "\n"}, context.temp_allocator)
 	case "track":
 		if len(f) < 2 {return "usage: track <project> | track lock [on|off]\n"}
 		if f[1] == "keep" {
@@ -190,7 +203,7 @@ main :: proc() {
 	case "-h", "--help", "help":
 		fmt.print(USAGE)
 		return
-	case "toggle", "show", "hide", "quit", "daemon", "restart", "track":
+	case "toggle", "show", "hide", "quit", "daemon", "restart", "track", "audio":
 	case "status":
 		config_load()
 		if len(os.args) > 2 && os.args[2] == "sensors" {

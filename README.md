@@ -15,7 +15,7 @@ pressing <kbd>Esc</kbd>, closes it.
 | Section | What it shows / does |
 |---|---|
 | **Header** | Big clock and date · keyboard layout switcher (sway xkb layouts) · night light (wlsunset) toggle |
-| **Audio** | Output and input devices (click to make default) · volume sliders (drag or scroll, up to 150 %) · mute. For HDMI/DP audio on a GPU, every plugged monitor is listed by its **name and sway connector** (`LG ULTRAWIDE · HDMI 2 · DP-3`). Picking one switches the card profile and the default sink. The full profile list is in a dropdown. |
+| **Audio** | Two fix buttons: **refresh** switches the default output's card to another profile and back (cures PipeWire's occasional silent sink) and restores the default output; **restart** restarts PipeWire, WirePlumber and pipewire-pulse (`wlwidgets audio refresh/restart` from a shell or keybinding). Output and input devices (click to make default) · volume sliders (drag or scroll, up to 150 %) · mute. For HDMI/DP audio on a GPU, every plugged monitor is listed by its **name and sway connector** (`LG ULTRAWIDE · HDMI 2 · DP-3`). Picking one switches the card profile and the default sink. The full profile list is in a dropdown. |
 | **System** | CPU and GPU utilisation history (default 120 s) · per-core strip · temperatures · VRAM · GPU power · memory |
 | **Displays** | Your current screen layout, drawn to scale · a dropdown of preset scripts (`desk.sh` & co) with a mini preview of each layout. Selecting one runs it, and the active preset is detected and ticked. |
 | **Weather** | Today's forecast from open-meteo.com (no API key): current conditions, high/low, rain, wind, humidity, sunrise/sunset, and the next 24 h |
@@ -181,6 +181,8 @@ wlwidgets            # = toggle: show, or hide if shown (starts the daemon if ne
 wlwidgets toggle perf   # open a specific panel (switches if another one is open)
 wlwidgets show [panel] | hide | quit
 wlwidgets restart    # new binary + re-read config; keeps graph history
+wlwidgets audio refresh   # fix stuck audio: card profile away and back
+wlwidgets audio restart   # restart the PipeWire stack
 wlwidgets track ACME # open the project's workspaces (time tracking)
 wlwidgets track go        # back into the current (or last used) project's workspaces
 wlwidgets track move      # move the focused window to that project's workspace on this monitor

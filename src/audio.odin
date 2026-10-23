@@ -19,6 +19,7 @@ Audio_Device :: struct {
 	volume:      f32, // 0..1.5
 	mute:        bool,
 	is_default:  bool,
+	card:        string, // ALSA card name backing this device ("" if none)
 }
 
 Audio_Profile :: struct {
@@ -36,6 +37,12 @@ Audio_Card :: struct {
 	profiles: [dynamic]Audio_Profile,
 }
 
+Audio_Fix :: enum {
+	None,
+	Refreshing, // bouncing the card profile
+	Restarting, // restarting PipeWire
+}
+
 Audio_State :: struct {
 	mu:       sync.Mutex,
 	ok:       bool,
@@ -43,6 +50,7 @@ Audio_State :: struct {
 	sources:  [dynamic]Audio_Device,
 	cards:    [dynamic]Audio_Card,
 	arena:    [dynamic]string, // owned strings, freed on refresh
+	fixing:   Audio_Fix,
 }
 audio: Audio_State
 
@@ -178,6 +186,7 @@ refresh :: proc() {
 			icon       = device_icon(props, port_type, is_sink),
 		}
 		dev.is_default = dev.name == def
+		dev.card = own(jstr(jobj(props, "device.name")))
 		desc := jstr(jobj(d, "description"))
 		profile_desc := jstr(jobj(props, "device.profile.description"))
 		card_desc := jstr(jobj(props, "device.description"))
@@ -400,4 +409,61 @@ audio_set_profile_optimistic :: proc(card, profile: string) {
 		if c.name != card {continue}
 		for &p in c.profiles {p.active = p.name == profile}
 	}
+}
+
+// PipeWire sometimes ends up with a sink that plays nothing; re-initialising
+// the card fixes it. Switch the default output's card to another profile
+// (another plugged output if there is one, else "off") and back, then make
+// the original sink the default again.
+audio_bounce_profile :: proc() -> (msg: string, ok: bool) {
+	sync.guard(&audio.mu)
+	if audio.fixing != .None {return "Audio is already being fixed", false}
+	sink: ^Audio_Device
+	for &d in audio.sinks {if d.is_default {sink = &d}}
+	if sink == nil || sink.card == "" {return "No default output with a card to refresh", false}
+	orig, alt: string
+	for c in audio.cards {
+		if c.name != sink.card {continue}
+		for p in c.profiles {
+			if p.active {orig = p.name}
+		}
+		for p in c.profiles {
+			if !p.active && p.available && strings.has_prefix(p.name, "output:") {
+				alt = p.name
+				break
+			}
+		}
+	}
+	if orig == "" {return "Couldn't find the card's active profile", false}
+	if alt == "" {alt = "off"}
+	script := fmt.tprintf(
+		"pactl set-card-profile '%s' '%s'; sleep 0.8; pactl set-card-profile '%s' '%s'; " +
+		"for i in $(seq 30); do pactl set-default-sink '%s' 2>/dev/null && break; sleep 0.1; done",
+		sink.card, alt, sink.card, orig, sink.name,
+	)
+	audio.fixing = .Refreshing
+	run_shell_async(script, proc() {
+		sync.guard(&audio.mu)
+		audio.fixing = .None
+		audio_refresh_async()
+		wake_ui()
+	})
+	return "Refreshing audio…", true
+}
+
+// Restart the whole PipeWire stack (user services).
+audio_restart :: proc() -> (msg: string, ok: bool) {
+	sync.guard(&audio.mu)
+	if audio.fixing != .None {return "Audio is already being fixed", false}
+	audio.fixing = .Restarting
+	run_async({"systemctl", "--user", "restart", "wireplumber", "pipewire", "pipewire-pulse"}, proc() {
+		// The pactl subscribe stream dies with pipewire-pulse and reconnects;
+		// give the new session a moment before reading the devices again.
+		time.sleep(1500 * time.Millisecond)
+		sync.guard(&audio.mu)
+		audio.fixing = .None
+		audio_refresh_async()
+		wake_ui()
+	}, 30 * time.Second)
+	return "Restarting PipeWire…", true
 }
