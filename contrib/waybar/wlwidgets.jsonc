@@ -14,12 +14,13 @@
         "on-click": "wlwidgets toggle"
     },
     // Media: previous · track (click: play/pause, right click: the panel) · next.
-    // Hidden while nothing is playing.
+    // Hidden while nothing is playing. (Not "custom/media": waybar's sample
+    // config defines that one, and the main config wins over includes.)
     "group/media": {
         "orientation": "horizontal",
-        "modules": ["custom/media-prev", "custom/media", "custom/media-next"]
+        "modules": ["custom/media-prev", "custom/media-track", "custom/media-next"]
     },
-    "custom/media": {
+    "custom/media-track": {
         "exec": "wlwidgets status media",
         "return-type": "json",
         "format": "{}",
