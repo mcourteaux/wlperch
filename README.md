@@ -56,8 +56,8 @@ switches in place. The first panel in the config is the default.
 
 | Panel (built-in) | Modules |
 |---|---|
-| `main` | header · quick · audio · network \| weather · clocks · displays · bluetooth |
-| `system` | cpu · memory · storage \| gpu · thermals \| processes |
+| `main` | header · quick · audio \| weather · clocks · displays · bluetooth |
+| `system` | cpu · memory · storage \| gpu · thermals · network \| processes |
 | `sensors` | sensors |
 | `notifications` | notifications |
 | `time` | time |
@@ -382,12 +382,12 @@ enabled = true                # serve desktop notifications (takes over from dun
 # Panels: the first is the default. columns: modules per column, separated by |
 [panel.main]
 header = true                 # big clock and date
-columns = quick audio network | weather clocks displays bluetooth
+columns = quick audio | weather clocks displays bluetooth
 
 [panel.system]
 title = System                # compact title row when there's no header
 width = 1180
-columns = cpu memory storage | gpu thermals | processes
+columns = cpu memory storage | gpu thermals network | processes
 
 [panel.sensors]
 title = Home
