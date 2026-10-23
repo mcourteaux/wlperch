@@ -17,12 +17,15 @@ CONTEXT_NO_FLAGS :: 0
 KEYMAP_FORMAT_TEXT_V1 :: 1
 KEYMAP_COMPILE_NO_FLAGS :: 0
 
+STATE_MODS_LOCKED :: 1 << 2
 STATE_MODS_EFFECTIVE :: 1 << 3
+STATE_LAYOUT_EFFECTIVE :: 1 << 7
 
 MOD_NAME_SHIFT :: "Shift"
 MOD_NAME_CTRL :: "Control"
 MOD_NAME_ALT :: "Mod1"
 MOD_NAME_LOGO :: "Mod4"
+MOD_NAME_CAPS :: "Lock"
 
 @(default_calling_convention = "c", link_prefix = "xkb_")
 foreign lib {
@@ -37,6 +40,9 @@ foreign lib {
 	state_key_get_one_sym :: proc(state: ^State, key: Keycode) -> Keysym ---
 	state_key_get_utf8 :: proc(state: ^State, key: Keycode, buffer: [^]u8, size: uint) -> i32 ---
 	state_mod_name_is_active :: proc(state: ^State, name: cstring, type: i32) -> i32 ---
+	keymap_num_layouts :: proc(keymap: ^Keymap) -> Layout_Index ---
+	keymap_layout_get_name :: proc(keymap: ^Keymap, idx: Layout_Index) -> cstring ---
+	state_serialize_layout :: proc(state: ^State, components: i32) -> Layout_Index ---
 }
 
 // Keysyms we care about (from xkbcommon-keysyms.h).
@@ -70,3 +76,5 @@ KEY_q :: 0x0071
 KEY_v :: 0x0076
 KEY_x :: 0x0078
 KEY_z :: 0x007a
+KEY_u :: 0x0075
+KEY_Caps_Lock :: 0xffe5

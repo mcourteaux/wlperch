@@ -44,6 +44,7 @@ Comp_Id :: enum {
 	Rapl,
 	Notifications,
 	Launcher,
+	Lock,
 }
 
 Component :: struct {
@@ -272,6 +273,8 @@ setup_check :: proc() {
 			detail(p, fmt.tprintf("%s: %s", u, strings.trim_space(out)))
 		}
 	}
+	// Lock screen
+	lock_setup_check(&c[.Lock], detail)
 	// Launcher entry
 	{
 		p := &c[.Launcher]

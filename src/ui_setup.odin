@@ -26,6 +26,7 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	case .Waybar:   return {ICON_MONITOR, "Waybar buttons", "Panel button, timer, sensors, media and notification pills. Adds them to your bar (with backups), or replaces the whole bar with wlperch's own; Restore puts yours back.", C_CYAN, WAYBAR_JSONC}
 	case .Rapl:     return {ICON_LIGHTNING, "CPU power reading", "A udev rule that makes the CPU energy counter readable, so the Temperatures & power module can show CPU watts. Needs your password (root).", C_ORANGE, RAPL_RULE}
 	case .Notifications: return {ICON_BELL, "Notifications", "Shows app notifications as popups in the corner, with a history in the Notifications panel and do not disturb. Switches off dunst/mako (masks their service) so they don't take over again.", C_PURPLE, ""}
+	case .Lock:     return {ICON_LOCK, "Lock screen", "wlperch lock instead of swaylock: clock, notification count, media and battery. Switches swayidle and your lock key over (with backups).", C_BLUE, LOCK_CONF}
 	case .Launcher: return {ICON_HOME, "App launcher entry", "Adds \"wlperch setup\" to your application launcher (rofi, wofi, fuzzel…).", C_YELLOW, ""}
 	}
 	return {}
@@ -158,6 +159,14 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 	case .Launcher:
 		if s == .Missing {append(&out, Action{"Add", true, proc() {setup_install_launcher(true)}, false})}
 		else {append(&out, Action{"Remove", false, proc() {setup_install_launcher(false)}, false})}
+	case .Lock:
+		switch s {
+		case .Missing:   append(&out, Action{"Use wlperch lock", true, setup_install_lock, false})
+		case .Outdated:  append(&out, Action{"Switch the rest", true, setup_install_lock, false})
+		case .Installed, .Custom, .Running, .Stopped, .Unavailable, .Partial:
+		}
+		if s == .Installed || s == .Outdated || s == .Custom {append(&out, Action{"Lock now", false, setup_lock_now, false})}
+		if s == .Installed || s == .Outdated {append(&out, Action{"Switch back", false, setup_remove_lock, true})}
 	}
 	return out[:]
 }
@@ -170,7 +179,7 @@ COLUMNS := [3]struct {
 } {
 	{"Basics", {.Program, .Service, .Config}},
 	{"Desktop", {.Sway, .Waybar, .Launcher}},
-	{"Extras", {.Notifications, .Rapl}},
+	{"Extras", {.Notifications, .Lock, .Rapl}},
 }
 
 @(private = "file")

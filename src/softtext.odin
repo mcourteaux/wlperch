@@ -55,7 +55,7 @@ soft_ascent :: proc(f: ^Soft_Font, px: f32) -> f32 {
 // Draw `s` with its baseline at y, blending `rgb` (0xRRGGBB) over the pixels.
 soft_draw_text :: proc(pixels: []u32, stride, height: int, f: ^Soft_Font, px: f32, x, baseline: f32, s: string, rgb: u32, alpha: f32 = 1) {
 	if !f.ok {return}
-	glyph: [128 * 128]u8
+	glyph: [256 * 256]u8
 	pen := x
 	prev: rune = -1
 	for r in s {
@@ -67,7 +67,7 @@ soft_draw_text :: proc(pixels: []u32, stride, height: int, f: ^Soft_Font, px: f3
 		x0, y0, x1, y1: c.int
 		stbtt.GetCodepointBitmapBox(&g.info, r, scale, scale, &x0, &y0, &x1, &y1)
 		gw, gh := int(x1 - x0), int(y1 - y0)
-		if gw > 0 && gh > 0 && gw <= 128 && gh <= 128 {
+		if gw > 0 && gh > 0 && gw <= 256 && gh <= 256 {
 			stbtt.MakeCodepointBitmap(&g.info, &glyph[0], c.int(gw), c.int(gh), c.int(gw), scale, scale, r)
 			ox := int(pen + 0.5) + int(x0)
 			oy := int(baseline + 0.5) + int(y0)

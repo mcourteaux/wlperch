@@ -796,3 +796,85 @@ test_github_urls :: proc(t: ^testing.T) {
 	testing.expect_value(t, web("", "Discussion", ""), "https://github.com/notifications")
 	testing.expect(t, notif_direct("mention") && !notif_direct("subscribed"))
 }
+
+@(test)
+test_lock_rewrite :: proc(t: ^testing.T) {
+	cases := [][2]string{
+		{"bindsym $mod+l exec --no-startup-id swaylock -t -i /x/wall.webp\n", "bindsym $mod+l exec --no-startup-id wlperch lock\n"},
+		{"exec swayidle -w timeout 300 'swaylock -f' before-sleep '/usr/bin/swaylock -f -c 000000'\n", "exec swayidle -w timeout 300 'wlperch lock -f' before-sleep 'wlperch lock -f'\n"},
+		{"timeout 60 'pgrep -xu \"$USER\" swaylock >/dev/null && swaymsg \"output * power off\"'\n", "timeout 60 'pgrep -xu \"$USER\" wlperch-lock >/dev/null && swaymsg \"output * power off\"'\n"},
+		{"pgrep swaylock || swaylock -f\n", "pgrep wlperch-lock || wlperch lock -f\n"},
+		// Left alone: comments, the SIGUSR1 unlock, other words.
+		{"# bindsym x exec swaylock\n", "# bindsym x exec swaylock\n"},
+		{"unlock 'pkill -xu \"$USER\" -SIGUSR1 swaylock'\n", "unlock 'pkill -xu \"$USER\" -SIGUSR1 swaylock'\n"},
+		{"exec myswaylock --fancy\n", "exec myswaylock --fancy\n"},
+	}
+	for c in cases {
+		got, _ := lock_rewrite(c[0])
+		testing.expect_value(t, got, c[1])
+	}
+}
+
+@(test)
+test_lock_setup_round_trip :: proc(t: ^testing.T) {
+	root := fmt.tprintf("/tmp/wlperch-test-lock-%d", posix.getpid())
+	defer os.remove_all(root)
+	old_cfg := strings.clone(os.get_env("XDG_CONFIG_HOME", context.temp_allocator), context.temp_allocator)
+	old_data := strings.clone(os.get_env("XDG_DATA_HOME", context.temp_allocator), context.temp_allocator)
+	defer {
+		os.set_env("XDG_CONFIG_HOME", old_cfg)
+		os.set_env("XDG_DATA_HOME", old_data)
+	}
+	os.set_env("XDG_CONFIG_HOME", fmt.tprintf("%s/config", root))
+	os.set_env("XDG_DATA_HOME", fmt.tprintf("%s/data", root))
+	sway := fmt.tprintf("%s/config/sway", root)
+	dots := fmt.tprintf("%s/dotfiles", root)
+	testing.expect(t, os.make_directory_all(fmt.tprintf("%s/config.d", sway)) == nil && os.make_directory_all(dots) == nil)
+	read :: proc(p: string) -> string {
+		data, _ := os.read_entire_file(p, context.temp_allocator)
+		return string(data)
+	}
+	is_link :: proc(p: string) -> bool {
+		st: posix.stat_t
+		return posix.lstat(strings.clone_to_cstring(p, context.temp_allocator), &st) == .OK && posix.S_ISLNK(st.st_mode)
+	}
+	MAIN :: "set $mod Mod4\nbindsym $mod+Mod1+l exec swaylock -t -i /x/wall.png\n"
+	IDLE :: "exec swayidle -w timeout 300 'swaylock -f' before-sleep 'swaylock -f'\n"
+	main_p := fmt.tprintf("%s/config", sway)
+	idle_p := fmt.tprintf("%s/config.d/90-idle.conf", sway)
+	idle_dots := fmt.tprintf("%s/90-idle.conf", dots)
+	testing.expect(t, os.write_entire_file(main_p, MAIN) == nil)
+	testing.expect(t, os.write_entire_file(idle_dots, IDLE) == nil)
+	testing.expect(t, posix.symlink(strings.clone_to_cstring(idle_dots, context.temp_allocator), strings.clone_to_cstring(idle_p, context.temp_allocator)) == .OK)
+
+	c: Component
+	lock_setup_check(&c, proc(c: ^Component, line: string) {})
+	testing.expect_value(t, c.state, Comp_State.Missing)
+
+	lock_switch(apply = false)
+	testing.expect_value(t, read(main_p), "set $mod Mod4\nbindsym $mod+Mod1+l exec wlperch lock\n")
+	// Edited through the link: the dotfile changed, the link stayed.
+	testing.expect(t, is_link(idle_p))
+	testing.expect_value(t, read(idle_dots), "exec swayidle -w timeout 300 'wlperch lock -f' before-sleep 'wlperch lock -f'\n")
+	lock_setup_check(&c, proc(c: ^Component, line: string) {})
+	testing.expect_value(t, c.state, Comp_State.Installed)
+
+	lock_switch_back(apply = false)
+	testing.expect_value(t, read(main_p), MAIN)
+	testing.expect_value(t, read(idle_dots), IDLE)
+	testing.expect(t, is_link(idle_p))
+	lock_setup_check(&c, proc(c: ^Component, line: string) {})
+	testing.expect_value(t, c.state, Comp_State.Missing)
+
+	// Nothing set up: our own file comes and goes.
+	os.remove(idle_p)
+	testing.expect(t, os.write_entire_file(main_p, "set $mod Mod4\n") == nil)
+	lock_switch(apply = false)
+	ours := fmt.tprintf("%s/config.d/%s", sway, LOCK_CONF_NAME)
+	testing.expect_value(t, read(ours), LOCK_CONF)
+	lock_switch_back(apply = false)
+	testing.expect(t, !os.exists(ours))
+	testing.expect_value(t, read(main_p), "set $mod Mod4\n")
+	delete(setup.comps[.Lock].message)
+	setup.comps[.Lock].message = ""
+}

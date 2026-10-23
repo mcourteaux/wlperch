@@ -25,6 +25,7 @@ pressing <kbd>Esc</kbd>, closes it.
 | **Bluetooth** | Connected and paired devices with battery level (BlueZ `Battery1`, falling back to UPower). Click a device to connect or disconnect it. |
 | **Notifications** | wlperch is the desktop notification server (see [Notifications](#notifications)): popups in the top-right corner, and this panel keeps the history of the last 7 days, grouped by day, with unread dots, action buttons for notifications the app still listens to, remove / clear all, and do not disturb. |
 | **Calculator** | Type an expression and the result updates as you type: `sqrt(2) * 0x10`, `floor(7/2)`, `sin(pi/6)`, `5!`, `0xff & ~0b1010`, `2pi`. Shows it as decimal, hex, octal and binary (integers; negatives as 64-bit two's complement) and as IEEE-754: f64 and f32 bit patterns and a C hex float literal (`0x1.8p+1`). Click any of them to copy it. Integers stay exact up to 128 bits. Enter keeps the result as `ans` (an expression starting with an operator continues from it), Up/Down recall the history, RAD/DEG switches the angle unit, and **?** lists the syntax. It has its own popup for a key binding (`wlperch toggle calc`, which takes the keyboard right away), and `wlperch calc <expression>` prints every format in a terminal. |
+| **Lock screen** | `wlperch lock` replaces swaylock (see [Lock screen](#lock-screen)): a big clock and date, the password field, Caps Lock and keyboard layout, and a status row with the unread notification count (and which apps), what's playing and the battery. |
 | **Storage** | Each drive with its mounted volumes: free space and a fill bar (orange from 85 %, red from 95 %). Click a volume to open it in the file manager. External drives (USB / hotplug) also list unmounted volumes with a **Mount** button, and an **eject** button unmounts everything and powers the drive off (udisks, no root needed). Boot, EFI and swap partitions are hidden. While the popup is open, drives you plug in show up within a few seconds. |
 
 ### How the HDMI audio → monitor mapping works
@@ -299,6 +300,58 @@ settings tile, `wlperch notify dnd`, or right click on the bar bell.
 - **History file:** `~/.local/share/wlperch/notifications.bin`, binary, last
   7 days, at most 300 entries, icons stored once.
 
+### Lock screen
+
+`wlperch lock` locks the session with the `ext-session-lock-v1` protocol
+(sway 1.8+), like swaylock. `wlperch lock -f` returns once the screen is
+locked, which is what swayidle's `before-sleep` needs.
+
+- **Focused monitor:** shows the clock and date (with the weather), the
+  password field, Caps Lock and the keyboard layout, and a status row along
+  the bottom:
+  - the unread notification count and which apps sent them, never their text;
+  - what's playing (any MPRIS player);
+  - the battery.
+- **Other monitors:** show only the clock.
+- **Password:** checked with PAM, in a separate thread so the clock keeps
+  running. The PAM service is `swaylock` when `/etc/pam.d/swaylock` exists,
+  else `login`; set `[lock] pam_service` to change it. After three wrong
+  passwords, each further one makes you wait longer, up to 30 s.
+- **Keys:** Enter submits, Escape or Ctrl+U clears, Backspace deletes.
+- **Background:** a colour, or a picture from `[lock] image`, which can be
+  blurred and darkened (see [Configuration](#configuration)).
+- **Rendering:** in software, like the notification popups.
+
+It runs as its own process, never inside the daemon, and appears as
+`wlperch-lock` in `ps` and `pgrep`. The data comes from the daemon when it
+runs (the notification count and weather) and is read directly otherwise
+(media, battery).
+
+Only a correct password unlocks. If the locker crashes or is killed, the
+session stays locked: sway shows a red screen. Then switch to a text console
+(Ctrl+Alt+F2), log in and run
+`WAYLAND_DISPLAY=wayland-1 SWAYSOCK=$(ls /run/user/$UID/sway-ipc.*) wlperch lock`.
+That new locker takes over the lock, and its password unlocks the session.
+Unlike swaylock, there is no "unlock on SIGUSR1", so `loginctl unlock-session`
+doesn't unlock it.
+
+**Setup → Lock screen → Use wlperch lock** switches an existing swaylock
+setup over:
+- **What changes:** every `swaylock` command in your sway config,
+  `config.d/*`, `~/.config/sway/*.sh` scripts and `~/.config/swayidle/config`
+  becomes `wlperch lock`, keeping `-f`. A `pgrep swaylock` becomes
+  `pgrep wlperch-lock`. swaylock's own options, such as `-i image`, are
+  dropped.
+- **Backups:** each file is copied to `~/.local/share/wlperch/lock-backup/`
+  first. Symlinked dotfiles are edited through the link.
+- **Without swaylock:** if nothing uses swaylock yet, setup adds
+  `config.d/wlperch-lock.conf` instead, with swayidle and `$mod+Alt+l`.
+- **Applying it:** setup reloads sway and restarts this session's swayidle.
+- **Switch back:** restores the copies.
+
+To wire it up by hand, see the commented lines in
+[`contrib/sway/wlperch.conf`](contrib/sway/wlperch.conf).
+
 ## Installing
 
 wlperch installs itself. Run the binary from wherever you downloaded or built
@@ -490,6 +543,15 @@ enabled = false               # GitHub panel via the gh CLI (run "gh auth login"
 repo =                        # optional owner/name to follow too (checks, runs, releases)
 refresh_minutes = 5
 
+[lock]
+pam_service =                 # empty: "swaylock" if /etc/pam.d/swaylock exists, else "login"
+background = #14161b          # colour behind the clock
+image =                       # optional picture (PNG/JPEG) instead, cover-fitted
+blur = 0                      # blur the picture this much (e.g. 16); 0 = sharp
+dim = 0.35                    # darken the picture (0..1)
+show_notifications = true     # unread count + app names (never the text)
+show_media = true             # the playing track
+
 # Panels: the first is the default. columns: modules per column, separated by |
 [panel.main]
 header = true                 # big clock and date
@@ -573,7 +635,10 @@ src/media.odin           MPRIS players (sd-bus): scan, commands, `status media`
 src/calc.odin            calculator: expression parser/evaluator, number formats, `wlperch calc`
 src/github.odin          GitHub through gh (GraphQL search like `gh status`, notifications, runs)
 src/dbus.odin            minimal sd-bus bindings
-src/softtext.odin        stb_truetype text into pixel buffers (placeholders, popups)
+src/softtext.odin        stb_truetype text into pixel buffers (placeholders, popups, lock screen)
+src/lock.odin            `wlperch lock`: ext-session-lock-v1 lock screen (own process, shm rendering)
+src/pam.odin             minimal PAM bindings for the lock screen
+src/setup_lock.odin      setup component: switch swayidle / the lock key from swaylock and back
 ```
 
 ## Licenses

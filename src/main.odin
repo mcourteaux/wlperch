@@ -47,6 +47,8 @@ commands:
   display save <name> [label]  add the current layout to the config as a preset
   calc <expression>  evaluate and print it as decimal, hex, octal, binary and
                    IEEE-754 (hex float, f64/f32 bits); "toggle calc" opens the popup
+  lock [-f]        lock the screen (clock, notification count, media, battery);
+                   -f forks once locked, for swayidle before-sleep
   sensors scan [seconds]  list the Tuya devices announcing themselves on the LAN
   sensors read <name|id>  query one configured Tuya device once (read-only)
   status media [prev|next]  waybar JSON: the playing track (click: play/pause),
@@ -232,6 +234,8 @@ handle_command :: proc(line: string) -> string {
 		case:
 			return "usage: notify [status|dnd [on|off]|clear|dismiss]\n"
 		}
+	case "lockinfo":
+		return lock_info_reply()
 	case "daemon", "ping":
 	case:
 		return "unknown command\n"
@@ -269,6 +273,10 @@ main :: proc() {
 		os.exit(media_cli(os.args[2:]))
 	case "calc":
 		os.exit(calc_cli(os.args[2:]))
+	case "lock":
+		// Its own process, never the daemon's: see lock.odin.
+		config_load()
+		os.exit(lock_main(os.args[2:]))
 	case "display", "displays":
 		os.exit(displays_cli(os.args[2:]))
 	case "sensors":

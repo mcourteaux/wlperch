@@ -56,6 +56,15 @@ Config :: struct {
 	github:             bool,
 	github_repo:        string, // owner/name, optional
 	github_refresh:     time.Duration,
+
+	// [lock]
+	lock_pam_service:   string, // "" = swaylock's PAM file when present, else login
+	lock_background:    u32,    // 0xRRGGBB
+	lock_image:         string,
+	lock_blur:          int,
+	lock_dim:           f32,
+	lock_notifications: bool,
+	lock_media:         bool,
 }
 
 config: Config
@@ -136,6 +145,24 @@ enabled = false
 repo =
 # Minutes between refreshes (opening the panel also refreshes stale data).
 refresh_minutes = 5
+
+[lock]
+# The lock screen ("wlperch lock"): clock, date, unread notification count,
+# what's playing and the battery. Wire it to swayidle / a key with
+# "wlperch setup" or see contrib/sway/wlperch.conf.
+# PAM service used to check the password. Empty = "swaylock" when
+# /etc/pam.d/swaylock exists, else "login".
+pam_service =
+# Background colour, and optionally a picture (PNG/JPEG) drawn over it,
+# blurred by this much (0 = sharp) and darkened by dim (0..1).
+background = #14161b
+image =
+blur = 0
+dim = 0.35
+# Show the unread notification count (and which apps) / the playing track.
+# Notification text is never shown on the lock screen.
+show_notifications = true
+show_media = true
 
 [timetracker]
 # Minutes without input after which counting pauses (the idle time is not counted).
@@ -279,6 +306,14 @@ parse_bool :: proc(s: string, def: bool) -> bool {
 	return def
 }
 
+@(private = "file")
+parse_hex_color :: proc(s: string, def: u32) -> u32 {
+	t := strings.trim_prefix(strings.trim_space(s), "#")
+	if len(t) != 6 {return def}
+	v, ok := strconv.parse_u64_of_base(t, 16)
+	return ok ? u32(v) : def
+}
+
 config_load :: proc() {
 	path := config_path()
 	if !os.exists(path) {
@@ -355,6 +390,14 @@ config_load :: proc() {
 	c.github = parse_bool(get(m, defaults, "github", "enabled"), false)
 	c.github_repo = strings.clone(get(m, defaults, "github", "repo"))
 	c.github_refresh = time.Duration(max(strconv.parse_int(get(m, defaults, "github", "refresh_minutes")) or_else 5, 1)) * time.Minute
+
+	c.lock_pam_service = strings.clone(get(m, defaults, "lock", "pam_service"))
+	c.lock_background = parse_hex_color(get(m, defaults, "lock", "background"), 0x14161b)
+	c.lock_image = expand_home(get(m, defaults, "lock", "image"))
+	c.lock_blur = clamp(strconv.parse_int(get(m, defaults, "lock", "blur")) or_else 0, 0, 64)
+	c.lock_dim = clamp(f32(strconv.parse_f64(get(m, defaults, "lock", "dim")) or_else 0.35), 0, 1)
+	c.lock_notifications = parse_bool(get(m, defaults, "lock", "show_notifications"), true)
+	c.lock_media = parse_bool(get(m, defaults, "lock", "show_media"), true)
 
 	c.sensors_dir = expand_home(get(m, defaults, "sensors", "dir"))
 	c.sensors_watch = strings.clone(get(m, defaults, "sensors", "watch"))
