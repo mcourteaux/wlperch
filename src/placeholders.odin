@@ -52,11 +52,20 @@ Placeholders :: struct {
 	list:      [dynamic]^Placeholder,
 	ruled:     map[string]bool, // for_window rules installed this session
 	dismissed: map[string]bool, // workspaces whose placeholder the user closed
+	checked:   time.Tick,     // last tree re-check (swaps send no usable event)
 	buffer:    ^wl.Buffer,    // tile color, single pixel
 	clear:     ^wl.Buffer,    // fully transparent, single pixel
 	corners:   [4]^wl.Buffer, // TL, TR, BL, BR quarter circles
 }
 placeholders: Placeholders
+
+PLACEHOLDER_CHECK :: 2 * time.Second
+
+// How long the main loop may sleep before the next placeholder re-check.
+placeholders_timeout :: proc() -> time.Duration {
+	if !placeholders.keep || len(placeholders.list) == 0 {return -1}
+	return max(PLACEHOLDER_CHECK - time.tick_since(placeholders.checked), 0)
+}
 
 placeholders_init :: proc() {
 	placeholders.keep_path = strings.concatenate({data_dir(), "/timetracker.keep"})
@@ -195,10 +204,18 @@ placeholders_tick :: proc() {
 		placeholders_destroy_all()
 		return
 	}
+	// Sway sends no event we can use when a window is swapped with a
+	// placeholder (e.g. by dragging), so re-check the tree while any exist.
+	if len(placeholders.list) > 0 && time.tick_since(placeholders.checked) >= PLACEHOLDER_CHECK {
+		placeholders.checked = time.tick_now()
+		sway_refresh_tree()
+	}
 	counts := make(map[string]int, 32, context.temp_allocator)
+	at := make(map[string]string, 8, context.temp_allocator)
 	{
 		sync.guard(&sway.mu)
 		for k, v in sway.ws_windows {counts[strings.clone(k, context.temp_allocator)] = v}
+		for k, v in sway.placeholder_at {at[strings.clone(k, context.temp_allocator)] = strings.clone(v, context.temp_allocator)}
 	}
 
 	// Closed by the user, or a real window arrived: the placeholder goes.
@@ -208,6 +225,11 @@ placeholders_tick :: proc() {
 			placeholders.dismissed[strings.clone(p.ws)] = true
 			destroy(i)
 		} else if counts[p.ws] > 0 {
+			destroy(i)
+		} else if loc, known := at[p.title]; known && loc != p.ws && p.configured && time.tick_since(p.mapped_at) > 600 * time.Millisecond {
+			// Dragged/swapped onto another workspace: it doesn't belong there.
+			// If its own workspace still needs one, a fresh one is spawned below.
+			log.debugf("placeholder for %q found on %q; replacing", p.ws, loc)
 			destroy(i)
 		}
 	}

@@ -361,6 +361,10 @@ loop_iteration :: proc() {
 		ms := int(time.duration_milliseconds(hb)) + 1
 		timeout = timeout < 0 ? ms : min(timeout, ms)
 	}
+	if pc := placeholders_timeout(); pc >= 0 {
+		ms := int(time.duration_milliseconds(pc)) + 1
+		timeout = timeout < 0 ? ms : min(timeout, ms)
+	}
 
 	pfds := [3]posix.pollfd {
 		{fd = platform_fd(), events = {.IN}},

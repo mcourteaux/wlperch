@@ -49,6 +49,7 @@ Sway_State :: struct {
 	focused_output: string,
 	visible:        [dynamic]Visible_Ws, // workspace shown on each output
 	ws_windows:     map[string]int,      // workspace -> real windows (placeholders excluded)
+	placeholder_at: map[string]string,   // placeholder title -> workspace it is actually on
 	tree_seq:       int,
 }
 sway: Sway_State
@@ -191,18 +192,38 @@ sway_refresh_tree :: proc() {
 		}
 		return c
 	}
-	walk :: proc(n: json.Value, counts: ^map[string]int) {
+	at := make(map[string]string, 8, context.temp_allocator)
+	find_placeholders :: proc(n: json.Value, ws: string, at: ^map[string]string) {
+		for k in ([]string{"nodes", "floating_nodes"}) {
+			for child in jarr(jobj(n, k)) {
+				if jstr(jobj(child, "app_id")) == PLACEHOLDER_APP_ID {
+					at[jstr(jobj(child, "name"))] = ws
+				} else {
+					find_placeholders(child, ws, at)
+				}
+			}
+		}
+	}
+	walk :: proc(n: json.Value, counts: ^map[string]int, at: ^map[string]string) {
 		if jstr(jobj(n, "type")) == "workspace" {
-			counts[jstr(jobj(n, "name"))] = count_views(n)
+			name := jstr(jobj(n, "name"))
+			counts[name] = count_views(n)
+			find_placeholders(n, name, at)
 			return
 		}
-		for child in jarr(jobj(n, "nodes")) {walk(child, counts)}
+		for child in jarr(jobj(n, "nodes")) {walk(child, counts, at)}
 	}
-	walk(v, &counts)
+	walk(v, &counts, &at)
 	sync.guard(&sway.mu)
 	for k in sway.ws_windows {delete(k)}
 	clear(&sway.ws_windows)
 	for k, c in counts {sway.ws_windows[strings.clone(k)] = c}
+	for k, w in sway.placeholder_at {
+		delete(k)
+		delete(w)
+	}
+	clear(&sway.placeholder_at)
+	for k, w in at {sway.placeholder_at[strings.clone(k)] = strings.clone(w)}
 	sway.tree_seq += 1
 }
 
@@ -221,7 +242,8 @@ classify :: proc(type: u32, payload: string) -> bit_set[Event_Kind] {
 	case EVENT_WINDOW:
 		v, _ := jparse(payload)
 		switch jstr(jobj(v, "change")) {
-		case "new", "close", "move": return {.Tree}
+		// "focus": a mouse-drag swap may only show up as focus changes.
+		case "new", "close", "move", "floating", "focus": return {.Tree}
 		}
 		return {}
 	}
