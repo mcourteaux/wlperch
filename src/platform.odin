@@ -895,7 +895,9 @@ platform_open_window :: proc(title, app_id: string, width, height: i32) -> bool 
 	wl.xdg_toplevel_add_listener(plat.win_toplevel, &win_toplevel_listener, nil)
 	wl.xdg_toplevel_set_title(plat.win_toplevel, strings.clone_to_cstring(title, context.temp_allocator))
 	wl.xdg_toplevel_set_app_id(plat.win_toplevel, strings.clone_to_cstring(app_id, context.temp_allocator))
-	wl.xdg_toplevel_set_min_size(plat.win_toplevel, 560, 420)
+	// A fixed width makes sway float the window (like a dialog); height stays resizable.
+	wl.xdg_toplevel_set_min_size(plat.win_toplevel, width, 420)
+	wl.xdg_toplevel_set_max_size(plat.win_toplevel, width, 0)
 	wl.surface_commit(plat.surface)
 	for !plat.configured && !plat.closed {
 		if wl.display_dispatch(plat.display) < 0 {return false}

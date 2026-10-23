@@ -130,6 +130,7 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 
 draw_setup :: proc() {
 	io := im.GetIO()
+	if im.IsKeyPressed(.Escape, false) {plat.closed = true}
 	im.SetNextWindowPos({0, 0})
 	im.SetNextWindowSize(io.DisplaySize)
 	im.PushStyleColorImVec4(.WindowBg, rgba(C_BG))
