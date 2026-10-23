@@ -306,7 +306,7 @@ Graph_View :: struct {
 	back:   f64,       // age of the right edge when frozen (samples)
 	frozen: time.Tick, // when back was set; {} = live
 }
-perf_view: Graph_View // shared by the perf panel's graphs so they stay aligned
+perf_view: Graph_View // shared by the system panel's graphs so they stay aligned
 
 GRAPH_MIN_SPAN :: 10
 

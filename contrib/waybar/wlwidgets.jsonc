@@ -27,11 +27,11 @@
         "format": "{}",
         "on-click": "wlwidgets toggle sensors"
     },
-    // Waybar's own memory module, opening the performance panel.
+    // Waybar's own memory module, opening the system panel.
     "memory": {
         "interval": 5,
         "format": "{used:0.1f}<small> / {total:0.0f} GiB</small>  󰍛",
         "tooltip-format": "{percentage}% used · swap {swapUsed:0.1f} / {swapTotal:0.0f} GiB",
-        "on-click": "wlwidgets toggle perf"
+        "on-click": "wlwidgets toggle system"
     }
 }

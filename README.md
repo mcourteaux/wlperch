@@ -56,13 +56,13 @@ switches in place. The first panel in the config is the default.
 | Panel (built-in) | Modules |
 |---|---|
 | `main` | header · quick · audio · network \| weather · clocks · displays · bluetooth |
-| `perf` | cpu · memory · storage \| gpu · thermals \| processes |
+| `system` | cpu · memory · storage \| gpu · thermals \| processes |
 | `sensors` | sensors |
 | `time` | time |
 
 Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time`.
 
-The perf panel's graphs keep the last hour. Scroll over any of them to zoom
+The system panel's graphs keep the last hour. Scroll over any of them to zoom
 (they zoom together); zooming out from the live view stays live. Dragging or
 zooming into the past freezes the view until you double-click it or reopen the
 popup.
@@ -230,7 +230,7 @@ loaded at runtime); AMD GPUs use sysfs.
 
 ```sh
 wlwidgets            # = toggle: show, or hide if shown (starts the daemon if needed)
-wlwidgets toggle perf   # open a specific panel (switches if another one is open)
+wlwidgets toggle system # open a specific panel (switches if another one is open)
 wlwidgets show [panel] | hide | quit
 wlwidgets restart    # new binary + re-read config; keeps graph history
 wlwidgets audio refresh   # fix stuck audio: card profile away and back
@@ -285,7 +285,7 @@ config. Hook them up with three lines:
 | `custom/wlwidgets` | panel button; red with `92%` when memory use passes `memory_warn_percent` | main panel |
 | `custom/timer` | `⏱ ACME 1:23` while a project is counted, dim otherwise | time panel |
 | `custom/sensors` | `bar_room` temperature + latest CO₂; orange >800 ppm, red >1200 ppm | sensors panel |
-| `memory` | waybar's own module | perf panel |
+| `memory` | waybar's own module | system panel |
 
 The buttons are fed by `wlwidgets status`, `status timer` and `status sensors`,
 small standalone loops that print waybar JSON.
@@ -325,7 +325,7 @@ preset_dirs = ~/.local/bin:~/dotfiles/desktop/.local/bin
 preset_glob = *.sh
 
 [system]
-history_seconds = 120         # span the perf graphs show by default (zoom out to 1 h)
+history_seconds = 120         # span the system graphs show by default (zoom out to 1 h)
 memory_warn_percent = 90      # popup + bar button turn red at this memory use
 
 [sensors]
@@ -338,8 +338,8 @@ bar_room = Living             # shown by "wlwidgets status sensors"
 header = true                 # big clock and date
 columns = quick audio network | weather clocks displays bluetooth
 
-[panel.perf]
-title = Performance           # compact title row when there's no header
+[panel.system]
+title = System                # compact title row when there's no header
 width = 1180
 columns = cpu memory storage | gpu thermals | processes
 

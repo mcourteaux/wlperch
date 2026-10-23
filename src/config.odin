@@ -141,8 +141,8 @@ bar_room = Living
 header = true
 columns = quick audio network | weather clocks displays bluetooth
 
-[panel.perf]
-title = Performance
+[panel.system]
+title = System
 width = 1180
 columns = cpu memory storage | gpu thermals | processes
 

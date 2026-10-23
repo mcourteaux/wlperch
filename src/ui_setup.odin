@@ -21,7 +21,7 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	case .Service:  return {ICON_POWER, "Background service", "The daemon samples CPU/GPU history, tracks time and serves the panels. Sway starts it at login (see Sway integration).", C_GREEN, ""}
 	case .Config:   return {ICON_TUNE, "Settings file", "Panels, weather location, clocks, projects, sensors… Created with defaults; edit it, then use the restart button in a panel.", C_TEAL, ""}
 	case .Sway:     return {ICON_KEYBOARD, "Sway integration", "One file in sway/config.d: starts the daemon, binds Mod+O (panel), Mod+P / Mod+Shift+P / Mod+Ctrl+P (project workspaces) and styles placeholder windows.", C_PURPLE, SWAY_FILE}
-	case .Waybar:   return {ICON_MONITOR, "Waybar buttons", "Panel button (turns red when memory runs low), project timer and sensors pills, and memory → performance panel. Adds them to your bar with backups of your files.", C_CYAN, WAYBAR_JSONC}
+	case .Waybar:   return {ICON_MONITOR, "Waybar buttons", "Panel button (turns red when memory runs low), project timer and sensors pills, and memory → system panel. Adds them to your bar with backups of your files.", C_CYAN, WAYBAR_JSONC}
 	case .Rapl:     return {ICON_LIGHTNING, "CPU power reading", "A udev rule that makes the CPU energy counter readable, so the Temperatures & power module can show CPU watts. Needs your password (root).", C_ORANGE, RAPL_RULE}
 	case .Launcher: return {ICON_HOME, "App launcher entry", "Adds \"wlwidgets setup\" to your application launcher (rofi, wofi, fuzzel…).", C_YELLOW, ""}
 	}

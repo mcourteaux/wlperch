@@ -1,12 +1,12 @@
 // Panels: named popups composed of modules laid out in columns.
 //
-//   [panel.perf]
+//   [panel.system]
 //   width   = 780
-//   title   = Performance            ; compact title row (when there's no header)
+//   title   = System                 ; compact title row (when there's no header)
 //   header  = false                  ; big clock, date, setup + restart
 //   columns = cpu gpu memory | processes
 //
-// `wlwidgets toggle perf` opens it; the first panel in the file is the default.
+// `wlwidgets toggle system` opens it; the first panel in the file is the default.
 package main
 
 import "core:encoding/ini"
@@ -63,6 +63,7 @@ panel_find :: proc(name: string) -> int {
 	for p, i in panels {
 		if p.name == name {return i}
 	}
+	if name == "perf" {return panel_find("system")} // its name before 2026-10
 	return -1
 }
 
