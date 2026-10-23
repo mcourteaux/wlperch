@@ -171,7 +171,7 @@ bluetooth_toggle_connection :: proc(address: string, connect: bool) {
 			bluetooth.busy = ""
 		}
 		bluetooth_refresh_async()
-	})
+	}, 20 * time.Second)
 }
 
 bluetooth_start :: proc() {

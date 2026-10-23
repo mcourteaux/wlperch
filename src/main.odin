@@ -125,6 +125,7 @@ main :: proc() {
 	log.debugf("rss after config: %d kB", rss_kb())
 
 	t0 := time.tick_now()
+	restrict_egl_vendor() // touches the environment: before any thread exists
 	if !platform_init() {os.exit(1)}
 	log.debugf("platform_init took %v, rss %d kB", time.tick_since(t0), rss_kb())
 

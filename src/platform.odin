@@ -132,7 +132,8 @@ registry_listener := wl.Registry_Listener {
 		context = g_ctx
 		for o, i in plat.outputs {
 			if o.name == name {
-				wl.output_destroy(o.output)
+				if wl.output_get_version(o.output) >= 3 {wl.output_release(o.output)} else {wl.output_destroy(o.output)}
+				delete(o.conn)
 				unordered_remove(&plat.outputs, i)
 				break
 			}
@@ -181,6 +182,8 @@ seat_listener := wl.Seat_Listener {
 			if plat.cursor_device != nil {wl.wp_cursor_shape_device_v1_destroy(plat.cursor_device)}
 			wl.pointer_release(plat.pointer)
 			plat.pointer, plat.cursor_device = nil, nil
+			plat.pointer_surface = nil
+			plat.pointer_inside = false
 		}
 		if has_keyboard && plat.keyboard == nil {
 			plat.keyboard = wl.seat_get_keyboard(seat)
@@ -188,6 +191,8 @@ seat_listener := wl.Seat_Listener {
 		} else if !has_keyboard && plat.keyboard != nil {
 			wl.keyboard_release(plat.keyboard)
 			plat.keyboard = nil
+			plat.repeat_key = 0
+			plat.keyboard_focus = false
 		}
 	},
 	name = proc "c" (data: rawptr, seat: ^wl.Seat, name: cstring) {},
@@ -601,9 +606,9 @@ platform_init :: proc() -> bool {
 	return true
 }
 
+// Must run before any thread is started (setenv is not thread-safe).
 // On machines where every GPU is NVIDIA, keep glvnd from also loading Mesa's
 // EGL vendor (and with it ~30 MB of LLVM) just to probe it.
-@(private = "file")
 restrict_egl_vendor :: proc() {
 	if os.exists("/sys/module/nvidia_drm") == false {return}
 	json := "/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
@@ -623,7 +628,6 @@ restrict_egl_vendor :: proc() {
 gl_up :: proc() -> bool {
 	if plat.egl_context != nil {return true}
 	t0 := time.tick_now()
-	restrict_egl_vendor()
 	plat.egl_display = egl.GetPlatformDisplay(.WAYLAND_KHR, plat.display, nil)
 	if plat.egl_display == nil {
 		log.error("eglGetPlatformDisplay failed")

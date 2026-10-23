@@ -2,6 +2,9 @@
 package main
 
 import "core:os"
+import "core:strconv"
+import "core:strings"
+import "core:sys/posix"
 import "core:testing"
 
 @(test)
@@ -99,4 +102,17 @@ test_weather_codes :: proc(t: ^testing.T) {
 	testing.expect_value(t, icon, ICON_W_NIGHT)
 	_, d = weather_desc(95, true)
 	testing.expect_value(t, d, "Thunderstorm")
+}
+
+@(test)
+test_children_get_default_sigpipe :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	posix.signal(.SIGPIPE, auto_cast posix.SIG_IGN)
+	out, ok := run({"sh", "-c", "grep SigIgn /proc/self/status"})
+	testing.expect(t, ok)
+	f := strings.fields(out)
+	testing.expect(t, len(f) == 2)
+	if len(f) != 2 {return}
+	mask, _ := strconv.parse_u64(f[1], 16)
+	testing.expect_value(t, mask & (1 << 12), 0) // bit for signal 13 (SIGPIPE)
 }

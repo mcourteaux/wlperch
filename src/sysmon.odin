@@ -180,6 +180,8 @@ Cpu_Times :: struct {
 
 @(private = "file")
 prev_cpu: [MAX_CORES + 1]Cpu_Times
+@(private = "file")
+first_cpu_sample := true
 
 @(private = "file")
 cpu_temp_path: string
@@ -244,7 +246,9 @@ cpu_sample :: proc() {
 
 	sync.guard(&sysmon.mu)
 	sysmon.cpu_now = usage[0]
-	history_push(&sysmon.cpu, usage[0])
+	// The very first sample has no baseline (e.g. right after a re-exec).
+	if !first_cpu_sample {history_push(&sysmon.cpu, usage[0])}
+	first_cpu_sample = false
 	sysmon.core_count = max(n - 1, 0)
 	copy(sysmon.cores[:], usage[1:n])
 	sysmon.cpu_temp = temp

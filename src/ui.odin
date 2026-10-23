@@ -470,7 +470,7 @@ draw_displays :: proc(w: f32) {
 			if o.refresh > 0 {detail = fmt.tprintf("%s · %.0fHz", detail, o.refresh)}
 			if o.scale != 1 {detail = fmt.tprintf("%s · %.2gx", detail, o.scale)}
 			if o.transform != "normal" {detail = fmt.tprintf("%s · %s°", detail, o.transform)}
-			append(&rects, Layout_Rect{name = o.name, x = f32(o.x), y = f32(o.y), w = f32(o.w), h = f32(o.h), focused = o.focused, detail = detail})
+			append(&rects, Layout_Rect{name = strings.clone(o.name, context.temp_allocator), x = f32(o.x), y = f32(o.y), w = f32(o.w), h = f32(o.h), focused = o.focused, detail = detail})
 		}
 	}
 	card_title(ICON_MONITORS, "Displays", C_PURPLE, fmt.tprintf("%d active", len(rects)))

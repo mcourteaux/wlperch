@@ -17,8 +17,20 @@ Spawn_File_Actions :: struct {
 }
 
 @(private = "file")
+Spawn_Attr :: struct {
+	_: [336]u8, // glibc posix_spawnattr_t
+}
+
+@(private = "file")
+POSIX_SPAWN_SETSIGDEF :: 0x04
+
+@(private = "file")
 @(default_calling_convention = "c")
 foreign libc {
+	posix_spawnattr_init :: proc(attr: ^Spawn_Attr) -> c.int ---
+	posix_spawnattr_destroy :: proc(attr: ^Spawn_Attr) -> c.int ---
+	posix_spawnattr_setflags :: proc(attr: ^Spawn_Attr, flags: c.short) -> c.int ---
+	posix_spawnattr_setsigdefault :: proc(attr: ^Spawn_Attr, set: ^posix.sigset_t) -> c.int ---
 	posix_spawn_file_actions_init :: proc(fa: ^Spawn_File_Actions) -> c.int ---
 	posix_spawn_file_actions_destroy :: proc(fa: ^Spawn_File_Actions) -> c.int ---
 	posix_spawn_file_actions_adddup2 :: proc(fa: ^Spawn_File_Actions, fd, newfd: c.int) -> c.int ---
@@ -28,6 +40,38 @@ foreign libc {
 
 @(private = "file")
 O_CLOEXEC :: 0o2000000
+
+// Every child we spawn, so they can all be stopped before we re-exec
+// (otherwise they'd linger as zombies of the new image).
+@(private = "file")
+children_mu: sync.Mutex
+@(private = "file")
+children: [dynamic]posix.pid_t
+@(private = "file")
+stopping: bool
+
+@(private = "file")
+child_forget :: proc(pid: posix.pid_t) {
+	sync.guard(&children_mu)
+	for p, i in children {
+		if p == pid {
+			unordered_remove(&children, i)
+			return
+		}
+	}
+}
+
+// Kill and reap all children; no new ones are spawned afterwards.
+stop_children :: proc() {
+	sync.guard(&children_mu)
+	stopping = true
+	for pid in children {posix.kill(pid, .SIGKILL)}
+	for pid in children {
+		status: c.int
+		posix.waitpid(pid, &status, {})
+	}
+	clear(&children)
+}
 
 @(private = "file")
 spawn :: proc(argv: []string, stdout_fd: c.int) -> (pid: posix.pid_t, ok: bool) {
@@ -45,10 +89,23 @@ spawn :: proc(argv: []string, stdout_fd: c.int) -> (pid: posix.pid_t, ok: bool) 
 	}
 	posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", 1, 0)
 
-	if err := posix.posix_spawnp(&pid, cargv[0], &fa, nil, raw_data(cargv), posix.environ); err != .NONE {
+	// We ignore SIGPIPE; children (shell scripts!) must get the default back.
+	attr: Spawn_Attr
+	posix_spawnattr_init(&attr)
+	defer posix_spawnattr_destroy(&attr)
+	sigs: posix.sigset_t
+	posix.sigemptyset(&sigs)
+	posix.sigaddset(&sigs, .SIGPIPE)
+	posix_spawnattr_setsigdefault(&attr, &sigs)
+	posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGDEF)
+
+	sync.guard(&children_mu)
+	if stopping {return 0, false}
+	if err := posix.posix_spawnp(&pid, cargv[0], &fa, &attr, raw_data(cargv), posix.environ); err != .NONE {
 		log.debugf("spawn %v failed: %v", argv, err)
 		return 0, false
 	}
+	append(&children, pid)
 	return pid, true
 }
 
@@ -91,6 +148,7 @@ run :: proc(argv: []string, timeout := 10 * time.Second, allocator := context.al
 	}
 	status: c.int
 	for posix.waitpid(pid, &status, {}) < 0 && posix.errno() == .EINTR {}
+	child_forget(pid)
 	ok = !timed_out && posix.WIFEXITED(status) && posix.WEXITSTATUS(status) == 0
 	return string(buf[:]), ok
 }
@@ -102,22 +160,6 @@ Stream :: struct {
 	buf: [dynamic]u8,
 }
 
-// Long-running children, so they can be stopped before we re-exec.
-@(private = "file")
-streams_mu: sync.Mutex
-@(private = "file")
-stream_pids: [dynamic]posix.pid_t
-
-stop_children :: proc() {
-	sync.guard(&streams_mu)
-	for pid in stream_pids {posix.kill(pid, .SIGTERM)}
-	for pid in stream_pids {
-		status: c.int
-		posix.waitpid(pid, &status, {})
-	}
-	clear(&stream_pids)
-}
-
 stream_start :: proc(argv: []string) -> (s: Stream, ok: bool) {
 	fds: [2]c.int
 	if pipe2(&fds, O_CLOEXEC) != 0 {return}
@@ -126,10 +168,6 @@ stream_start :: proc(argv: []string) -> (s: Stream, ok: bool) {
 	if !spawned {
 		posix.close(posix.FD(fds[0]))
 		return
-	}
-	{
-		sync.guard(&streams_mu)
-		append(&stream_pids, pid)
 	}
 	return Stream{pid = pid, fd = posix.FD(fds[0])}, true
 }
@@ -151,19 +189,11 @@ stream_read_line :: proc(s: ^Stream, allocator := context.temp_allocator) -> (li
 }
 
 stream_stop :: proc(s: ^Stream) {
-	{
-		sync.guard(&streams_mu)
-		for p, i in stream_pids {
-			if p == s.pid {
-				unordered_remove(&stream_pids, i)
-				break
-			}
-		}
-	}
 	if s.pid > 0 {
 		posix.kill(s.pid, .SIGTERM)
 		status: c.int
 		posix.waitpid(s.pid, &status, {})
+		child_forget(s.pid)
 	}
 	if s.fd > 0 {posix.close(s.fd)}
 	delete(s.buf)
@@ -186,6 +216,7 @@ launch_detached :: proc(argv: []string) -> bool {
 	if !ok {return false}
 	status: c.int
 	for posix.waitpid(pid, &status, {}) < 0 && posix.errno() == .EINTR {}
+	child_forget(pid)
 	return posix.WIFEXITED(status) && posix.WEXITSTATUS(status) == 0
 }
 

@@ -21,7 +21,8 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Background sampler threads; UI reads snapshots under mutex, actions applied after unlock
 - [x] Safe subprocess helper (posix_spawn, captured stdout, timeouts, detached launches)
 - [x] Lean idle daemon: lazy EGL, NVIDIA-only glvnd vendor, re-exec after 30 s hidden (history kept via memfd), small temp arenas → ~38 MB RSS
-- [x] Unit tests (`./build.sh test`)
+- [x] Unit tests (`./build.sh test`, 7 tests)
+- [x] Independent correctness review; all 9 findings fixed (sway name UAF race, per-card port lookup, ambiguous monitor models, bluetoothctl timeout, setenv vs spawn race, child registry for re-exec, SIGPIPE default for children, wl_output.release, first-sample dip, stale input on seat loss)
 - [x] UI test tool: `tools/vptr` virtual pointer (click/scroll at layout coords)
 
 ## Look & feel
@@ -83,7 +84,8 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Highlight currently active preset (compare to current layout)
 
 ## Integration & docs
-- [ ] Waybar custom module snippet + sway keybinding snippet in README
-- [ ] README with build/run/config instructions
-- [~] Test: run under sway, screenshot (grim) and verify each widget (layout switch, outside click, Escape, preset dropdown verified)
+- [x] Waybar custom module snippet + sway keybinding snippet in README
+- [x] README with build/run/config instructions
+- [x] Tested under sway with grim + vptr: layout switch, outside click, Escape, IPC toggle, HDMI output switch (both ways), volume wheel, mute, night light, copy IP, preset dropdown, scrolling, fractional 1.5x, re-exec/state hand-over
+- [ ] Applying a preset live (not run: desk.sh switches audio to the currently unavailable hdmi-stereo-extra2)
 - [x] Check memory/CPU usage while idle and while shown

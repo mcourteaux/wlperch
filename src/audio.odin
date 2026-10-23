@@ -79,15 +79,21 @@ parse_volume :: proc(v: json.Value) -> f32 {
 }
 
 // Find the sway connector whose monitor model matches an ELD monitor name.
-connector_for_monitor :: proc(monitor: string) -> string {
+// Returns "" when unknown or ambiguous (two monitors of the same model).
+// The result is allocated with `allocator` (sway's strings may be freed any time).
+connector_for_monitor :: proc(monitor: string, allocator := context.temp_allocator) -> string {
 	if monitor == "" {return ""}
 	sync.guard(&sway.mu)
+	found := ""
+	matches := 0
 	for o in sway.outputs {
-		if o.model == monitor || strings.contains(o.model, monitor) || strings.contains(monitor, o.model) && o.model != "" {
-			return o.name
+		if o.model == monitor {
+			found = o.name
+			matches += 1
 		}
 	}
-	return ""
+	if matches != 1 {return ""}
+	return strings.clone(found, allocator)
 }
 
 @(private = "file")
@@ -149,8 +155,8 @@ refresh :: proc() {
 			}
 		}
 	}
-	monitor_for_port :: proc(ports: []Port_Info, port: string, card_index: string) -> string {
-		for p in ports {if p.port == port {return p.monitor}}
+	monitor_for_port :: proc(ports: []Port_Info, port: string, card: string) -> string {
+		for p in ports {if p.port == port && p.card == card {return p.monitor}}
 		return ""
 	}
 
@@ -176,7 +182,7 @@ refresh :: proc() {
 		profile_desc := jstr(jobj(props, "device.profile.description"))
 		card_desc := jstr(jobj(props, "device.description"))
 		if port_type == "HDMI" {
-			monitor := monitor_for_port(ports, active_port, "")
+			monitor := monitor_for_port(ports, active_port, jstr(jobj(props, "device.name")))
 			conn := connector_for_monitor(monitor)
 			hdmi := strings.trim_suffix(strings.trim_prefix(profile_desc, "Digital Stereo ("), ")")
 			dev.label = own(monitor != "" ? monitor : desc)
