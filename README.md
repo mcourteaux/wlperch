@@ -64,8 +64,9 @@ switches in place. The first panel in the config is the default.
 | `notifications` | notifications |
 | `time` | time |
 | `calc` | calculator (no tab: `tab = false`; open it with a key binding) |
+| `github` | github \| github-repo · github-inbox (only when `[github] enabled = true`) |
 
-Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time notifications media calculator`.
+Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time notifications media calculator github github-repo github-inbox`.
 
 The system panel's graphs keep the last hour. Scroll over any of them to zoom
 (they zoom together); zooming out from the live view stays live. Dragging or
@@ -97,6 +98,17 @@ popup.
   show on/off and current/target temperature. Readings older than 3 h are dimmed.
 
 - **time:** time tracking by workspace (see below).
+- **github, github-repo, github-inbox:** GitHub through the `gh` command line
+  tool, read-only (log in once with `gh auth login`). `github` is what
+  `gh status` reports, as a status board: counters for review requests, your
+  open pull requests (and how many have failing checks), assigned issues and
+  unread notifications, then the review requests, your pull requests with their
+  checks and review state, and your assigned issues. `github-inbox` lists unread
+  notifications, the ones addressed to you (mentions, review requests,
+  your threads) first. `github-repo` follows `[github] repo`: its default
+  branch's checks, open pull requests and issues, latest release and the last
+  workflow runs. Everything opens in the browser. Refreshes every
+  `refresh_minutes` (5), and when the panel opens on stale data.
 
 Define your own panels with `[panel.NAME]` sections (see Configuration).
 
@@ -453,6 +465,11 @@ bar_room =                    # room shown by "wlperch status sensors" (empty = 
 [notifications]
 enabled = true                # serve desktop notifications (takes over from dunst/mako)
 
+[github]
+enabled = false               # GitHub panel via the gh CLI (run "gh auth login" first)
+repo =                        # optional owner/name to follow too (checks, runs, releases)
+refresh_minutes = 5
+
 # Panels: the first is the default. columns: modules per column, separated by |
 [panel.main]
 header = true                 # big clock and date
@@ -483,6 +500,11 @@ columns = calculator
 title = Time
 width = 600
 columns = time
+
+[panel.github]                # dropped while [github] is disabled
+title = GitHub
+width = 1120
+columns = github | github-repo github-inbox
 
 [timetracker]
 idle_minutes = 5
@@ -529,6 +551,7 @@ src/notify_popup.odin    software-rendered notification popups (layer surfaces +
 src/notify_icons.odin    icon lookup and decoding (theme, PNG/JPEG, SVG via librsvg)
 src/media.odin           MPRIS players (sd-bus): scan, commands, `status media`
 src/calc.odin            calculator: expression parser/evaluator, number formats, `wlperch calc`
+src/github.odin          GitHub through gh (GraphQL search like `gh status`, notifications, runs)
 src/dbus.odin            minimal sd-bus bindings
 src/softtext.odin        stb_truetype text into pixel buffers (placeholders, popups)
 ```

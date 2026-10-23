@@ -725,3 +725,26 @@ test_calc_formats :: proc(t: ^testing.T) {
 	testing.expect_value(t, find(fs, "hex"), "") // not whole: no integer bases
 	testing.expect_value(t, find(fs, "f32 bits ≈"), "0x3DCCCCCD")
 }
+
+@(test)
+test_github_urls :: proc(t: ^testing.T) {
+	o, n, ok := github_split_repo("halide/Halide")
+	testing.expect(t, ok && o == "halide" && n == "Halide")
+	o, n, ok = github_split_repo(" https://github.com/cli/cli.git ")
+	testing.expect(t, ok && o == "cli" && n == "cli")
+	for bad in ([]string{"", "halide", "/x", "a/", "a/b/c"}) {
+		_, _, ok = github_split_repo(bad)
+		testing.expectf(t, !ok, "%q accepted", bad)
+	}
+	web :: proc(api, type, repo: string) -> string {
+		s := github_web_url(api, type, repo)
+		defer delete(s)
+		return strings.clone(s, context.temp_allocator)
+	}
+	testing.expect_value(t, web("https://api.github.com/repos/o/r/pulls/7", "PullRequest", "o/r"), "https://github.com/o/r/pull/7")
+	testing.expect_value(t, web("https://api.github.com/repos/o/r/issues/3", "Issue", "o/r"), "https://github.com/o/r/issues/3")
+	testing.expect_value(t, web("https://api.github.com/repos/o/r/releases/123", "Release", "o/r"), "https://github.com/o/r/releases")
+	testing.expect_value(t, web("", "CheckSuite", "o/r"), "https://github.com/o/r/actions")
+	testing.expect_value(t, web("", "Discussion", ""), "https://github.com/notifications")
+	testing.expect(t, notif_direct("mention") && !notif_direct("subscribed"))
+}

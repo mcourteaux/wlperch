@@ -41,6 +41,9 @@ MODULES := [?]Module {
 	{"sensors", draw_sensors},
 	{"time", draw_time},
 	{"thermals", draw_thermals},
+	{"github", draw_github},
+	{"github-inbox", draw_github_inbox},
+	{"github-repo", draw_github_repo},
 }
 
 module_find :: proc(name: string) -> Module_Proc {
@@ -83,6 +86,7 @@ panel_icon :: proc(p: Panel) -> string {
 	case "audio":                                                    return ICON_SPEAKER
 	case "notifications":                                            return ICON_BELL
 	case "calculator":                                               return ICON_CALC
+	case "github":                                                   return ICON_GITHUB
 	}
 	return ICON_TUNE
 }

@@ -98,3 +98,15 @@ ICON_PAUSE :: "\U000F03E4" // md-pause
 ICON_SKIP_NEXT :: "\U000F04AD" // md-skip_next
 ICON_SKIP_PREV :: "\U000F04AE" // md-skip_previous
 ICON_MUSIC :: "\U000F075A" // md-music
+ICON_GITHUB :: "\U000F02A4" // md-github
+ICON_SOURCE_PULL :: "\U000F04C2" // md-source_pull
+ICON_SOURCE_BRANCH :: "\U000F062C" // md-source_branch
+ICON_CLOSE_CIRCLE :: "\U000F0159" // md-close_circle
+ICON_PROGRESS_CLOCK :: "\U000F0996" // md-progress_clock
+ICON_STAR :: "\U000F04CE" // md-star
+ICON_TAG :: "\U000F04F9" // md-tag
+ICON_AT :: "\U000F0065" // md-at
+ICON_INBOX :: "\U000F0687" // md-inbox
+ICON_EYE :: "\U000F0208" // md-eye
+ICON_COMMENT :: "\U000F0182" // md-comment_outline
+ICON_CIRCLE_MEDIUM :: "\U000F09DE" // md-circle_medium

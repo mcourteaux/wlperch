@@ -55,6 +55,11 @@ Config :: struct {
 
 	// [notifications]
 	notifications:      bool, // serve org.freedesktop.Notifications
+
+	// [github]
+	github:             bool,
+	github_repo:        string, // owner/name, optional
+	github_refresh:     time.Duration,
 }
 
 config: Config
@@ -115,6 +120,17 @@ memory_warn_percent = 90
 # other one stops ("wlperch setup" can switch dunst off for you).
 enabled = true
 
+[github]
+# GitHub at a glance through the gh command line tool (log in once with
+# "gh auth login"): review requests, your pull requests with their checks,
+# assigned issues and unread notifications, like "gh status". Read-only.
+enabled = false
+# Optional repository (owner/name) to follow as well: its default branch's
+# checks, recent workflow runs, open pull requests / issues and latest release.
+repo =
+# Minutes between refreshes (opening the panel also refreshes stale data).
+refresh_minutes = 5
+
 [timetracker]
 # Minutes without input after which counting pauses (the idle time is not counted).
 idle_minutes = 5
@@ -150,6 +166,7 @@ bar_room =
 # Modules: quick audio network weather clocks displays bluetooth storage
 #          cpu gpu memory processes thermals sensors time notifications media
 #          calculator
+#          github github-repo github-inbox (need [github] enabled = true)
 # quick = night light, do not disturb, Bluetooth, project toggles, keyboard
 #         layouts and buttons that open the other panels.
 # header = true shows the big clock and date on top;
@@ -185,6 +202,11 @@ title = Calculator
 width = 560
 tab = false
 columns = calculator
+
+[panel.github]
+title = GitHub
+width = 1120
+columns = github | github-repo github-inbox
 `
 
 // wlperch was called wlwidgets: move its config and data (projects, time log,
@@ -320,6 +342,10 @@ config_load :: proc() {
 
 	c.notifications = parse_bool(get(m, defaults, "notifications", "enabled"), true)
 
+	c.github = parse_bool(get(m, defaults, "github", "enabled"), false)
+	c.github_repo = strings.clone(get(m, defaults, "github", "repo"))
+	c.github_refresh = time.Duration(max(strconv.parse_int(get(m, defaults, "github", "refresh_minutes")) or_else 5, 1)) * time.Minute
+
 	c.sensors_dir = expand_home(get(m, defaults, "sensors", "dir"))
 	c.sensors_watch = strings.clone(get(m, defaults, "sensors", "watch"))
 	c.sensors_bar_room = strings.clone(get(m, defaults, "sensors", "bar_room"))
@@ -334,6 +360,9 @@ config_load :: proc() {
 	if len(panels) == 0 {panels_load(DEFAULT_CONFIG, defaults)}
 	// No sensors defined: drop the module (and a panel left empty, like the built-in "sensors").
 	if !sensors_configured() {panels_drop_module("sensors")}
+	if !c.github {
+		for mod in ([]string{"github", "github-repo", "github-inbox"}) {panels_drop_module(mod)}
+	}
 }
 
 // `location = "Ghent, Belgium"` -> Ghent, Belgium
