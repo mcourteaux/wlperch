@@ -44,14 +44,15 @@ notif_textures_reset :: proc() {
 draw_badge :: proc(n: ^Notification, p: Vec2, size: f32) {
 	d := dl()
 	if n.icon != nil {
-		im.DrawList_AddImageRounded(d, im.TextureRef{_TexID = icon_texture(n.icon)}, p, {p.x + size, p.y + size}, {0, 0}, {1, 1}, 0xffffffff, n.icon.rounded ? 7 : 0)
+		im.DrawList_AddImageRounded(d, im.TextureRef{_TexID = icon_texture(n.icon)}, p, {p.x + size, p.y + size}, {0, 0}, {1, 1}, 0xffffffff, n.icon.rounded ? 8 : 0)
 		return
 	}
 	col := app_color(n.app)
 	im.DrawList_AddCircleFilled(d, {p.x + size / 2, p.y + size / 2}, size / 2, col32(col, 0.2))
 	ini := app_initial(n.app)
-	isz := measure(fonts.bold, 15, ini)
-	draw_text(fonts.bold, 15, {p.x + (size - isz.x) / 2, p.y + (size - isz.y) / 2}, col32(col), ini)
+	px := size * 0.48
+	isz := measure(fonts.bold, px, ini)
+	draw_text(fonts.bold, px, {p.x + (size - isz.x) / 2, p.y + (size - isz.y) / 2}, col32(col), ini)
 }
 
 @(private = "file")
@@ -176,8 +177,10 @@ draw_notifications :: proc(w: f32) {
 			im.Dummy({1, 2})
 		}
 		p := im.GetCursorScreenPos()
-		tx := p.x + 46
-		tw := lw - 46 - 8
+		// The icon fills the smallest row (app line + summary) between its paddings.
+		ICON_SZ :: 35
+		tx := p.x + 10 + ICON_SZ + 12
+		tw := lw - (10 + ICON_SZ + 12) - 8
 		// Measure the row: summary + (clipped) body + actions.
 		body := clip(n.body, 220)
 		im.PushFontFloat(fonts.ui, SZ_SMALL + 1)
@@ -205,8 +208,8 @@ draw_notifications :: proc(w: f32) {
 				hide_requested = true
 			}
 		}
-		if fresh[n.id] {im.DrawList_AddCircleFilled(d, {p.x + 4, p.y + 26}, 3, col32(C_PURPLE))}
-		draw_badge(n, {p.x + 10, p.y + 10}, 30)
+		if fresh[n.id] {im.DrawList_AddCircleFilled(d, {p.x + 4, p.y + 10 + ICON_SZ / 2}, 3, col32(C_PURPLE))}
+		draw_badge(n, {p.x + 10, p.y + 10}, ICON_SZ)
 		y := p.y + 9
 		app_col := n.urgency == 2 ? col32(C_RED) : col32(C_MUTED)
 		draw_text(fonts.ui, SZ_SMALL, {tx, y}, app_col, n.app != "" ? n.app : "Notification")
