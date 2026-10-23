@@ -95,6 +95,27 @@ if [[ $MODE == install ]]; then
 		cp contrib/sway/wlwidgets.conf "$SWAYD/wlwidgets.conf"
 		echo ">> installed $SWAYD/wlwidgets.conf (reload sway to activate)"
 	fi
+	# Waybar: module definitions + styling in two files next to your config.
+	# Your own config/style are never edited; we print what to add.
+	WAYBARD="${XDG_CONFIG_HOME:-$HOME/.config}/waybar"
+	if [[ -d $WAYBARD ]]; then
+		for f in wlwidgets.jsonc wlwidgets.css; do
+			if [[ ! -e $WAYBARD/$f ]]; then
+				cp "contrib/waybar/$f" "$WAYBARD/$f"
+				echo ">> installed $WAYBARD/$f"
+			fi
+		done
+		if ! grep -qs 'wlwidgets.jsonc' "$WAYBARD"/config*; then
+			cat <<'MSG'
+>> waybar: to show the wlwidgets buttons, add to your waybar config
+       "include": ["wlwidgets.jsonc"],
+   put "custom/wlwidgets" (and optionally "custom/timer", "custom/sensors",
+   "memory") in "modules-right", and add at the top of style.css
+       @import "wlwidgets.css";
+   then reload waybar (pkill -SIGUSR2 waybar).
+MSG
+		fi
+	fi
 fi
 
 if [[ $MODE == run ]]; then

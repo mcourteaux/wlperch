@@ -202,37 +202,31 @@ because those depend on your project names.
 
 ### Waybar
 
-Any number of bar items can open panels:
+The bar buttons come in two files, [`contrib/waybar/wlwidgets.jsonc`](contrib/waybar/wlwidgets.jsonc)
+(module definitions) and [`contrib/waybar/wlwidgets.css`](contrib/waybar/wlwidgets.css)
+(their styling, matching the popup). `./build.sh install` copies them into
+`~/.config/waybar/` if they aren't there yet. It never edits your own
+config. Hook them up with three lines:
 
 ```jsonc
-"custom/wlwidgets": {          // rightmost: the main panel opens under it
-    "exec": "wlwidgets status", "return-type": "json", "format": "{}",
-    "on-click": "wlwidgets toggle"
-},
-"custom/sensors": {            // "󰔏 20.4°  439 ppm"
-    "exec": "wlwidgets status sensors", "return-type": "json", "format": "{}",
-    "on-click": "wlwidgets toggle sensors"
-},
-"custom/timer": {             // "󰅐 ACME 1:23" while counting
-    "exec": "wlwidgets status timer", "return-type": "json", "format": "{}",
-    "on-click": "wlwidgets toggle time"
-},
-"memory": { "on-click": "wlwidgets toggle perf" }
+// config.jsonc
+"include": ["wlwidgets.jsonc"],
+"modules-right": [ ..., "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/wlwidgets" ],
 ```
-
-`wlwidgets status` prints the button's state every 2 s. When memory use
-reaches `memory_warn_percent`, the text becomes `󰕮 92%` and the module gets the
-class `memory-warning`. `wlwidgets status sensors` shows the `bar_room`
-temperature and the latest CO₂ reading, with the classes `co2-warn` (>800 ppm)
-and `co2-high` (>1200 ppm). Its tooltip lists every room.
-
 ```css
-#custom-wlwidgets { color: #7aa2f7; background-color: rgba(122,162,247,.16);
-                    border-radius: 8px; padding: 0 11px; margin: 3px 2px; font-size: 17px; }
-#custom-wlwidgets.memory-warning { color: #111318; background-color: #f7768e; font-weight: bold; }
-#custom-sensors.co2-warn { color: #ff9e64; }
-#custom-sensors.co2-high { color: #111318; background-color: #f7768e; }
+/* style.css, at the top */
+@import "wlwidgets.css";
 ```
+
+| Module | Shows | Click |
+|---|---|---|
+| `custom/wlwidgets` | panel button; red with `92%` when memory use passes `memory_warn_percent` | main panel |
+| `custom/timer` | `⏱ ACME 1:23` while a project is counted, dim otherwise | time panel |
+| `custom/sensors` | `bar_room` temperature + latest CO₂; orange >800 ppm, red >1200 ppm | sensors panel |
+| `memory` | waybar's own module | perf panel |
+
+The buttons are fed by `wlwidgets status`, `status timer` and `status sensors`,
+small standalone loops that print waybar JSON.
 
 ## Configuration
 

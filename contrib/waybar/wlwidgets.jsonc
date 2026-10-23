@@ -1,0 +1,37 @@
+// wlwidgets modules for waybar. In your waybar config add:
+//     "include": ["wlwidgets.jsonc"],
+// and put the module names in a modules list, e.g.
+//     "modules-right": [ ..., "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/wlwidgets" ]
+// (custom/wlwidgets last: the main panel opens under it). In style.css:
+//     @import "wlwidgets.css";
+{
+    // Quick-settings button. Turns red (with the percentage) when memory use
+    // passes memory_warn_percent in ~/.config/wlwidgets/config.ini.
+    "custom/wlwidgets": {
+        "exec": "wlwidgets status",
+        "return-type": "json",
+        "format": "{}",
+        "on-click": "wlwidgets toggle"
+    },
+    // Running project timer (time tracking by workspace); opens the time panel.
+    "custom/timer": {
+        "exec": "wlwidgets status timer",
+        "return-type": "json",
+        "format": "{}",
+        "on-click": "wlwidgets toggle time"
+    },
+    // Room temperature + CO2 from Tuya sensors; opens the sensors panel.
+    "custom/sensors": {
+        "exec": "wlwidgets status sensors",
+        "return-type": "json",
+        "format": "{}",
+        "on-click": "wlwidgets toggle sensors"
+    },
+    // Waybar's own memory module, opening the performance panel.
+    "memory": {
+        "interval": 5,
+        "format": "{used:0.1f}<small> / {total:0.0f} GiB</small>  󰍛",
+        "tooltip-format": "{percentage}% used · swap {swapUsed:0.1f} / {swapTotal:0.0f} GiB",
+        "on-click": "wlwidgets toggle perf"
+    }
+}

@@ -1,0 +1,62 @@
+/* wlwidgets modules for waybar. Import from your style.css (at the top):
+ *     @import "wlwidgets.css";
+ * Colors match the wlwidgets popup. */
+
+#custom-wlwidgets,
+#custom-timer,
+#custom-sensors {
+    padding: 0 10px;
+    margin: 3px 1px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+}
+
+#custom-timer:hover,
+#custom-sensors:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+/* Quick-settings button: accent colored. */
+#custom-wlwidgets {
+    color: #7aa2f7;
+    background-color: rgba(122, 162, 247, 0.16);
+    font-size: 17px;
+    padding: 0 11px;
+    margin: 3px 2px 3px 4px;
+}
+#custom-wlwidgets:hover {
+    background-color: rgba(122, 162, 247, 0.30);
+    color: #9bbcff;
+}
+/* Memory nearly exhausted: red, gently pulsing, shows the percentage. */
+#custom-wlwidgets.memory-warning {
+    color: #111318;
+    background-color: #f7768e;
+    font-size: 14px;
+    font-weight: bold;
+    animation-name: wlw-pulse;
+    animation-duration: 1.2s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+}
+@keyframes wlw-pulse {
+    to { background-color: #c0465e; }
+}
+
+/* Project timer: dim when nothing is counted. */
+#custom-timer { color: #5a6172; }
+#custom-timer.running {
+    color: #73daca;
+    font-weight: bold;
+    background-color: rgba(115, 218, 202, 0.12);
+}
+
+/* Sensors: CO2 warnings. */
+#custom-sensors { color: #73daca; }
+#custom-sensors.co2-warn { color: #ff9e64; }
+#custom-sensors.co2-high {
+    color: #111318;
+    background-color: #f7768e;
+}
