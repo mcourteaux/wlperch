@@ -52,6 +52,12 @@ status_loop :: proc() {
 status_sensors_loop :: proc() {
 	sensors_read_only = true
 	for {
+		if !sensors_configured() {
+			// Nothing to show: an empty text hides the waybar module.
+			if _, err := os.write_string(os.stdout, `{"text": "", "tooltip": "", "class": "none"}` + "\n"); err != nil {return}
+			time.sleep(time.Minute)
+			continue
+		}
 		sensors_reload()
 		temp_s, co2_s, tip: string
 		class := "normal"

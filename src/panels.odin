@@ -126,6 +126,22 @@ panels_load :: proc(src: string, m: ini.Map) {
 	}
 }
 
+// Remove a module from every panel; panels left without modules go too.
+panels_drop_module :: proc(module: string) {
+	for i := len(panels) - 1; i >= 0; i -= 1 {
+		p := &panels[i]
+		for ci := len(p.columns) - 1; ci >= 0; ci -= 1 {
+			col := &p.columns[ci]
+			for mi := len(col) - 1; mi >= 0; mi -= 1 {
+				if col[mi] == module {ordered_remove(col, mi)}
+			}
+			if len(col) == 0 {ordered_remove(&p.columns, ci)}
+		}
+		if len(p.columns) == 0 {ordered_remove(&panels, i)}
+	}
+	current_panel = clamp(current_panel, 0, max(len(panels) - 1, 0))
+}
+
 // Does the panel on screen contain this module? (services use it to decide
 // whether to sample).
 panel_shows :: proc(module: string) -> bool {

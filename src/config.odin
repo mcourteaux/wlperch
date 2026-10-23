@@ -129,12 +129,20 @@ idle_minutes = 5
 # color = #7aa2f7         ; optional
 
 [sensors]
-# Directory of the tuya-sensors tool (devices.json + state.json).
-dir = ~/tuya-sensors
-# Command (run inside dir) that keeps state.json up to date; empty = don't run it.
-watch = .venv/bin/python tuya_sensors.py --watch
+# Tuya WiFi sensors (thermo-hygrometers, air monitors, heaters), read over the
+# LAN. Off until devices are defined: a directory with a tinytuya devices.json
+# (ids, local keys, data point mappings), and/or [sensor.<name>] sections.
+dir =
 # Room whose temperature "wlperch status sensors" shows in the bar (empty = first).
-bar_room = Living
+bar_room =
+
+# [sensor.kitchen]
+# id = bf0123456789abcdefghij     ; Tuya device id
+# key = 0123456789abcdef          ; its local key (keep this file private: chmod 600)
+# kind = room                     ; room | air | heater: picks a built-in data point layout
+# ip =                            ; optional: learned from the device's broadcasts
+# version =                       ; optional (3.3 / 3.4 / 3.5): idem
+# dp1 = va_temperature 1 ℃        ; optional data points: code, decimals, unit
 
 # ---- Panels -------------------------------------------------------------
 # "wlperch toggle <name>" opens a panel; the first one is the default.
@@ -307,6 +315,7 @@ config_load :: proc() {
 	c.sensors_dir = expand_home(get(m, defaults, "sensors", "dir"))
 	c.sensors_watch = strings.clone(get(m, defaults, "sensors", "watch"))
 	c.sensors_bar_room = strings.clone(get(m, defaults, "sensors", "bar_room"))
+	sensors_load_defs(m)
 
 	tracker.idle = time.Duration(max(strconv.parse_int(get(m, defaults, "timetracker", "idle_minutes")) or_else 5, 1)) * time.Minute
 	projects_load(string(src_for_projects(path)), m)
@@ -315,6 +324,8 @@ config_load :: proc() {
 	src, _ := os.read_entire_file(path, context.temp_allocator)
 	panels_load(string(src), m)
 	if len(panels) == 0 {panels_load(DEFAULT_CONFIG, defaults)}
+	// No sensors defined: drop the module (and a panel left empty, like the built-in "sensors").
+	if !sensors_configured() {panels_drop_module("sensors")}
 }
 
 // `location = "Ghent, Belgium"` -> Ghent, Belgium

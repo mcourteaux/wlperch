@@ -218,7 +218,7 @@ draw_heater :: proc(w: f32, d: ^Sensor_Device) {
 
 @(private = "file")
 no_data_yet :: proc(inner: f32) {
-	msg := sensors.watching ? "No data yet — waiting for it to report" : "No data yet (watcher not running)"
+	msg := sensors.watching ? "No data yet — waiting for it to report" : "No data yet (cannot listen for Tuya broadcasts)"
 	label(fonts.ui, SZ_BODY, col32(C_MUTED), msg)
 }
 
@@ -265,7 +265,7 @@ draw_sensors :: proc(w: f32) {
 		card_begin("sensors", w)
 		defer card_end()
 		card_title(ICON_THERMOMETER, "Sensors", C_TEAL)
-		msg := sensors.error != "" ? sensors.error : fmt.tprintf("Set [sensors] dir in the config (now: %s)", config.sensors_dir)
+		msg := sensors.error != "" ? sensors.error : "No sensors defined: set [sensors] dir or add [sensor.<name>] sections to the config"
 		label(fonts.ui, SZ_BODY, col32(C_MUTED), msg)
 		return
 	}

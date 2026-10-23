@@ -59,7 +59,7 @@ switches in place. The first panel in the config is the default.
 |---|---|
 | `main` | header · quick · media · audio \| weather · clocks · displays · bluetooth |
 | `system` | cpu · memory · storage \| gpu · thermals · network \| processes |
-| `sensors` | sensors |
+| `sensors` | sensors (only when sensors are configured) |
 | `notifications` | notifications |
 | `time` | time |
 
@@ -89,8 +89,8 @@ popup.
 - **processes:** top 8 by CPU (% of one core, like `top`) and by resident
   memory. Processes are grouped by executable, e.g. `firefox ×38`. This is
   sampled every 2 s, and only while the module is on screen.
-- **sensors:** Tuya devices through the
-  [tuya-sensors](#sensors) tool. Rooms show temperature, humidity and battery;
+- **sensors:** Tuya WiFi devices, read directly over the LAN
+  ([setup](#sensors)). Rooms show temperature, humidity and battery;
   air-quality monitors show CO₂ (with a verdict), PM1/2.5/10 and HCHO; heaters
   show on/off and current/target temperature. Readings older than 3 h are dimmed.
 
@@ -170,11 +170,60 @@ The panel shows:
 
 ### Sensors
 
-wlperch reads `devices.json` (names and data-point mappings only, never the
-keys) and `state.json` from `[sensors] dir`, and reloads whenever
-`state.json` changes. The battery sensors sleep and only report when they wake,
-so the daemon keeps `[sensors] watch` (the tool's `--watch` mode) running and
-restarts it if it exits. Leave `watch` empty if you run the watcher yourself.
+Tuya WiFi thermo-hygrometers, air-quality monitors and heaters are read
+directly over the LAN, without the cloud and without tinytuya: wlperch speaks
+the local protocol itself (3.3, 3.4 and 3.5; only status queries, it never
+sends commands). Sensors are off until you define devices. Each device needs
+its id and **local key**, which only the Tuya cloud knows. Fetch them once,
+e.g. with [tinytuya](https://github.com/jasonacox/tinytuya)'s wizard
+(`python -m tinytuya wizard`), which writes a `devices.json`.
+
+There are two ways to define devices, and they can be mixed:
+
+- `[sensors] dir`: a directory with a tinytuya `devices.json`. Names, local
+  keys and data point mappings (codes, units, scales) are taken from it.
+- `[sensor.<name>]` sections in the config:
+
+  ```ini
+  [sensor.kitchen]
+  id = bf0123456789abcdefghij
+  key = 0123456789abcdef        ; local key: chmod 600 the config
+  kind = room                   ; room | air | heater (built-in data point layout)
+  # name = Kitchen              ; default: the section name
+  # ip = 192.168.1.20           ; default: learned from the broadcasts
+  # version = 3.4               ; idem
+  # dp1 = va_temperature 1 ℃    ; data points: code, decimals, unit (replace the built-in layout)
+  ```
+
+  A section with the id of a `devices.json` entry overrides its fields
+  (e.g. `name`).
+
+The built-in layouts are the usual Tuya thermo-hygrometer
+(1 temperature ÷10, 2 humidity, 4 battery), the common MT15/MT29-style
+air monitor (CO₂, PM1/2.5/10, HCHO, …) and a basic heater (switch, target and
+current temperature, mode). Data points without a mapping show up as `dpN`.
+
+Battery sensors sleep with WiFi off and only wake for a few seconds, on a
+timer or when a value changes. The daemon listens for the devices'
+discovery broadcasts on UDP 6666/6667/7000, sends the discovery probe every
+6 s (3.5 devices only announce themselves when asked), and queries a device
+over TCP 6668 the moment it announces itself (at most every 30 s). Devices
+with both `ip` and `version` configured are also asked every 5 minutes. The
+last value of every data point is kept in `~/.local/share/wlperch/sensors-state.json`
+(the `state.json` format of tuya-sensors; on the first run it is seeded from
+`<dir>/state.json`), which `wlperch status sensors` reads too.
+
+Two commands help with the setup (both read-only):
+
+```
+wlperch sensors scan [seconds]   # devices announcing themselves: id, address, protocol version
+wlperch sensors read <name|id>   # query one configured device once, print its data points
+```
+
+`[sensors] watch` (the tuya-sensors watcher that older versions ran) is
+ignored now. Some old 3.3 firmware ("device22") only answers status queries
+sent as a control command; wlperch doesn't send those, so such devices are not
+supported.
 
 Readings are kept in `~/.local/share/wlperch/sensors.bin`, a small binary file
 holding only the last 7 days (older samples are dropped as they age out), so
@@ -375,9 +424,10 @@ history_seconds = 120         # span the system graphs show by default (zoom out
 memory_warn_percent = 90      # popup + bar button turn red at this memory use
 
 [sensors]
-dir = ~/tuya-sensors
-watch = .venv/bin/python tuya_sensors.py --watch   # run inside dir; empty = don't
-bar_room = Living             # shown by "wlperch status sensors"
+dir =                         # directory with a tinytuya devices.json (see Sensors)
+bar_room =                    # room shown by "wlperch status sensors" (empty = first)
+
+# [sensor.kitchen]            # or define devices here (see Sensors)
 
 [notifications]
 enabled = true                # serve desktop notifications (takes over from dunst/mako)
@@ -445,6 +495,7 @@ src/reexec.odin          memory-returning self re-exec with state hand-over
 src/theme.odin           fonts, palette, ImGui style
 src/widgets.odin         custom-drawn widgets
 src/ui.odin              the popup layout
+src/tuya.odin            Tuya LAN protocol: discovery broadcasts, 3.3/3.4/3.5 status queries
 src/{audio,sysmon,procs,sensors,sway,weather,network,bluetooth,nightlight,displays,clocks,storage}.odin  data services
 src/notifications.odin   notification server (D-Bus via sd-bus), history, do not disturb
 src/notify_popup.odin    software-rendered notification popups (layer surfaces + shm)

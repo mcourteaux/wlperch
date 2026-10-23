@@ -2,7 +2,9 @@
 // Unit tests: `./build.sh test` (or `odin test src -collection:third_party=third_party`).
 package main
 
+import "core:encoding/hex"
 import "core:encoding/ini"
+import "core:encoding/json"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -381,4 +383,179 @@ test_notification_history_binary :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(cut), 2) // no cutoff: Old + Firefox; Slack was cut off
 	bad, _, _ := notifications_decode(transmute([]u8)string("nope"), 0)
 	testing.expect_value(t, len(bad), 0)
+}
+
+// Tuya vectors made offline with tinytuya 1.20's own functions and a dummy
+// key (pack_message, AESCipher, decrypt_udp, the session key steps).
+@(private = "file") TUYA_TEST_KEY :: "0123456789abcdef"
+
+@(private = "file")
+unhex :: proc(s: string) -> []byte {
+	b, _ := hex.decode(transmute([]byte)s, context.temp_allocator)
+	return b
+}
+
+@(test)
+test_tuya_framing :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	key := transmute([]byte)string(TUYA_TEST_KEY)
+	k := tuya_udp_key()
+	testing.expect_value(t, string(hex.encode(k[:], context.temp_allocator)), "6c1ec8e2bb9bb59ab50b0daf649b410a")
+
+	// 3.3 status query: ECB payload, CRC32 frame.
+	query := `{"gwId":"testdevice0000000000","devId":"testdevice0000000000","uid":"testdevice0000000000","t":"1700000000"}`
+	frame33 := "000055aa000000010000000a000000787b615f96a69a699ee142581f0a327055b2e3d016ba3e5cba2b9ebb4a385227f4c43a69275220231352c24112a53f9ca40dee6c10527f1ee3ee5166513e490966585f1225bfec8694a58b472a635badc1fc095fabb69877a4faab8be9fab648a2be23f34440aefb47c4fa7fbe7027af0155cceb360000aa55"
+	cmd, payload := tuya_query(.V33, "testdevice0000000000", 1700000000)
+	testing.expect_value(t, cmd, TUYA_DP_QUERY)
+	testing.expect_value(t, payload, query)
+	testing.expect_value(t, string(hex.encode(tuya_encode(.V33, key, 1, cmd, transmute([]byte)payload), context.temp_allocator)), frame33)
+	// The same frame parses back (sent frames have no return code).
+	f, ok := tuya_unpack(unhex(frame33), nil, .Never)
+	testing.expect(t, ok)
+	testing.expect_value(t, f.seq, 1)
+	plain, dok := tuya_ecb_decrypt(key, f.payload)
+	testing.expect(t, dok)
+	testing.expect_value(t, string(plain), query)
+	// A flipped bit fails the CRC.
+	bad := unhex(frame33)
+	bad[20] ~= 1
+	_, ok = tuya_unpack(bad, nil, .Never)
+	testing.expect(t, !ok)
+
+	// 3.4 DP_QUERY_NEW: {} encrypted with the session key, HMAC-SHA256 frame.
+	frame34 := "000055aa000000020000001000000034cb70ddc25a2a2045b4c13084418a9abbb94488ee8863425df208c2ef28301a083cd5c8b8d156eddeb31c6557bbf58ce90000aa55"
+	cmd, payload = tuya_query(.V34, "x", 0)
+	testing.expect_value(t, cmd, TUYA_DP_QUERY_NEW)
+	testing.expect_value(t, string(hex.encode(tuya_encode(.V34, key, 2, cmd, transmute([]byte)payload), context.temp_allocator)), frame34)
+	_, ok = tuya_unpack(unhex(frame34), transmute([]byte)string("fedcba9876543210"), .Never)
+	testing.expect(t, !ok) // wrong HMAC key
+
+	// 3.5: 0x6699 + AES-GCM (fixed IV to compare against tinytuya).
+	frame35 := "00006699000000000003000000100000001e303132333435363738396162193f15291e1a8b8909eaff0bdeadc63a604300009966"
+	testing.expect_value(t, string(hex.encode(tuya_encode(.V35, key, 3, cmd, transmute([]byte)payload, transmute([]byte)string("0123456789ab")), context.temp_allocator)), frame35)
+	// Random IV: still round trips.
+	f, ok = tuya_unpack(tuya_encode(.V35, key, 4, cmd, transmute([]byte)payload), key, .Never)
+	testing.expect(t, ok && string(f.payload) == "{}" && f.seq == 4)
+	testing.expect_value(t, tuya_frame_size(unhex(frame35)), len(frame35) / 2)
+	testing.expect_value(t, tuya_frame_size(unhex(frame35)[:10]), 0)
+	testing.expect_value(t, tuya_frame_size(transmute([]byte)string("junkjunk")), -1)
+}
+
+@(test)
+test_tuya_replies :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	key := transmute([]byte)string(TUYA_TEST_KEY)
+	// 3.3 reply: return code, "3.3" header, ECB JSON, CRC.
+	reply33 := "000055aa000000010000000a0000005b00000000332e330000000000000000000000001dd89c1281a1deb692d9e15dfe1c332c67cf861911fb83e855b7aafe57c41ed385683833300dbe074e72fa4d791ce26e9883ee23925113e07a560f677a79f42a4e1f70b80000aa55"
+	f, ok := tuya_unpack(unhex(reply33))
+	testing.expect(t, ok)
+	text, dok := tuya_decode_payload(.V33, key, f.payload)
+	testing.expect(t, dok)
+	testing.expect_value(t, text, `{"devId":"x","dps":{"1":true,"3":21},"t":1700000000}`)
+	// 3.5 reply: GCM, return code inside the ciphertext.
+	reply35 := "00006699000000000007000000100000005e6162636465666768696a6b6ce5d27cb5608b6ca55930b43af63edf090a15ec9c1a9f4321a6c6b65a637572832d2b73b30c91eb7cbdd92a6b0dec3b4ebb8928033ae9fdcd9c0d559b04056eb3014bfa5da42812d08afc9f3c3dfaa794e35f00009966"
+	f, ok = tuya_unpack(unhex(reply35), key)
+	testing.expect(t, ok && f.seq == 7 && f.retcode == 0)
+	text, dok = tuya_decode_payload(.V35, key, f.payload)
+	testing.expect(t, dok)
+	testing.expect_value(t, text, `{"dps":{"1":215,"2":48,"4":100},"t":1700000000}`)
+	// Tampered tag: rejected.
+	bad := unhex(reply35)
+	bad[len(bad) - 6] ~= 1
+	_, ok = tuya_unpack(bad, key)
+	testing.expect(t, !ok)
+
+	// ECB round trip, including a block-sized message (gets a full padding block).
+	for msg in ([]string{"", "{}", "0123456789abcdef", `{"dps":{"1":215}}`}) {
+		enc := tuya_ecb_encrypt(key, transmute([]byte)msg)
+		testing.expect_value(t, len(enc), (len(msg) / 16 + 1) * 16)
+		dec, rok := tuya_ecb_decrypt(key, enc)
+		testing.expect(t, rok && string(dec) == msg)
+	}
+
+	// Session keys from fixed nonces, and the HMAC the device proves itself with.
+	ln := transmute([]byte)string("localnonce000000")
+	rn := transmute([]byte)string("remotenonce00000")
+	k34 := tuya_session_key(.V34, key, ln, rn)
+	k35 := tuya_session_key(.V35, key, ln, rn)
+	testing.expect_value(t, string(hex.encode(k34[:], context.temp_allocator)), "b33c7e583acff03245603ecdc3a94494")
+	testing.expect_value(t, string(hex.encode(k35[:], context.temp_allocator)), "3267549aca55d0ab29571875c5a3de79")
+}
+
+@(test)
+test_tuya_udp :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	// 6667: 0x55AA + return code + ECB with the UDP key.
+	udp33 := "000055aa00000000000000130000008c00000000d09766676f3369eb10b5e9f132fd802ab772b5567e90aaa8d81c1bdd88c509859c12198743b37f0b83597862ecb4a3c8165883272f7e926294cee45e6e97346c40b1058c6d8cd9456f3f7e28eed4932b57a3eb380b1674ed82d5a2a17b0f7be0343378fd637a924ca2f95eab619c9c2e2dd3a795424f2879a4492a51a7d90f079b131a640000aa55"
+	text, ok := tuya_decrypt_udp(unhex(udp33))
+	testing.expect(t, ok)
+	testing.expect_value(t, text, `{"ip":"192.168.1.20","gwId":"testdevice0000000000","active":2,"encrypt":true,"productKey":"abc","version":"3.3"}`)
+	// 7000: 0x6699 + GCM with the UDP key.
+	udp35 := "00006699000000000000000000130000008c3031323334353637383961627f0e8c5c409ea2eaa8b6c4436693f7333135c536aeaada5e4d17a3aa76b0489c4d5e87e177367a301786330d169ef3b6e9861bae925d7fa1de7fa1ef733656903b0a8778f23b0fed83df2e169b8c66abae7cd3c67945c60263903c190caf6ca646b3ef434d4f0ce782daf1596549a789fd9f9838712ea8f7a5bb84d327ec1a0300009966"
+	text, ok = tuya_decrypt_udp(unhex(udp35))
+	testing.expect(t, ok)
+	testing.expect_value(t, text, `{"ip":"192.168.1.21","gwId":"testdevice0000000001","active":2,"encrypt":true,"productKey":"abc","version":"3.5"}`)
+	// 6666: plain JSON.
+	text, ok = tuya_decrypt_udp(transmute([]byte)string(`{"gwId":"a"}`))
+	testing.expect(t, ok && text == `{"gwId":"a"}`)
+	// Our discovery probe matches tinytuya's.
+	disc := "00006699000000000000000000250000003d3031323334353637383961627f0e835e0dc9a2e1b3e59a027287fb6b6f25ce36b3b18f073545b9be65ea18cd4498a2acb738e0f5d7563cb82d76b0330300009966"
+	testing.expect_value(t, string(hex.encode(tuya_discovery_request("192.168.1.5", transmute([]byte)string("0123456789ab")), context.temp_allocator)), disc)
+	_, ok = tuya_decrypt_udp(transmute([]byte)string("not a tuya packet"))
+	testing.expect(t, !ok)
+}
+
+@(test)
+test_sensor_decoding :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	// devices.json (tinytuya format; mapping values may be a JSON string).
+	devices := `[{"id": "dev1", "name": "Kitchen SRW-TH03", "product_name": "SRW-TH03", "category": "wsdcg", "key": "0123456789abcdef",
+		"mapping": {"1": {"code": "va_temperature", "values": "{\"unit\":\"℃\",\"scale\":1}"}, "2": {"code": "humidity_value", "values": {"unit": "%", "scale": 0}}}},
+		{"id": "dev2", "name": "MT15/MT29 attic ", "product_name": "", "category": "", "mapping": {"4": {"code": "co2_value", "values": "{\"unit\":\"ppm\"}"}}}]`
+	defs: [dynamic]Sensor_Def
+	sensor_defs_from_devices_json(devices, &defs)
+	testing.expect_value(t, len(defs), 2)
+	if len(defs) != 2 {return}
+	testing.expect_value(t, defs[0].name, "Kitchen")
+	testing.expect_value(t, defs[0].kind, Sensor_Kind.Climate)
+	testing.expect_value(t, defs[0].dps["1"].scale, 1)
+	testing.expect_value(t, defs[0].dps["1"].unit, "℃")
+	testing.expect_value(t, defs[1].kind, Sensor_Kind.Air) // from its codes
+
+	// [sensor.*]: built-in layout for the kind, dpN overrides, and an override
+	// of a devices.json entry by id.
+	m, _ := ini.load_map_from_string("[sensor.office]\nid = dev3\nkey = 0123456789abcdef\nkind = room\n[sensor.garage]\nid = dev4\ndp7 = co2_value 0 ppm\n[sensor.x]\nid = dev1\nname = Pantry\nip = 10.0.0.5\n", context.temp_allocator)
+	sensor_defs_from_ini(m, &defs)
+	testing.expect_value(t, len(defs), 4)
+	if len(defs) != 4 {return}
+	testing.expect_value(t, defs[0].name, "Pantry")
+	testing.expect_value(t, defs[0].ip, "10.0.0.5")
+	office, garage := defs[3], defs[2]
+	if office.id != "dev3" {office, garage = garage, office}
+	testing.expect_value(t, office.name, "Office")
+	testing.expect_value(t, office.dps["1"].code, "va_temperature")
+	testing.expect_value(t, office.dps["4"].code, "battery_percentage")
+	testing.expect_value(t, garage.kind, Sensor_Kind.Air)
+	testing.expect_value(t, len(garage.dps), 1)
+
+	// Reported values -> state -> file text that parses back.
+	st: Sensor_State
+	reply, _ := jparse(`{"dps": {"1": 215, "2": 48, "9": "c", "23": true}}`)
+	sensor_state_merge(&st, "dev1", jobj(reply, "dps").(json.Object), 1700000000.5)
+	testing.expect_value(t, st["dev1"]["1"].raw, "215")
+	testing.expect_value(t, st["dev1"]["9"].raw, `"c"`)
+	back, ok := jparse(sensor_state_encode(st))
+	testing.expect(t, ok)
+	testing.expect_value(t, jint(jobj(jobj(jobj(back, "dev1"), "2"), "v")), 48)
+	testing.expect_value(t, jfloat(jobj(jobj(jobj(back, "dev1"), "1"), "t")), 1700000000.5)
+	// Through the mapping: scale, unit, unmapped DPs, enums and booleans.
+	temp := sensor_decode(&defs[0], "1", st["dev1"]["1"])
+	testing.expect(t, temp.is_num && temp.code == "va_temperature" && temp.unit == "℃")
+	testing.expect_value(t, temp.num, 21.5)
+	testing.expect_value(t, temp.t, 1700000000.5)
+	unit := sensor_decode(&defs[0], "9", st["dev1"]["9"])
+	testing.expect(t, !unit.is_num && unit.code == "dp9" && unit.text == "c")
+	testing.expect_value(t, sensor_decode(&defs[0], "23", st["dev1"]["23"]).text, "on")
+	p, _ := sensor_parse_dp("ch2o_value 3 mg/m³")
+	testing.expect(t, p.code == "ch2o_value" && p.scale == 3 && p.unit == "mg/m³")
 }

@@ -89,7 +89,7 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] `wlperch toggle|show <panel>`; switching panels in place (resize + fade)
 - [x] Restart keeps the open panel
 - [x] perf panel: cpu (load, per-core, uptime), memory (history, used/cache/free, swap, warning), gpu (VRAM), processes (top CPU / memory, grouped by executable, sampled only while shown)
-- [x] sensors panel: Tuya rooms (temp/humidity/battery/age), air quality (CO2 verdict, PM, HCHO), heater; watcher kept running by the daemon
+- [x] sensors panel: Tuya rooms (temp/humidity/battery/age), air quality (CO2 verdict, PM, HCHO), heater; read natively (was: watcher kept running by the daemon)
 - [x] waybar accessors: memory → perf, `wlperch status sensors` pill → sensors (CO2 warning classes)
 - [x] Time tracker: [project.*] config, per-monitor project workspaces (create/recreate/pin), counting while focused, idle pause via ext-idle-notify-v1, TSV log + crash-safe heartbeat, today/week views, quick switch, `wlperch track`, waybar timer pill
 - [x] Group lock: monitors follow each other into/out of project workspaces (toggle + `track lock`), decision logic unit-tested
@@ -100,6 +100,8 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [ ] Time tracker: visual check of the panel (screen was locked during the test run)
 - [ ] Time tracker: optional window-rule assignment on numbered workspaces (e.g. by app/title)
 - [x] Sensor history graphs: readings persisted to sensors.bin (binary, last 7 days only), 24 h graphs on hover (tooltips grow the popup surface)
+- [x] Native Tuya reader (no Python/tinytuya): discovery listener + probe, 3.3/3.4/3.5 status queries, state in sensors-state.json (seeded from tuya-sensors' state.json); devices from devices.json and/or [sensor.*]; `wlperch sensors scan|read`; sensors opt-in (panel hidden when none)
+- [ ] Tuya 3.3/3.4 against real devices: only 3.5 verified live; 3.3/3.4 covered by tinytuya test vectors
 
 ## Setup window (self-install)
 - [x] `wlperch setup` (and auto-open when run from a download): xdg_toplevel window with the same renderer
