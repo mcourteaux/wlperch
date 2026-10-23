@@ -278,7 +278,9 @@ loop_iteration :: proc() {
 			hide_popup()
 			return
 		}
-		if (plat.focus_lost || plat.outside_click) && config.close_on_click_outside {
+		// Losing keyboard focus is NOT a reason to close: overlays such as
+		// slurp (screenshot region selection) grab it temporarily.
+		if plat.outside_click && config.close_on_click_outside {
 			hide_popup()
 			return
 		}

@@ -83,11 +83,9 @@ Platform :: struct {
 	repeat_key:       u32,
 	repeat_at:        time.Tick,
 	keyboard_focus:   bool,
-	had_focus:        bool,
 
 	// Events for the app
 	closed:           bool, // compositor closed our surface
-	focus_lost:       bool,
 	outside_click:    bool,
 	redraw:           int, // number of frames we still want to render
 }
@@ -375,7 +373,6 @@ keyboard_listener := wl.Keyboard_Listener {
 	enter = proc "c" (data: rawptr, self: ^wl.Keyboard, serial: u32, surface: ^wl.Surface, keys: ^wl.Array) {
 		context = g_ctx
 		plat.keyboard_focus = true
-		plat.had_focus = true
 		im.IO_AddFocusEvent(im.GetIO(), true)
 		request_redraw()
 	},
@@ -383,7 +380,6 @@ keyboard_listener := wl.Keyboard_Listener {
 		context = g_ctx
 		plat.keyboard_focus = false
 		plat.repeat_key = 0
-		if plat.had_focus {plat.focus_lost = true}
 		im.IO_AddFocusEvent(im.GetIO(), false)
 		request_redraw()
 	},
@@ -693,9 +689,7 @@ platform_show :: proc(placement: Popup_Placement, width, height: i32) -> bool {
 	if plat.surface != nil {return true}
 	plat.configured = false
 	plat.closed = false
-	plat.focus_lost = false
 	plat.outside_click = false
-	plat.had_focus = false
 	plat.width, plat.height = width, height
 	plat.want_height = height
 
