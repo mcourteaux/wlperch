@@ -14,7 +14,7 @@ import "core:sys/linux"
 import "core:sys/posix"
 
 @(private = "file")
-STATE_MAGIC :: u32(0x57_4c_57_33) // "WLW3" (bump when Saved_State changes)
+STATE_MAGIC :: u32(0x57_4c_57_34) // "WLW4" (bump when Saved_State changes)
 
 @(private = "file")
 Saved_State :: struct {

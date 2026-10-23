@@ -31,7 +31,6 @@ draw_thermals :: proc(w: f32) {
 	sync.guard(&thermals.mu)
 	card_title(ICON_THERMOMETER, "Temperatures & power", C_ORANGE)
 	inner := im.GetContentRegionAvail().x
-	n := config.history_seconds
 
 	// ---- Temperatures ---------------------------------------------------
 	cpu_t, gpu_t: f32
@@ -45,7 +44,7 @@ draw_thermals :: proc(w: f32) {
 	if cpu_t > 0 {x += stat({x, p.y}, "CPU", fmt.tprintf("%.0f°", cpu_t), C_ORANGE) + 20}
 	if gpu_t > 0 {stat({x, p.y}, "GPU", fmt.tprintf("%.0f°", gpu_t), C_PURPLE)}
 	im.Dummy({inner, 30})
-	history_graph_multi({{&thermals.cpu_temp_h, C_ORANGE, true}, {&thermals.gpu_temp_h, C_PURPLE, false}}, n, 100, {inner, 64})
+	history_graph_multi({{&thermals.cpu_temp_h, C_ORANGE, true}, {&thermals.gpu_temp_h, C_PURPLE, false}}, &perf_view, 100, {inner, 64})
 	label(fonts.ui, 10.5, col32(C_FAINT), "0 – 100 °C")
 
 	// ---- Power ------------------------------------------------------------
@@ -63,9 +62,9 @@ draw_thermals :: proc(w: f32) {
 	// Scale: the GPU power limit or what we've seen, whichever is larger.
 	top: f32 = max(thermals.gpu_limit, 50)
 	for h in ([]^History{&thermals.gpu_power_h, &thermals.cpu_power_h}) {
-		for i in 0 ..< min(n, h.count) {top = max(top, history_get(h, min(n, h.count), i) * 1.1)}
+		top = max(top, history_view_max(h, &perf_view) * 1.1)
 	}
-	history_graph_multi({{&thermals.gpu_power_h, C_PURPLE, true}, {&thermals.cpu_power_h, C_ORANGE, false}}, n, top, {inner, 56})
+	history_graph_multi({{&thermals.gpu_power_h, C_PURPLE, true}, {&thermals.cpu_power_h, C_ORANGE, false}}, &perf_view, top, {inner, 56})
 	label(fonts.ui, 10.5, col32(C_FAINT), fmt.tprintf("0 – %.0f W", top))
 	if !thermals.cpu_power_ok {
 		label(fonts.ui, SZ_SMALL, col32(C_FAINT), "CPU power: the RAPL counter is root-only (see README)")

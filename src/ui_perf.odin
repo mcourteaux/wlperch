@@ -47,7 +47,7 @@ draw_cpu_card :: proc(w: f32) {
 	detail := fmt.tprintf("load %.2f  %.2f  %.2f", sysmon.load[0], sysmon.load[1], sysmon.load[2])
 	if sysmon.cpu_temp > 0 {detail = fmt.tprintf("%s   ·   %.0f°C", detail, sysmon.cpu_temp)}
 	big_stat(fmt.tprintf("%d%%", int(sysmon.cpu_now + 0.5)), load_color(sysmon.cpu_now), detail, inner)
-	history_graph(&sysmon.cpu, config.history_seconds, C_GREEN, {inner, 96})
+	history_graph(&sysmon.cpu, &perf_view, C_GREEN, {inner, 96})
 
 	// Per-core bars with a small label underneath every 4th core.
 	if sysmon.core_count > 0 {
@@ -92,7 +92,7 @@ draw_memory_card :: proc(w: f32) {
 		im.DrawList_AddRectFilled(dl(), {p.x + inner - tw - 12, p.y + 6}, {p.x + inner, p.y + 23}, col32(C_RED, 0.18), 8)
 		draw_text(fonts.bold, 11, {p.x + inner - tw - 6, p.y + 7}, col32(C_RED), tag)
 	}
-	history_graph(&sysmon.mem, config.history_seconds, accent, {inner, 80})
+	history_graph(&sysmon.mem, &perf_view, accent, {inner, 80})
 
 	// Used | cache | free, as one stacked bar.
 	im.Dummy({1, 2})
@@ -135,7 +135,7 @@ draw_gpu_card :: proc(w: f32) {
 	if sysmon.gpu_temp > 0 {detail = fmt.tprintf("%.0f°C", sysmon.gpu_temp)}
 	if sysmon.gpu_power > 0 {detail = fmt.tprintf("%s   ·   %.0f W", detail, sysmon.gpu_power)}
 	big_stat(fmt.tprintf("%d%%", int(sysmon.gpu_now + 0.5)), C_PURPLE, detail, inner)
-	history_graph(&sysmon.gpu, config.history_seconds, C_PURPLE, {inner, 80})
+	history_graph(&sysmon.gpu, &perf_view, C_PURPLE, {inner, 80})
 	if sysmon.vram_total > 0 {
 		im.Dummy({1, 2})
 		vp := im.GetCursorScreenPos()

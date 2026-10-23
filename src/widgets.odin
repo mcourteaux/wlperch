@@ -4,6 +4,7 @@ package main
 import "core:fmt"
 import "core:math"
 import "core:strings"
+import "core:time"
 
 import im "third_party:odin-imgui"
 
@@ -295,12 +296,129 @@ segmented :: proc(id: string, items: []string, active: int, accent: u32) -> int 
 	return clicked
 }
 
-// ---- History graph ----------------------------------------------------------
+// ---- History graphs ---------------------------------------------------------
 
-// Area graph of the last `n` samples (0..100) with gradient fill.
-history_graph :: proc(h: ^History, n: int, accent: u32, size: Vec2) {
+// Which stretch of the 1 Hz histories a set of graphs shows. Live (the
+// default) follows the newest sample; zooming or dragging into the past
+// freezes the view there until it's double-clicked.
+Graph_View :: struct {
+	span:   f64,       // samples shown (0 = config.history_seconds)
+	back:   f64,       // age of the right edge when frozen (samples)
+	frozen: time.Tick, // when back was set; {} = live
+}
+perf_view: Graph_View // shared by the perf panel's graphs so they stay aligned
+
+GRAPH_MIN_SPAN :: 10
+
+view_span :: proc(v: ^Graph_View) -> f64 {return v.span > 0 ? v.span : f64(config.history_seconds)}
+
+// Age (in samples) of the view's right edge; grows while frozen so the view stays put.
+view_back :: proc(v: ^Graph_View) -> f64 {
+	if v.frozen == {} {return 0}
+	return v.back + time.duration_seconds(time.tick_since(v.frozen))
+}
+
+@(private = "file")
+view_set :: proc(v: ^Graph_View, span, back: f64) {
+	v.span = clamp(span, GRAPH_MIN_SPAN, HISTORY_MAX)
+	b := clamp(back, 0, HISTORY_MAX - v.span)
+	if b < 0.5 {
+		v.back, v.frozen = 0, {}
+	} else {
+		v.back, v.frozen = b, time.tick_now()
+	}
+}
+
+// Scroll zooms around the pointer, drag looks back, double-click returns to live.
+@(private = "file")
+graph_view_input :: proc(v: ^Graph_View, id: string, size: Vec2, right_inset: f32) {
 	p := im.GetCursorScreenPos()
-	im.Dummy(size)
+	im.InvisibleButton(cstr(id), size)
+	im.SetItemKeyOwner(.MouseWheelY) // the wheel zooms instead of scrolling the panel
+	w := size.x - right_inset
+	span, back := view_span(v), view_back(v)
+	if im.IsItemHovered() {
+		if wheel := im.GetIO().MouseWheel; wheel != 0 {
+			frac := f64(clamp((p.x + w - im.GetMousePos().x) / w, 0, 1))
+			anchor := back + frac * span
+			ns := clamp(span * (wheel > 0 ? 0.8 : 1.25), GRAPH_MIN_SPAN, HISTORY_MAX)
+			view_set(v, ns, anchor - frac * ns)
+		}
+		if im.IsMouseDoubleClicked(.Left) {v^ = {}}
+		im.SetMouseCursor(.ResizeEW)
+		if !im.IsItemActive() && im.IsItemHovered(im.HoveredFlags_DelayNormal) {
+			tip("Scroll to zoom · drag to look back · double-click: live")
+		}
+	}
+	if im.IsItemActive() && im.IsMouseDragging(.Left, 1) {
+		view_set(v, span, back + f64(im.GetIO().MouseDelta.x / w) * span)
+	}
+}
+
+// One point per sample when zoomed in; when there are more samples than
+// pixels, one averaged point per pixel column.
+@(private = "file")
+graph_points :: proc(h: ^History, v: ^Graph_View, x1, w, y1, hgt, max_v: f32) -> []Vec2 {
+	if h.count < 2 {return nil}
+	span, back := view_span(v), view_back(v)
+	pad: f32 = 2
+	x_of := proc(age, back, span: f64, x1, w: f32) -> f32 {return x1 - w * f32((age - back) / span)}
+	y_of := proc(val, max_v, y1, hgt, pad: f32) -> f32 {return y1 - pad - (hgt - pad * 2) * clamp(val, 0, max_v) / max_v}
+	at := proc(h: ^History, age: int) -> f32 {return history_get(h, h.count, h.count - 1 - age)}
+	oldest := h.count - 1
+	pts: [dynamic]Vec2
+	pts.allocator = context.temp_allocator
+	if span <= f64(w) {
+		// Include one sample beyond each edge so the line reaches the frame.
+		a0 := max(int(math.floor(back)) - 1, 0)
+		a1 := min(int(math.ceil(back + span)) + 1, oldest)
+		for a := a1; a >= a0; a -= 1 {
+			append(&pts, Vec2{x_of(f64(a), back, span, x1, w), y_of(at(h, a), max_v, y1, hgt, pad)})
+		}
+	} else {
+		cols := int(w)
+		per := span / f64(cols)
+		for c in 0 ..< cols {
+			hi := back + f64(cols - c) * per // older edge of this column
+			lo := hi - per
+			a0, a1 := max(int(math.ceil(lo)), 0), min(int(math.ceil(hi)) - 1, oldest)
+			if a0 > a1 {continue}
+			sum: f32
+			for a in a0 ..= a1 {sum += at(h, a)}
+			append(&pts, Vec2{x1 - w + f32(c) + 0.5, y_of(sum / f32(a1 - a0 + 1), max_v, y1, hgt, pad)})
+		}
+	}
+	return pts[:]
+}
+
+// Largest value inside the view (for auto-scaled graphs).
+history_view_max :: proc(h: ^History, v: ^Graph_View) -> f32 {
+	back := view_back(v)
+	m: f32
+	a0 := max(int(back), 0)
+	a1 := min(int(back + view_span(v)), h.count - 1)
+	for a in a0 ..= a1 {m = max(m, history_get(h, h.count, h.count - 1 - a))}
+	return m
+}
+
+@(private = "file")
+fmt_age :: proc(s: f64) -> string {
+	if s < 90 {return fmt.tprintf("%ds", int(s + 0.5))}
+	if s < 5400 {return fmt.tprintf("%d min", int(s / 60 + 0.5))}
+	return fmt.tprintf("%.1f h", s / 3600)
+}
+
+Graph_Series :: struct {
+	h:     ^History,
+	color: u32,
+	fill:  bool,
+}
+
+// Area graphs of histories (1 Hz) in a zoomable view.
+history_graph_multi :: proc(series: []Graph_Series, v: ^Graph_View, max_v: f32, size: Vec2) {
+	right_inset: f32 = 7 // keep the "now" marker fully inside the frame
+	p := im.GetCursorScreenPos()
+	graph_view_input(v, fmt.tprintf("##hg%p", series[0].h), size, right_inset)
 	d := dl()
 	x0, y0, x1, y1 := p.x, p.y, p.x + size.x, p.y + size.y
 	im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, col32(0x12151b), 8)
@@ -308,38 +426,46 @@ history_graph :: proc(h: ^History, n: int, accent: u32, size: Vec2) {
 		gy := y0 + size.y * f32(i) / 4
 		im.DrawList_AddLine(d, {x0 + 1, gy}, {x1 - 1, gy}, col32(0xffffff, 0.035), 1)
 	}
-	count := min(n, h.count)
-	if count < 2 {return}
+	live := view_back(v) == 0
 	im.DrawList_PushClipRect(d, {x0, y0}, {x1, y1}, true)
-	defer im.DrawList_PopClipRect(d)
-
-	pad: f32 = 2
-	right_inset: f32 = 7 // keep the "now" marker fully inside the frame
-	pts := make([]Vec2, count, context.temp_allocator)
-	step := (size.x - right_inset) / f32(n - 1)
-	for i in 0 ..< count {
-		v := clamp(history_get(h, count, i), 0, 100)
-		x := x1 - right_inset - f32(count - 1 - i) * step
-		y := y1 - pad - (size.y - pad * 2) * v / 100
-		pts[i] = {x, y}
-	}
 	uv := im.GetFontTexUvWhitePixel()
-	top := col32(accent, 0.38)
-	bot := col32(accent, 0.02)
-	for i in 0 ..< count - 1 {
-		a, b := pts[i], pts[i + 1]
-		im.DrawList_PrimReserve(d, 6, 6)
-		im.DrawList_PrimVtx(d, a, uv, top)
-		im.DrawList_PrimVtx(d, b, uv, top)
-		im.DrawList_PrimVtx(d, {b.x, y1}, uv, bot)
-		im.DrawList_PrimVtx(d, a, uv, top)
-		im.DrawList_PrimVtx(d, {b.x, y1}, uv, bot)
-		im.DrawList_PrimVtx(d, {a.x, y1}, uv, bot)
+	for s in series {
+		pts := graph_points(s.h, v, x1 - right_inset, size.x - right_inset, y1, size.y, max_v)
+		if len(pts) < 2 {continue}
+		if s.fill {
+			top := col32(s.color, 0.32)
+			bot := col32(s.color, 0.02)
+			for i in 0 ..< len(pts) - 1 {
+				a, b := pts[i], pts[i + 1]
+				im.DrawList_PrimReserve(d, 6, 6)
+				im.DrawList_PrimVtx(d, a, uv, top)
+				im.DrawList_PrimVtx(d, b, uv, top)
+				im.DrawList_PrimVtx(d, {b.x, y1}, uv, bot)
+				im.DrawList_PrimVtx(d, a, uv, top)
+				im.DrawList_PrimVtx(d, {b.x, y1}, uv, bot)
+				im.DrawList_PrimVtx(d, {a.x, y1}, uv, bot)
+			}
+		}
+		im.DrawList_AddPolyline(d, &pts[0], i32(len(pts)), col32(s.color), 1.6)
+		if live {
+			last := pts[len(pts) - 1]
+			im.DrawList_AddCircleFilled(d, last, 3.5, col32(s.color))
+			if s.fill {im.DrawList_AddCircle(d, last, 6, col32(s.color, 0.35), 0, 1.5)}
+		}
 	}
-	im.DrawList_AddPolyline(d, &pts[0], i32(count), col32(accent), 1.6)
-	last := pts[count - 1]
-	im.DrawList_AddCircleFilled(d, last, 3.5, col32(accent))
-	im.DrawList_AddCircle(d, last, 6, col32(accent, 0.35), 0, 1.5)
+	im.DrawList_PopClipRect(d)
+	// Zoomed or looking back: say what's shown.
+	if v^ != {} {
+		txt := live ? fmt.tprintf("last %s", fmt_age(view_span(v))) : fmt.tprintf("%s · until %s ago · double-click: live", fmt_age(view_span(v)), fmt_age(view_back(v)))
+		tsz := measure(fonts.ui, 10.5, txt)
+		im.DrawList_AddRectFilled(d, {x0 + 4, y0 + 4}, {x0 + 12 + tsz.x, y0 + 6 + tsz.y}, col32(0x12151b, 0.85), 4)
+		draw_text(fonts.ui, 10.5, {x0 + 8, y0 + 5}, col32(live ? C_MUTED : C_ORANGE), txt)
+	}
+}
+
+// Area graph of one 0..100 history.
+history_graph :: proc(h: ^History, v: ^Graph_View, accent: u32, size: Vec2) {
+	history_graph_multi({{h, accent, true}}, v, 100, size)
 }
 
 // Thin horizontal usage bar.
@@ -416,57 +542,6 @@ draw_layout :: proc(rects: []Layout_Rect, p: Vec2, size: Vec2, compact := false,
 				draw_text(fonts.bold, SZ_BODY, {cx - nsz.x / 2, cy - 9}, col32(C_TEXT), r.name)
 			}
 		}
-	}
-}
-
-Graph_Series :: struct {
-	h:     ^History,
-	color: u32,
-	fill:  bool,
-}
-
-// Several histories on one graph, scaled to [0, max_v]. The first series with
-// `fill` gets the gradient area; the others are lines.
-history_graph_multi :: proc(series: []Graph_Series, n: int, max_v: f32, size: Vec2) {
-	p := im.GetCursorScreenPos()
-	im.Dummy(size)
-	d := dl()
-	x0, y0, x1, y1 := p.x, p.y, p.x + size.x, p.y + size.y
-	im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, col32(0x12151b), 8)
-	for i in 1 ..< 4 {
-		gy := y0 + size.y * f32(i) / 4
-		im.DrawList_AddLine(d, {x0 + 1, gy}, {x1 - 1, gy}, col32(0xffffff, 0.035), 1)
-	}
-	im.DrawList_PushClipRect(d, {x0, y0}, {x1, y1}, true)
-	defer im.DrawList_PopClipRect(d)
-	pad: f32 = 2
-	right_inset: f32 = 7
-	step := (size.x - right_inset) / f32(n - 1)
-	uv := im.GetFontTexUvWhitePixel()
-	for s in series {
-		count := min(n, s.h.count)
-		if count < 2 {continue}
-		pts := make([]Vec2, count, context.temp_allocator)
-		for i in 0 ..< count {
-			v := clamp(history_get(s.h, count, i), 0, max_v)
-			pts[i] = {x1 - right_inset - f32(count - 1 - i) * step, y1 - pad - (size.y - pad * 2) * v / max_v}
-		}
-		if s.fill {
-			top := col32(s.color, 0.30)
-			bot := col32(s.color, 0.02)
-			for i in 0 ..< count - 1 {
-				a, b := pts[i], pts[i + 1]
-				im.DrawList_PrimReserve(d, 6, 6)
-				im.DrawList_PrimVtx(d, a, uv, top)
-				im.DrawList_PrimVtx(d, b, uv, top)
-				im.DrawList_PrimVtx(d, {b.x, y1}, uv, bot)
-				im.DrawList_PrimVtx(d, a, uv, top)
-				im.DrawList_PrimVtx(d, {b.x, y1}, uv, bot)
-				im.DrawList_PrimVtx(d, {a.x, y1}, uv, bot)
-			}
-		}
-		im.DrawList_AddPolyline(d, &pts[0], i32(count), col32(s.color), 1.6)
-		im.DrawList_AddCircleFilled(d, pts[count - 1], 3, col32(s.color))
 	}
 }
 

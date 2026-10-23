@@ -61,6 +61,11 @@ switches in place. The first panel in the config is the default.
 
 Modules: `quick audio network weather clocks displays bluetooth cpu gpu memory processes thermals sensors time`.
 
+The perf panel's graphs keep the last hour. Scroll over any of them to zoom
+(they zoom together); zooming out from the live view stays live. Dragging or
+zooming into the past freezes the view until you double-click it or reopen the
+popup.
+
 - **cpu, memory, gpu:** large history graphs. CPU adds load average, per-core
   bars and uptime. Memory shows used/cache/free and swap, and turns red past
   `memory_warn_percent`. GPU adds VRAM.
@@ -319,7 +324,7 @@ preset_dirs = ~/.local/bin:~/dotfiles/desktop/.local/bin
 preset_glob = *.sh
 
 [system]
-history_seconds = 120
+history_seconds = 120         # span the perf graphs show by default (zoom out to 1 h)
 memory_warn_percent = 90      # popup + bar button turn red at this memory use
 
 [sensors]

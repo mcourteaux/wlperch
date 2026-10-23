@@ -10,7 +10,7 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 
-HISTORY_MAX :: 600
+HISTORY_MAX :: 3600 // 1 h at 1 Hz (graphs zoom out this far)
 MAX_CORES :: 256
 
 History :: struct {
