@@ -238,8 +238,9 @@ wlperch serves `org.freedesktop.Notifications`, so apps' notifications
 dunst's or mako's. Only one program can hold that name. wlperch queues for
 it and takes over as soon as the other daemon stops. **Setup → Notifications →
 Take over** masks the other daemon's systemd unit (`dunst.service`), so D-Bus
-can't start it again, and stops it. **Allow dunst again** unmasks it; also set
-`[notifications] enabled = false` to hand over.
+can't start it again, and stops it. **Hand back** unmasks it, sets
+`[notifications] enabled = false` and restarts wlperch, so the other daemon
+gets the name again.
 
 Popups stack in the top-right corner, newest on top, at most four at a time.
 - **Click:** runs the notification's default action, or focuses the app's window.
@@ -291,6 +292,12 @@ file before it's written:
 | App launcher entry | `~/.local/share/applications/wlperch-setup.desktop` |
 
 "Install recommended" does everything except the root-owned udev rule.
+
+Every component can be removed again from its card. Removing undoes setup's own
+edits: the include line in your sway config, and the include, our modules and
+the `@import` in your waybar config (with `*.before-wlperch` backups). A removed
+settings file is kept as `config.ini.before-wlperch`. Destructive actions ask
+for a second click.
 
 ## Building
 

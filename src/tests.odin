@@ -300,6 +300,23 @@ test_jsonc_array_end :: proc(t: ^testing.T) {
 	check(t, `["a]b"]`, `["a]b"`)
 }
 
+// Undoing what setup's "Add to my bar" inserts.
+@(test)
+test_jsonc_remove :: proc(t: ^testing.T) {
+	hooked := "{\n    \"include\": [\"wlperch.jsonc\"],\n    \"modules-right\": [\"clock\", \"custom/wlperch\"],\n    \"custom/wlperch\": {}\n}"
+	text := jsonc_remove_strings(hooked, "wlperch.jsonc")
+	text = jsonc_remove_empty_member(text, "include")
+	text = jsonc_remove_strings(text, "custom/wlperch", exact = true)
+	// The user's own definition (an object key) stays.
+	testing.expect_value(t, text, "{\n    \"modules-right\": [\"clock\"],\n    \"custom/wlperch\": {}\n}")
+
+	// First element, other includes kept, exact names only.
+	text = jsonc_remove_strings(`["custom/media-prev", "group/media", "custom/media-prev2"]`, "custom/media-prev", exact = true)
+	testing.expect_value(t, text, `["group/media", "custom/media-prev2"]`)
+	text = jsonc_remove_strings(`"include": ["a.jsonc", "~/.config/waybar/wlperch.jsonc"]`, "wlperch.jsonc")
+	testing.expect_value(t, jsonc_remove_empty_member(text, "include"), `"include": ["a.jsonc"]`)
+}
+
 @(test)
 test_sensor_history_binary :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator

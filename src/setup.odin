@@ -337,7 +337,7 @@ setup_install_sway :: proc() {
 		text, _ := read_text(cfg)
 		if text == "" {text, _ = read_text("/etc/sway/config")} // no personal config yet: start from the stock one
 		if text != "" {backup(cfg)}
-		line := fmt.tprintf("\n# Added by wlperch setup: load the files in config.d.\ninclude %s/*\n", sway_dir())
+		line := fmt.tprintf("%sinclude %s/*\n", SWAY_INCLUDE_MARK, sway_dir())
 		if !write_file(cfg, strings.concatenate({text, line}, context.temp_allocator)) {
 			done(.Sway, false, "wrote the sway file, but couldn't add the include line to your sway config")
 			return
@@ -386,11 +386,6 @@ notifications_enabled :: proc() -> bool {
 		}
 	}
 	return true
-}
-
-setup_remove_sway :: proc() {
-	ok := os.remove(sway_file()) == nil
-	done(.Sway, ok, ok ? "removed; reload sway to deactivate" : "couldn't remove the sway file")
 }
 
 setup_reload_sway :: proc() {
@@ -604,6 +599,226 @@ setup_install_recommended :: proc() {
 	if states[.Launcher] == .Missing {setup_install_launcher(true)}
 	if states[.Service] != .Running {setup_start_service(false)}
 	if states[.Notifications] == .Missing {setup_take_notifications(true)}
+}
+
+// ---- Uninstall --------------------------------------------------------------
+
+setup_remove_program :: proc() {
+	ok := os.remove(setup.bin_path) == nil
+	done(.Program, ok, ok ? "removed from ~/.local/bin (the sway file and launcher entry still point at it)" : "couldn't remove ~/.local/bin/wlperch")
+}
+
+setup_stop_service :: proc() {
+	ok := ipc_send("quit")
+	done(.Service, ok, ok ? "stopped (sway starts it again at the next login)" : "couldn't reach the daemon")
+}
+
+// Keeps a copy next to it, so a removed config can be restored by hand.
+setup_remove_config :: proc() {
+	path := config_path()
+	backup(path)
+	ok := os.remove(path) == nil
+	done(.Config, ok, ok ? fmt.tprintf("removed (copy kept as %s.before-wlperch)", path[strings.last_index_byte(path, '/') + 1:]) : "couldn't remove the config")
+}
+
+SWAY_INCLUDE_MARK :: "\n# Added by wlperch setup: load the files in config.d.\n"
+
+// Remove our file and, when setup added it, the include line in sway/config.
+setup_remove_sway :: proc() {
+	ok := !os.exists(sway_file()) || os.remove(sway_file()) == nil
+	if !ok {
+		done(.Sway, false, "couldn't remove the sway file")
+		return
+	}
+	cfg := sway_main_config()
+	text, _ := read_text(cfg)
+	if at := strings.index(text, SWAY_INCLUDE_MARK); at >= 0 {
+		line := fmt.tprintf("include %s/*\n", sway_dir())
+		rest := text[at + len(SWAY_INCLUDE_MARK):]
+		if strings.has_prefix(rest, line) {
+			backup(cfg)
+			ok = write_file(cfg, strings.concatenate({text[:at], rest[len(line):]}, context.temp_allocator))
+		}
+	}
+	done(.Sway, ok, ok ? "removed; reload sway to deactivate" : "removed the file, but couldn't take the include line out of your sway config")
+}
+
+// Undo setup_hook_waybar and delete the module files. References to our
+// modules are taken out of the config's lists, so waybar doesn't complain
+// about unknown modules.
+setup_remove_waybar :: proc() {
+	dir := waybar_dir()
+	cfg := waybar_config()
+	if text, ok := read_text(cfg); ok {
+		orig := text
+		text = jsonc_remove_strings(text, "wlperch.jsonc")
+		text = jsonc_remove_empty_member(text, "include")
+		for name in waybar_module_names() {text = jsonc_remove_strings(text, name, exact = true)}
+		if text != orig {
+			backup(cfg)
+			if !write_file(cfg, text) {
+				done(.Waybar, false, "couldn't write your waybar config")
+				return
+			}
+		}
+	}
+	style := strings.concatenate({dir, "/style.css"}, context.temp_allocator)
+	if st, ok := read_text(style); ok && strings.contains(st, "wlperch.css") {
+		b := strings.builder_make(context.temp_allocator)
+		for line in strings.split_after(st, "\n", context.temp_allocator) {
+			if strings.contains(line, "@import") && strings.contains(line, "wlperch.css") {continue}
+			strings.write_string(&b, line)
+		}
+		backup(style)
+		write_file(style, strings.to_string(b))
+	}
+	for f in ([]string{"wlperch.jsonc", "wlperch.css"}) {os.remove(strings.concatenate({dir, "/", f}, context.temp_allocator))}
+	posix.system("pkill -SIGUSR2 -x waybar")
+	done(.Waybar, true, "removed from your bar (backups: *.before-wlperch)")
+}
+
+// The modules wlperch.jsonc defines ("custom/wlperch", "group/media", …).
+@(private = "file")
+waybar_module_names :: proc() -> []string {
+	names: [dynamic]string
+	names.allocator = context.temp_allocator
+	for line in strings.split_lines(WAYBAR_JSONC, context.temp_allocator) {
+		l := strings.trim_space(line)
+		if !strings.has_prefix(l, `"`) || !strings.has_suffix(l, "{") {continue}
+		end := strings.index_byte(l[1:], '"')
+		if end < 0 {continue}
+		name := l[1:end + 1]
+		if strings.contains(name, "/") {append(&names, name)}
+	}
+	return names[:]
+}
+
+// Remove every string value containing `needle` (equal to it when exact) from
+// the arrays in `text`, together with one adjacent comma. Object keys are kept.
+jsonc_remove_strings :: proc(text, needle: string, exact := false) -> string {
+	text := text
+	from := 0
+	for {
+		i := strings.index(text[from:], needle)
+		if i < 0 {return text}
+		i += from
+		// The enclosing string literal.
+		start := strings.last_index_byte(text[:i], '"')
+		e := strings.index_byte(text[i + len(needle):], '"')
+		if start < 0 || e < 0 {return text}
+		end := i + len(needle) + e + 1
+		inner := text[start + 1:end - 1]
+		after := end
+		for after < len(text) && strings.is_space(rune(text[after])) {after += 1}
+		if (exact && inner != needle) || strings.contains_rune(inner, '\n') || (after < len(text) && text[after] == ':') {
+			from = end
+			continue
+		}
+		cut0, cut1 := start, end
+		if after < len(text) && text[after] == ',' {
+			cut1 = after + 1
+			for cut1 < len(text) && (text[cut1] == ' ' || text[cut1] == '\t') {cut1 += 1}
+		} else {
+			b := start
+			for b > 0 && strings.is_space(rune(text[b - 1])) {b -= 1}
+			if b > 0 && text[b - 1] == ',' {cut0 = b - 1}
+		}
+		text = strings.concatenate({text[:cut0], text[cut1:]}, context.temp_allocator)
+		from = cut0
+	}
+}
+
+// Drop `"key": []` (and its comma) when the array became empty.
+jsonc_remove_empty_member :: proc(text, key: string) -> string {
+	q := fmt.tprintf(`"%s"`, key)
+	i := strings.index(text, q)
+	if i < 0 {return text}
+	j := i + len(q)
+	skip :: proc(t: string, j: int) -> int {
+		j := j
+		for j < len(t) && strings.is_space(rune(t[j])) {j += 1}
+		return j
+	}
+	j = skip(text, j)
+	if j >= len(text) || text[j] != ':' {return text}
+	j = skip(text, j + 1)
+	if j >= len(text) || text[j] != '[' {return text}
+	j = skip(text, j + 1)
+	if j >= len(text) || text[j] != ']' {return text}
+	j += 1
+	k := skip(text, j)
+	if k < len(text) && text[k] == ',' {j = k + 1}
+	// Also eat the indentation and newline before the key.
+	b := i
+	for b > 0 && (text[b - 1] == ' ' || text[b - 1] == '\t') {b -= 1}
+	if b > 0 && text[b - 1] == '\n' {b -= 1}
+	return strings.concatenate({text[:b], text[j:]}, context.temp_allocator)
+}
+
+// Hand notifications back: unmask the other daemon, switch ours off in the
+// config and restart, so the name goes back to the other one.
+setup_release_notifications :: proc() {
+	units := other_notification_units()
+	if len(units) > 0 {
+		args := make([dynamic]string, context.temp_allocator)
+		append(&args, "systemctl", "--user", "unmask")
+		for u in units {append(&args, u)}
+		if out, code := run_code(args[:], 10 * time.Second, context.temp_allocator); code != 0 {
+			done(.Notifications, false, fmt.tprintf("systemctl failed: %s", strings.trim_space(out)))
+			return
+		}
+	}
+	if !config_set_value("notifications", "enabled", "false") {
+		done(.Notifications, false, "couldn't write the config")
+		return
+	}
+	ipc_send("restart")
+	done(.Notifications, true, len(units) > 0 ? fmt.tprintf("handed back; %s starts on the next notification", strings.join(units, ", ", context.temp_allocator)) : "turned off in the config")
+}
+
+setup_enable_notifications :: proc() {
+	ok := config_set_value("notifications", "enabled", "true")
+	if ok {ipc_send("restart")}
+	done(.Notifications, ok, ok ? "turned on; take over from the other daemon if one still runs" : "couldn't write the config")
+}
+
+// Set `key = value` in [section] of the config file, keeping everything else
+// (creates the file with defaults first).
+@(private = "file")
+config_set_value :: proc(section, key, value: string) -> bool {
+	path := config_path()
+	text, ok := read_text(path)
+	if !ok {text = DEFAULT_CONFIG}
+	lines := strings.split_after(text, "\n", context.temp_allocator)
+	b := strings.builder_make(context.temp_allocator)
+	cur := ""
+	set := false
+	for line, i in lines {
+		l := strings.trim_space(line)
+		if strings.has_prefix(l, "[") {
+			if cur == section && !set {
+				fmt.sbprintf(&b, "%s = %s\n", key, value)
+				set = true
+			}
+			cur = strings.trim(l, "[] ")
+		}
+		if !set && cur == section && strings.has_prefix(l, key) {
+			rest := strings.trim_left_space(l[len(key):])
+			if strings.has_prefix(rest, "=") {
+				fmt.sbprintf(&b, "%s = %s\n", key, value)
+				set = true
+				continue
+			}
+		}
+		strings.write_string(&b, line)
+		if i == len(lines) - 1 && cur == section && !set {
+			if !strings.has_suffix(line, "\n") {strings.write_string(&b, "\n")}
+			fmt.sbprintf(&b, "%s = %s\n", key, value)
+			set = true
+		}
+	}
+	if !set {fmt.sbprintf(&b, "\n[%s]\n%s = %s\n", section, key, value)}
+	return write_file(path, strings.to_string(b))
 }
 
 // Open the setup window as its own process (from a panel's ⚙ button).

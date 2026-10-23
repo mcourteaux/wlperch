@@ -2,8 +2,10 @@
 package main
 
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:sync"
+import "core:time"
 
 import im "third_party:odin-imgui"
 
@@ -84,7 +86,16 @@ Action :: struct {
 	label:   string,
 	primary: bool,
 	run:     proc(),
+	confirm: bool, // destructive: a second click within a few seconds runs it
 }
+
+// The destructive action waiting for its confirming click.
+@(private = "file")
+armed: struct {
+	id:    Comp_Id,
+	index: int, // -1: none
+	at:    time.Tick,
+} = {index = -1}
 
 @(private = "file")
 show_preview: [Comp_Id]bool
@@ -95,43 +106,50 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 	out.allocator = context.temp_allocator
 	switch id {
 	case .Program:
-		if s == .Missing {append(&out, Action{"Install", true, setup_install_program})}
-		if s == .Outdated {append(&out, Action{"Update", true, setup_install_program})}
+		if s == .Missing {append(&out, Action{"Install", true, setup_install_program, false})}
+		if s == .Outdated {append(&out, Action{"Update", true, setup_install_program, false})}
+		if s != .Missing {append(&out, Action{"Remove", false, setup_remove_program, true})}
 	case .Service:
-		if s == .Running {append(&out, Action{"Restart", false, proc() {setup_start_service(true)}})}
-		else {append(&out, Action{"Start", true, proc() {setup_start_service(false)}})}
+		if s == .Running {
+			append(&out, Action{"Restart", false, proc() {setup_start_service(true)}, false})
+			append(&out, Action{"Stop", false, setup_stop_service, false})
+		} else {append(&out, Action{"Start", true, proc() {setup_start_service(false)}, false})}
 	case .Config:
-		append(&out, Action{s == .Missing ? "Create" : "Open", s == .Missing, setup_create_config})
+		append(&out, Action{s == .Missing ? "Create" : "Open", s == .Missing, setup_create_config, false})
+		if s != .Missing {append(&out, Action{"Remove", false, setup_remove_config, true})}
 	case .Sway:
 		switch s {
-		case .Missing:  append(&out, Action{"Install", true, setup_install_sway})
-		case .Outdated: append(&out, Action{"Update", true, setup_install_sway})
+		case .Missing:  append(&out, Action{"Install", true, setup_install_sway, false})
+		case .Outdated:
+			append(&out, Action{"Update", true, setup_install_sway, false})
+			if os.exists(sway_file()) {append(&out, Action{"Remove", false, setup_remove_sway, true})}
 		case .Installed:
-			append(&out, Action{"Reload sway", false, setup_reload_sway})
-			append(&out, Action{"Remove", false, setup_remove_sway})
-		case .Custom:   append(&out, Action{"Reload sway", false, setup_reload_sway})
+			append(&out, Action{"Reload sway", false, setup_reload_sway, false})
+			append(&out, Action{"Remove", false, setup_remove_sway, true})
+		case .Custom:   append(&out, Action{"Reload sway", false, setup_reload_sway, false})
 		case .Running, .Stopped, .Unavailable, .Partial:
 		}
 	case .Waybar:
 		switch s {
-		case .Missing, .Outdated, .Partial: append(&out, Action{"Add to my bar", true, setup_hook_waybar})
-		case .Installed:                   append(&out, Action{"Reload waybar", false, setup_reload_waybar})
+		case .Missing, .Outdated, .Partial: append(&out, Action{"Add to my bar", true, setup_hook_waybar, false})
+		case .Installed:                   append(&out, Action{"Reload waybar", false, setup_reload_waybar, false})
 		case .Running, .Stopped, .Unavailable, .Custom:
 		}
-		if s == .Missing || s == .Outdated {append(&out, Action{"Files only", false, proc() {setup_install_waybar_files()}})}
+		if s == .Missing || s == .Outdated {append(&out, Action{"Files only", false, proc() {setup_install_waybar_files()}, false})}
+		if s != .Missing && s != .Unavailable {append(&out, Action{"Remove", false, setup_remove_waybar, true})}
 	case .Rapl:
-		if s == .Missing {append(&out, Action{"Install (root)", true, proc() {setup_install_rapl(true)}})}
-		if s == .Installed {append(&out, Action{"Remove (root)", false, proc() {setup_install_rapl(false)}})}
+		if s == .Missing {append(&out, Action{"Install (root)", true, proc() {setup_install_rapl(true)}, false})}
+		if s == .Installed {append(&out, Action{"Remove (root)", false, proc() {setup_install_rapl(false)}, false})}
 	case .Notifications:
 		switch s {
-		case .Missing:   append(&out, Action{"Take over", true, proc() {setup_take_notifications(true)}})
-		case .Running:
-			if len(other_notification_units()) > 0 {append(&out, Action{"Allow dunst again", false, proc() {setup_take_notifications(false)}})}
-		case .Installed, .Outdated, .Custom, .Unavailable, .Stopped, .Partial:
+		case .Missing:   append(&out, Action{"Take over", true, proc() {setup_take_notifications(true)}, false})
+		case .Running, .Stopped: append(&out, Action{"Hand back", false, setup_release_notifications, true})
+		case .Unavailable:       append(&out, Action{"Turn on", true, setup_enable_notifications, false})
+		case .Installed, .Outdated, .Custom, .Partial:
 		}
 	case .Launcher:
-		if s == .Missing {append(&out, Action{"Add", true, proc() {setup_install_launcher(true)}})}
-		else {append(&out, Action{"Remove", false, proc() {setup_install_launcher(false)}})}
+		if s == .Missing {append(&out, Action{"Add", true, proc() {setup_install_launcher(true)}, false})}
+		else {append(&out, Action{"Remove", false, proc() {setup_install_launcher(false)}, false})}
 	}
 	return out[:]
 }
@@ -235,10 +253,20 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 	} else if len(acts) == 0 {
 		draw_text(fonts.ui, SZ_SMALL, {ax, fp.y + 6}, col32(C_FAINT), is_done(c.state) ? "nothing to do" : "—")
 	} else {
+		if armed.index >= 0 && time.tick_since(armed.at) > 4 * time.Second {armed.index = -1}
 		for a, i in acts {
 			im.SetCursorScreenPos({ax, fp.y})
-			if pill_button(fmt.tprintf("##%v:%d", id, i), a.label, inf.accent, a.primary) {run = a.run}
-			ax += pill_width(a.label) + 8
+			is_armed := armed.index == i && armed.id == id
+			label := is_armed ? fmt.tprintf("Really %s?", strings.to_lower(a.label, context.temp_allocator)) : a.label
+			if pill_button(fmt.tprintf("##%v:%d", id, i), label, is_armed ? C_RED : inf.accent, a.primary || is_armed) {
+				if !a.confirm || is_armed {
+					run = a.run
+					armed.index = -1
+				} else {
+					armed = {id, i, time.tick_now()}
+				}
+			}
+			ax += pill_width(label) + 8
 		}
 	}
 	if inf.preview != "" {
