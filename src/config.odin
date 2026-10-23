@@ -139,12 +139,12 @@ bar_room = Living
 
 [panel.main]
 header = true
-columns = quick audio network storage | weather clocks displays bluetooth
+columns = quick audio network | weather clocks displays bluetooth
 
 [panel.perf]
 title = Performance
 width = 1180
-columns = cpu memory | gpu thermals | processes
+columns = cpu memory storage | gpu thermals | processes
 
 [panel.sensors]
 title = Home

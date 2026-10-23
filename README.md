@@ -55,8 +55,8 @@ switches in place. The first panel in the config is the default.
 
 | Panel (built-in) | Modules |
 |---|---|
-| `main` | header · quick · audio · network · storage \| weather · clocks · displays · bluetooth |
-| `perf` | cpu · memory \| gpu · thermals \| processes |
+| `main` | header · quick · audio · network \| weather · clocks · displays · bluetooth |
+| `perf` | cpu · memory · storage \| gpu · thermals \| processes |
 | `sensors` | sensors |
 | `time` | time |
 
@@ -336,12 +336,12 @@ bar_room = Living             # shown by "wlwidgets status sensors"
 # Panels: the first is the default. columns: modules per column, separated by |
 [panel.main]
 header = true                 # big clock and date
-columns = quick audio network storage | weather clocks displays bluetooth
+columns = quick audio network | weather clocks displays bluetooth
 
 [panel.perf]
 title = Performance           # compact title row when there's no header
 width = 1180
-columns = cpu memory | gpu thermals | processes
+columns = cpu memory storage | gpu thermals | processes
 
 [panel.sensors]
 title = Home
