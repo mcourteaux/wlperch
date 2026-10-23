@@ -9,6 +9,7 @@ import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:sys/posix"
+import "core:thread"
 import "core:time"
 
 import "wl"
@@ -389,20 +390,41 @@ setup_install_rapl :: proc(install: bool) {
 		sync.guard(&setup.mu)
 		setup.comps[.Rapl].busy = true
 	}
+	// Fedora & co ship rules in /usr/lib/udev/rules.d; /etc/udev/rules.d may not exist yet.
 	script: string
 	if install {
-		script = fmt.tprintf(`printf '%%s\n' '%s' > %s && udevadm control --reload-rules && udevadm trigger --subsystem-match=powercap`, RAPL_RULE, RAPL_RULE_PATH)
+		script = fmt.aprintf(`mkdir -p /etc/udev/rules.d && printf '%%s\n' '%s' > %s && udevadm control --reload-rules && udevadm trigger --action=add --subsystem-match=powercap`, RAPL_RULE, RAPL_RULE_PATH)
 	} else {
-		script = fmt.tprintf(`rm -f %s && chmod 0400 /sys/class/powercap/*/energy_uj`, RAPL_RULE_PATH)
+		script = fmt.aprintf(`rm -f %s && chmod 0400 /sys/class/powercap/*/energy_uj`, RAPL_RULE_PATH)
 	}
-	@(static) installing: bool
-	installing = install
-	run_async({"pkexec", "sh", "-c", script}, proc() {
-		ok := installing ? os.exists(RAPL_RULE_PATH) : !os.exists(RAPL_RULE_PATH)
-		done(.Rapl, ok, ok ? (installing ? "installed; CPU power is now readable" : "removed") : "cancelled or failed")
+	Job :: struct {
+		script:  string,
+		install: bool,
+	}
+	job := new(Job)
+	job^ = {script, install}
+	thread.create_and_start_with_data(job, proc(data: rawptr) {
+		job := cast(^Job)data
+		// Capture the script's error output so failures can be shown.
+		out, code := run_code({"pkexec", "sh", "-c", strings.concatenate({job.script, " 2>&1"}, context.temp_allocator)}, 180 * time.Second, context.temp_allocator)
+		ok := job.install ? os.exists(RAPL_RULE_PATH) : !os.exists(RAPL_RULE_PATH)
+		msg: string
+		switch {
+		case ok:          msg = job.install ? "installed; CPU power is now readable" : "removed"
+		case code == 126: msg = "cancelled (password dialog dismissed)"
+		case code == 127: msg = "not authorized (or no polkit agent running)"
+		case:
+			detail := strings.trim_space(out)
+			if detail == "" {detail = fmt.tprintf("exit code %d", code)}
+			msg = fmt.tprintf("failed: %s", detail)
+		}
+		done(.Rapl, ok, msg)
 		setup_check()
 		wake_main()
-	}, 120 * time.Second)
+		delete(job.script)
+		free(job)
+		free_all(context.temp_allocator)
+	}, self_cleanup = true)
 }
 
 setup_install_launcher :: proc(install: bool) {

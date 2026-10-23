@@ -76,7 +76,7 @@ Modules: `audio system network weather clocks displays bluetooth cpu gpu memory 
   # /etc/udev/rules.d/90-rapl.rules
   SUBSYSTEM=="powercap", ACTION=="add", RUN+="/bin/chmod 0444 /sys%p/energy_uj"
   ```
-  Then run `sudo udevadm trigger --subsystem-match=powercap` or reboot.
+  Then run `sudo udevadm trigger --action=add --subsystem-match=powercap` or reboot.
 - **processes:** top 8 by CPU (% of one core, like `top`) and by resident
   memory. Processes are grouped by executable, e.g. `firefox ×38`. This is
   sampled every 2 s, and only while the module is on screen.

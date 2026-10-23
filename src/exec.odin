@@ -111,6 +111,14 @@ spawn :: proc(argv: []string, stdout_fd: c.int) -> (pid: posix.pid_t, ok: bool) 
 
 // Run a command and capture its stdout. `ok` is true when it exited with 0.
 run :: proc(argv: []string, timeout := 10 * time.Second, allocator := context.allocator) -> (out: string, ok: bool) {
+	code: int
+	out, code = run_code(argv, timeout, allocator)
+	return out, code == 0
+}
+
+// Like run, but returns the exit code (-1 if it didn't exit normally or timed out).
+run_code :: proc(argv: []string, timeout := 10 * time.Second, allocator := context.allocator) -> (out: string, code: int) {
+	code = -1
 	fds: [2]c.int
 	if pipe2(&fds, O_CLOEXEC) != 0 {return}
 	pid, spawned := spawn(argv, fds[1])
@@ -149,8 +157,8 @@ run :: proc(argv: []string, timeout := 10 * time.Second, allocator := context.al
 	status: c.int
 	for posix.waitpid(pid, &status, {}) < 0 && posix.errno() == .EINTR {}
 	child_forget(pid)
-	ok = !timed_out && posix.WIFEXITED(status) && posix.WEXITSTATUS(status) == 0
-	return string(buf[:]), ok
+	if !timed_out && posix.WIFEXITED(status) {code = int(posix.WEXITSTATUS(status))}
+	return string(buf[:]), code
 }
 
 // Start a long-running child whose stdout we read line by line (e.g. `pactl subscribe`).
