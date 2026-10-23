@@ -49,7 +49,7 @@ Notification :: struct {
 	popup:     bool, // wants a popup (false under do not disturb)
 	timeout:   time.Duration, // 0 = until dismissed
 	expires:   time.Tick, // set once the popup is on screen
-	hover:     bool, // pointer on the popup: the timer pauses
+	hover:     bool, // pointer on the popup: the timer refills instead of running out
 	rev:       int, // content revision (popups redraw when it changes)
 }
 
@@ -559,6 +559,7 @@ notifications_timeout :: proc() -> time.Duration {
 	for n in notifs.list {
 		if n.popup && n.expires != {} && !n.hover {pick(&best, time.tick_diff(time.tick_now(), n.expires))}
 	}
+	if f := notify_popups_next_frame(); f >= 0 {pick(&best, f)}
 	if notifs.dirty {pick(&best, 2 * time.Second - time.tick_since(notifs.dirty_at))}
 	return best
 }

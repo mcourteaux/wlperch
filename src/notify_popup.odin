@@ -10,6 +10,7 @@ package main
 
 import "core:fmt"
 import "core:math"
+import "core:slice"
 import "core:strings"
 import "core:sys/linux"
 import "core:sys/posix"
@@ -27,6 +28,9 @@ import "wl"
 @(private = "file") MAX_VISIBLE :: 4
 @(private = "file") TOP_MARGIN :: 8
 @(private = "file") RIGHT_MARGIN :: 10
+@(private = "file") BAR_H :: 3 // timeout line along the bottom edge
+@(private = "file") BAR_FRAME :: 33 * time.Millisecond // at most ~30 bar redraws a second
+@(private = "file") BAR_REFILL :: 2 * time.Second // hovering refills an empty bar in this long
 
 @(private = "file") PX_APP :: 12.0
 @(private = "file") PX_SUMMARY :: 14.5
@@ -59,6 +63,11 @@ Popup :: struct {
 	summary:     []string,
 	body:        []string,
 	scale:       i32,
+	// The card without its timeout line, so the line can be redrawn alone.
+	base:        []u32,
+	bar_px:      int, // timeout line width last presented, in buffer pixels
+	bar_at:      time.Tick,
+	refill_at:   time.Tick,
 }
 
 @(private = "file") popups: [dynamic]^Popup
@@ -265,14 +274,13 @@ render :: proc(p: ^Popup, n: ^Notification) {
 	if plat.shm == nil {return}
 	s := max(p.scale, 1)
 	bw, bh := p.w * s, p.h * s
-	size := int(bw * bh * 4)
-	fd, err := linux.memfd_create("wlperch-notification", {.CLOEXEC})
-	if err != .NONE {return}
-	defer linux.close(fd)
-	if linux.ftruncate(fd, i64(size)) != .NONE {return}
-	mem := posix.mmap(nil, uint(size), {.READ, .WRITE}, {.SHARED}, posix.FD(fd), 0)
-	if mem == posix.MAP_FAILED {return}
-	cv := Canvas{px = ([^]u32)(mem)[:bw * bh], w = int(bw), h = int(bh), s = f32(s)}
+	if len(p.base) != int(bw * bh) {
+		delete(p.base)
+		p.base = make([]u32, bw * bh)
+	} else {
+		slice.zero(p.base)
+	}
+	cv := Canvas{px = p.base, w = int(bw), h = int(bh), s = f32(s)}
 
 	card := Rect{SHADOW_M, SHADOW_M, CARD_W, f32(p.h - 2 * SHADOW_M)}
 	// Shadow: soft falloff around the card, a little heavier below it.
@@ -364,6 +372,54 @@ render :: proc(p: ^Popup, n: ^Notification) {
 		}
 		p.n_actions = i
 	}
+	p.dirty = false
+	p.rev = n.rev
+	present(p, n)
+}
+
+// Fraction of the timeout left, or -1 for popups that stay until dismissed.
+@(private = "file")
+bar_frac :: proc(n: ^Notification) -> f32 {
+	if n.timeout <= 0 {return -1}
+	if n.expires == {} {return 1}
+	return clamp(f32(time.tick_diff(time.tick_now(), n.expires)) / f32(n.timeout), 0, 1)
+}
+
+@(private = "file")
+bar_width :: proc(p: ^Popup, f: f32) -> int {return int(CARD_W * f32(max(p.scale, 1)) * f)}
+
+// Copy the rendered card into a fresh buffer, add the timeout line, show it.
+@(private = "file")
+present :: proc(p: ^Popup, n: ^Notification) {
+	s := max(p.scale, 1)
+	bw, bh := p.w * s, p.h * s
+	if len(p.base) != int(bw * bh) {return}
+	size := int(bw * bh * 4)
+	fd, err := linux.memfd_create("wlperch-notification", {.CLOEXEC})
+	if err != .NONE {return}
+	defer linux.close(fd)
+	if linux.ftruncate(fd, i64(size)) != .NONE {return}
+	mem := posix.mmap(nil, uint(size), {.READ, .WRITE}, {.SHARED}, posix.FD(fd), 0)
+	if mem == posix.MAP_FAILED {return}
+	cv := Canvas{px = ([^]u32)(mem)[:bw * bh], w = int(bw), h = int(bh), s = f32(s)}
+	copy(cv.px, p.base)
+
+	card := Rect{SHADOW_M, SHADOW_M, CARD_W, f32(p.h - 2 * SHADOW_M)}
+	f := bar_frac(n)
+	if f > 0 {
+		// Clipped to the card's rounded corners; anti-aliased at the moving end.
+		rs := Rect{card.x * cv.s, card.y * cv.s, card.w * cv.s, card.h * cv.s}
+		end := rs.x + rs.w * f
+		for y in max(int(rs.y + rs.h - BAR_H * cv.s), 0) ..< min(int(math.ceil(rs.y + rs.h)), cv.h) {
+			for x in max(int(rs.x), 0) ..< min(int(math.ceil(end)), cv.w) {
+				d := rr_dist(f32(x) + 0.5, f32(y) + 0.5, rs, RADIUS * cv.s)
+				cov := clamp(0.5 - d, 0, 1) * clamp(end - f32(x), 0, 1)
+				if cov > 0 {blend(&cv.px[y * cv.w + x], C_BLUE, cov * 0.85)}
+			}
+		}
+	}
+	p.bar_px = bar_width(p, max(f, 0))
+	p.bar_at = time.tick_now()
 	posix.munmap(mem, uint(size))
 
 	pool := wl.shm_create_pool(plat.shm, i32(fd), i32(size))
@@ -379,8 +435,6 @@ render :: proc(p: ^Popup, n: ^Notification) {
 	wl.surface_set_input_region(p.surface, region)
 	wl.region_destroy(region)
 	wl.surface_commit(p.surface)
-	p.dirty = false
-	p.rev = n.rev
 }
 
 @(private = "file")
@@ -436,6 +490,7 @@ destroy :: proc(p: ^Popup) {
 	wl.surface_destroy(p.surface)
 	free_lines(p.summary)
 	free_lines(p.body)
+	delete(p.base)
 	free(p)
 }
 
@@ -485,14 +540,51 @@ notify_popups_layout :: proc() {
 	popups = ordered
 }
 
-// Render what changed; start expiry timers for popups that just appeared.
+// Render what changed; start expiry timers for popups that just appeared;
+// move the timeout lines (hovering refills them instead of pausing).
 notify_popups_tick :: proc() {
+	now := time.tick_now()
 	for p in popups {
 		n, _ := notif_find(p.id)
 		if n == nil || !p.configured {continue}
-		if p.dirty || p.rev != n.rev {render(p, n)}
-		if n.expires == {} && n.timeout > 0 {n.expires = time.tick_add(time.tick_now(), n.timeout)}
+		if n.timeout > 0 && n.expires != {} {
+			if n.hover && p.refill_at != {} {
+				left := time.tick_diff(now, n.expires)
+				left += time.Duration(f64(time.tick_diff(p.refill_at, now)) * f64(n.timeout) / f64(BAR_REFILL))
+				n.expires = time.tick_add(now, min(left, n.timeout))
+			}
+		}
+		p.refill_at = now
+		if p.dirty || p.rev != n.rev {
+			render(p, n)
+		} else if f := bar_frac(n); f >= 0 && bar_width(p, f) != p.bar_px && time.tick_diff(p.bar_at, now) >= BAR_FRAME {
+			present(p, n)
+		}
+		if n.expires == {} && n.timeout > 0 {n.expires = time.tick_add(now, n.timeout)}
 	}
+}
+
+// How long until a timeout line needs to move (-1: none moving).
+notify_popups_next_frame :: proc() -> time.Duration {
+	best := time.Duration(-1)
+	now := time.tick_now()
+	for p in popups {
+		n, _ := notif_find(p.id)
+		if n == nil || !p.configured || n.timeout <= 0 || n.expires == {} {continue}
+		left := time.tick_diff(now, n.expires)
+		wait := BAR_FRAME - time.tick_diff(p.bar_at, now)
+		if n.hover {
+			if left >= n.timeout {continue} // full again
+		} else {
+			// Until the line loses its next pixel.
+			px_dur := n.timeout / time.Duration(bar_width(p, 1))
+			next := left - time.Duration(bar_width(p, bar_frac(n))) * px_dur + time.Millisecond
+			wait = max(wait, next)
+		}
+		wait = max(wait, 0)
+		if best < 0 || wait < best {best = wait}
+	}
+	return best
 }
 
 // ---- Pointer (called from the platform's pointer listener) ---------------------------
