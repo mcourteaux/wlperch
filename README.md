@@ -367,6 +367,7 @@ loaded at runtime); AMD GPUs use sysfs.
 ```sh
 wlperch            # = toggle: show, or hide if shown (starts the daemon if needed)
 wlperch toggle system # open a specific panel (switches if another one is open)
+wlperch toggle --center  # centred on the screen instead of the configured corner (for key bindings)
 wlperch show [panel] | hide | quit
 wlperch restart    # new binary + re-read config; keeps graph history
 wlperch audio refresh   # fix stuck audio: card profile away and back
@@ -397,7 +398,8 @@ CPU/GPU at 1 Hz, so the graphs are already full when you open the popup.
 Everything sway needs is in **one file**, [`contrib/sway/wlperch.conf`](contrib/sway/wlperch.conf):
 - `exec wlperch daemon`;
 - the panel toggle (`$mod+o`) and the calculator (`$mod+equal`, and the
-  keyboard's calculator key);
+  keyboard's calculator key), which open centred (`--center`) because you're
+  working from the keyboard; bar clicks keep the configured corner;
 - the project-workspace bindings (`$mod+p` / `$mod+Shift+p`);
 - the placeholder window style.
 

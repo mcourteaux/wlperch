@@ -21,6 +21,8 @@ usage: wlperch [command]
 commands:
   toggle [panel]  show the popup (default panel or the named one), or hide it
   show [panel]    show the popup / switch to a panel
+                  add --center to either for a centred popup instead of the
+                  configured corner (meant for key bindings)
   hide     hide the popup
   daemon   start the background daemon without showing the popup
   quit     stop the running daemon
@@ -81,10 +83,18 @@ wake_main :: proc "contextless" () {
 // Visibility mirror readable from worker threads without locking.
 plat_visible_flag: bool
 
+// Opened by "toggle --center": no anchor, so the compositor centres it.
+popup_centered: bool
+
 show_popup :: proc() {
 	if platform_visible() {return}
 	w, h := popup_size()
-	if platform_show(popup_placement(), w, h) {
+	placement := popup_placement()
+	if popup_centered {
+		placement.anchor = 0
+		placement.margin = {}
+	}
+	if platform_show(placement, w, h) {
 		plat_visible_flag = true
 		app.show_time = time.tick_now()
 		on_show()
@@ -102,6 +112,14 @@ hide_popup :: proc() {
 // Commands: toggle|show [panel], hide, quit, restart, daemon, ping.
 handle_command :: proc(line: string) -> string {
 	f := strings.fields(line, context.temp_allocator)
+	center := false
+	if len(f) > 0 && (f[0] == "toggle" || f[0] == "show") {
+		kept := make([dynamic]string, 0, len(f), context.temp_allocator)
+		for w in f {
+			if w == "--center" || w == "--centre" {center = true} else {append(&kept, w)}
+		}
+		f = kept[:]
+	}
 	if len(f) == 0 {return "unknown command\n"}
 	cmd := f[0]
 	target := -1
@@ -115,6 +133,7 @@ handle_command :: proc(line: string) -> string {
 			if target < 0 || target == current_panel {hide_popup()} else {switch_panel(target)}
 		} else {
 			current_panel = target >= 0 ? target : 0
+			popup_centered = center
 			show_popup()
 		}
 	case "show":
@@ -122,6 +141,7 @@ handle_command :: proc(line: string) -> string {
 			if target >= 0 && target != current_panel {switch_panel(target)}
 		} else {
 			current_panel = target >= 0 ? target : 0
+			popup_centered = center
 			show_popup()
 		}
 	case "hide":

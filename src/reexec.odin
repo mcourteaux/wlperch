@@ -95,7 +95,7 @@ reexec_self :: proc(show_after := false) {
 		"--resume",
 		strings.clone_to_cstring(int_to_string(int(app.ipc_fd)), context.temp_allocator),
 		strings.clone_to_cstring(int_to_string(int(mfd)), context.temp_allocator),
-		show_after ? "show" : "hidden",
+		show_after ? (popup_centered ? "show-center" : "show") : "hidden",
 		strings.clone_to_cstring(len(panels) > 0 ? cur_panel().name : "", context.temp_allocator),
 		nil,
 	}
@@ -111,7 +111,8 @@ resume_panel: string // panel that was open before a restart
 // Called early in main() when started with `daemon --resume <ipc fd> <state fd>`.
 resume_from_args :: proc() -> (ipc_fd: posix.FD, ok: bool, show: bool) {
 	if len(os.args) < 5 || os.args[2] != "--resume" {return -1, false, false}
-	show = len(os.args) > 5 && os.args[5] == "show"
+	show = len(os.args) > 5 && (os.args[5] == "show" || os.args[5] == "show-center")
+	popup_centered = len(os.args) > 5 && os.args[5] == "show-center"
 	if len(os.args) > 6 {resume_panel = os.args[6]}
 	ifd, ok1 := strconv.parse_int(os.args[3])
 	sfd, ok2 := strconv.parse_int(os.args[4])
