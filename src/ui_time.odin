@@ -55,6 +55,18 @@ draw_time :: proc(w: f32) {
 
 	// ---- Projects (quick switch) ----------------------------------------
 	sub_heading("Projects")
+	{
+		// Group lock toggle, right-aligned on the "Projects" heading line.
+		hp := im.GetCursorScreenPos()
+		lbl := "Group-lock monitors"
+		lsz := measure(fonts.ui, SZ_SMALL, lbl)
+		im.SetCursorScreenPos({hp.x + inner - 38, hp.y - 24})
+		if toggle_switch("##grouplock", tracker.lock, C_TEAL) {tracker_set_lock(!tracker.lock)}
+		if im.IsItemHovered() {tip("When on, all monitors enter and leave a project's workspaces together")}
+		draw_text(fonts.ui, SZ_SMALL, {hp.x + inner - 46 - lsz.x, hp.y - 21}, col32(tracker.lock ? C_TEAL : C_MUTED), lbl)
+		draw_text(fonts.ui, 14, {hp.x + inner - 66 - lsz.x, hp.y - 22}, col32(tracker.lock ? C_TEAL : C_FAINT), ICON_LINK)
+		im.SetCursorScreenPos(hp)
+	}
 	start := -1
 	for pr, i in tracker.projects {
 		rp := im.GetCursorScreenPos()

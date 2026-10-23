@@ -1,3 +1,4 @@
+#+feature dynamic-literals
 // Unit tests: `./build.sh test` (or `odin test src -collection:third_party=third_party`).
 package main
 
@@ -202,4 +203,52 @@ test_timetracker :: proc(t: ^testing.T) {
 	testing.expect_value(t, totals["Home Lab"], 3600) // only the part after midnight UTC
 	testing.expect_value(t, fmt_duration(5400), "1:30")
 	testing.expect_value(t, fmt_duration(3725, true), "1:02:05")
+}
+
+@(test)
+test_group_lock_plan :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	saved := tracker
+	defer tracker = saved
+	tracker = Tracker{running = -1}
+	append(&tracker.projects, Project{key = "neon", name = "NeonRAW"})
+	append(&tracker.projects, Project{key = "acme", name = "ACME"})
+	outs := []string{"DP-3", "DP-1"} // left to right
+	ret := make(map[string]string)
+
+	// Enter NeonRAW on the right monitor: the left one follows to "NeonRAW 1".
+	vis := map[string]string{"DP-3" = "7", "DP-1" = "NeonRAW 2"}
+	moves := plan_sync("1", "NeonRAW 2", "DP-1", outs, vis, &ret)
+	testing.expect_value(t, len(moves), 1)
+	if len(moves) == 1 {
+		testing.expect_value(t, moves[0].output, "DP-3")
+		testing.expect_value(t, moves[0].workspace, "NeonRAW 1")
+		testing.expect(t, moves[0].pin)
+	}
+	testing.expect_value(t, ret["DP-3"], "7") // remembered for the way back
+
+	// Leave NeonRAW on the right monitor: the left one returns to 7.
+	vis = map[string]string{"DP-3" = "NeonRAW 1", "DP-1" = "1"}
+	moves = plan_sync("NeonRAW 2", "1", "DP-1", outs, vis, &ret)
+	testing.expect_value(t, len(moves), 1)
+	if len(moves) == 1 {
+		testing.expect_value(t, moves[0].output, "DP-3")
+		testing.expect_value(t, moves[0].workspace, "7")
+		testing.expect(t, !moves[0].pin)
+	}
+
+	// Switch project to project: the other monitor follows to ACME, and the
+	// return workspace stays the non-project one remembered earlier.
+	vis = map[string]string{"DP-3" = "NeonRAW 1", "DP-1" = "ACME 2"}
+	moves = plan_sync("NeonRAW 2", "ACME 2", "DP-1", outs, vis, &ret)
+	testing.expect_value(t, len(moves), 1)
+	if len(moves) == 1 {testing.expect_value(t, moves[0].workspace, "ACME 1")}
+	testing.expect_value(t, ret["DP-3"], "7")
+
+	// Moving between plain workspaces does nothing; so does staying put.
+	vis = map[string]string{"DP-3" = "7", "DP-1" = "2"}
+	testing.expect_value(t, len(plan_sync("1", "2", "DP-1", outs, vis, &ret)), 0)
+	testing.expect_value(t, len(plan_sync("2", "2", "DP-1", outs, vis, &ret)), 0)
+	// Within the same project (NeonRAW 1 -> NeonRAW 2 on one monitor): nothing.
+	testing.expect_value(t, len(plan_sync("NeonRAW 1", "NeonRAW 2", "DP-1", outs, vis, &ret)), 0)
 }

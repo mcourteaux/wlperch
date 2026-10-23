@@ -30,6 +30,10 @@ Sway_Output :: struct {
 	transform:         string,
 }
 
+Visible_Ws :: struct {
+	output, ws: string,
+}
+
 Sway_State :: struct {
 	mu:            sync.Mutex,
 	ok:            bool,
@@ -38,6 +42,8 @@ Sway_State :: struct {
 	active_layout: int,
 	focused_ws:    string, // name of the focused workspace
 	focused_ws_seq: int,   // bumped on every workspace change
+	focused_output: string,
+	visible:        [dynamic]Visible_Ws, // workspace shown on each output
 }
 sway: Sway_State
 
@@ -135,12 +141,25 @@ sway_refresh_workspaces :: proc() {
 	if !ok {return}
 	v, _ := jparse(reply)
 	sync.guard(&sway.mu)
+	for x in sway.visible {
+		delete(x.output)
+		delete(x.ws)
+	}
+	clear(&sway.visible)
 	for ws in jarr(v) {
+		name := jstr(jobj(ws, "name"))
+		output := jstr(jobj(ws, "output"))
+		if jbool(jobj(ws, "visible")) {
+			append(&sway.visible, Visible_Ws{strings.clone(output), strings.clone(name)})
+		}
 		if jbool(jobj(ws, "focused")) {
-			name := jstr(jobj(ws, "name"))
 			if name != sway.focused_ws {
 				delete(sway.focused_ws)
 				sway.focused_ws = strings.clone(name)
+			}
+			if output != sway.focused_output {
+				delete(sway.focused_output)
+				sway.focused_output = strings.clone(output)
 			}
 		}
 	}

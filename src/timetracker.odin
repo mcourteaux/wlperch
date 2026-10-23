@@ -42,6 +42,13 @@ Tracker :: struct {
 	log_path:   string,
 	cur_path:   string,
 	idle:       time.Duration,
+
+	// Group lock: monitors follow each other into and out of project workspaces.
+	lock:         bool,
+	lock_path:    string,
+	last_visible: map[string]string, // output -> workspace at the previous tick
+	return_ws:    map[string]string, // output -> workspace to go back to when leaving
+	sync_at:      time.Tick,         // our own switch; ignore the events it causes
 }
 tracker := Tracker{running = -1}
 
@@ -180,6 +187,8 @@ tracker_init :: proc() {
 	os.make_directory_all(dir)
 	tracker.log_path = strings.concatenate({dir, "/timelog.tsv"})
 	tracker.cur_path = strings.concatenate({dir, "/timetracker.current"})
+	tracker.lock_path = strings.concatenate({dir, "/timetracker.lock"})
+	tracker.lock = os.exists(tracker.lock_path)
 	if data, err := os.read_entire_file(tracker.log_path, context.temp_allocator); err == nil {
 		timelog_parse(string(data), &tracker.entries)
 	}
@@ -201,6 +210,7 @@ tracker_init :: proc() {
 // Called every main-loop iteration: follow workspace focus and idleness.
 tracker_tick :: proc() {
 	if len(tracker.projects) == 0 {return}
+	tracker_sync()
 	ws: string
 	{
 		sync.guard(&sway.mu)
@@ -239,18 +249,14 @@ tracker_shutdown :: proc() {
 	close_segment(time.to_unix_seconds(time.now()))
 }
 
-// Create (or recreate) the project's workspaces, one per active output in
-// left-to-right order, pin them to their outputs and show them.
-tracker_start :: proc(index: int) {
-	if index < 0 || index >= len(tracker.projects) {return}
-	p := tracker.projects[index]
+// Active outputs, left to right; a project's workspace "<name> N" lives on the N-th.
+project_outputs :: proc() -> (names: []string, focused: string) {
 	Out :: struct {
 		name: string,
 		x:    i32,
 	}
 	outs: [dynamic]Out
 	outs.allocator = context.temp_allocator
-	focused := ""
 	{
 		sync.guard(&sway.mu)
 		for o in sway.outputs {
@@ -262,20 +268,116 @@ tracker_start :: proc(index: int) {
 	for i in 1 ..< len(outs) {
 		for j := i; j > 0 && outs[j].x < outs[j - 1].x; j -= 1 {outs[j], outs[j - 1] = outs[j - 1], outs[j]}
 	}
+	names = make([]string, len(outs), context.temp_allocator)
+	for o, i in outs {names[i] = o.name}
+	return
+}
+
+// Create (or recreate) the project's workspaces, one per active output in
+// left-to-right order, pin them to their outputs and show them.
+tracker_start :: proc(index: int) {
+	if index < 0 || index >= len(tracker.projects) {return}
+	p := tracker.projects[index]
+	outs, focused := project_outputs()
 	b := strings.builder_make(context.temp_allocator)
 	for o, i in outs {
-		fmt.sbprintf(&b, "workspace \"%s\" output %s; ", project_workspace(p, i + 1), o.name)
+		fmt.sbprintf(&b, "workspace \"%s\" output %s; ", project_workspace(p, i + 1), o)
 	}
 	// Visit the others first and end on the output the user was on.
 	last := ""
 	for o, i in outs {
-		if o.name == focused {
-			last = fmt.tprintf("focus output %s; workspace \"%s\"", o.name, project_workspace(p, i + 1))
+		if o == focused {
+			last = fmt.tprintf("focus output %s; workspace \"%s\"", o, project_workspace(p, i + 1))
 			continue
 		}
-		fmt.sbprintf(&b, "focus output %s; workspace \"%s\"; ", o.name, project_workspace(p, i + 1))
+		fmt.sbprintf(&b, "focus output %s; workspace \"%s\"; ", o, project_workspace(p, i + 1))
 	}
 	strings.write_string(&b, last)
+	tracker.sync_at = time.tick_now()
+	sway_command(strings.to_string(b))
+}
+
+tracker_set_lock :: proc(on: bool) {
+	tracker.lock = on
+	if on {
+		_ = os.write_entire_file(tracker.lock_path, "on\n")
+	} else {
+		os.remove(tracker.lock_path)
+	}
+	request_redraw()
+}
+
+Sync_Move :: struct {
+	output, workspace: string,
+	pin:               bool, // also pin the workspace to the output (project workspaces)
+}
+
+// Group-lock decision, without side effects except remembering return
+// workspaces. Given what the focused output showed before (`prev`) and now
+// (`cur`): entering a project brings the other outputs to its workspaces;
+// leaving it sends the outputs still showing it back where they came from.
+plan_sync :: proc(prev, cur, focused_out: string, outs: []string, visible: map[string]string, return_ws: ^map[string]string) -> []Sync_Move {
+	moves: [dynamic]Sync_Move
+	moves.allocator = context.temp_allocator
+	if prev == cur || prev == "" {return nil}
+	p_prev := project_for_workspace(prev)
+	p_cur := project_for_workspace(cur)
+	if p_prev == p_cur {return nil}
+	for o, i in outs {
+		if o == focused_out {continue}
+		shown := visible[o]
+		shown_p := project_for_workspace(shown)
+		if p_cur >= 0 {
+			if shown_p == p_cur {continue}
+			if shown_p < 0 && shown != "" {
+				if old, had := return_ws[o]; had {
+					delete(old)
+					return_ws[o] = strings.clone(shown)
+				} else {
+					return_ws[strings.clone(o)] = strings.clone(shown)
+				}
+			}
+			append(&moves, Sync_Move{o, project_workspace(tracker.projects[p_cur], i + 1), true})
+		} else {
+			if shown_p != p_prev {continue}
+			if ret, had := return_ws[o]; had {append(&moves, Sync_Move{o, ret, false})}
+		}
+	}
+	return moves[:]
+}
+
+// Group lock: apply plan_sync to sway, keeping focus on the output the user acted on.
+@(private = "file")
+tracker_sync :: proc() {
+	visible := make(map[string]string, 8, context.temp_allocator)
+	focused_out: string
+	{
+		sync.guard(&sway.mu)
+		for v in sway.visible {visible[strings.clone(v.output, context.temp_allocator)] = strings.clone(v.ws, context.temp_allocator)}
+		focused_out = strings.clone(sway.focused_output, context.temp_allocator)
+	}
+	defer {
+		for k, v in tracker.last_visible {
+			delete(k)
+			delete(v)
+		}
+		clear(&tracker.last_visible)
+		for k, v in visible {tracker.last_visible[strings.clone(k)] = strings.clone(v)}
+	}
+	if !tracker.lock || focused_out == "" {return}
+	// Our own switching produces a burst of events: let it settle.
+	if time.tick_since(tracker.sync_at) < 400 * time.Millisecond {return}
+
+	outs, _ := project_outputs()
+	moves := plan_sync(tracker.last_visible[focused_out], visible[focused_out], focused_out, outs, visible, &tracker.return_ws)
+	if len(moves) == 0 {return}
+	b := strings.builder_make(context.temp_allocator)
+	for m in moves {
+		if m.pin {fmt.sbprintf(&b, "workspace \"%s\" output %s; ", m.workspace, m.output)}
+		fmt.sbprintf(&b, "focus output %s; workspace \"%s\"; ", m.output, m.workspace)
+	}
+	fmt.sbprintf(&b, "focus output %s", focused_out)
+	tracker.sync_at = time.tick_now()
 	sway_command(strings.to_string(b))
 }
 

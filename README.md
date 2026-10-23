@@ -87,6 +87,12 @@ the Time panel, or with `wlwidgets track <project>`:
 
 Doing it again simply recreates them after sway has removed them as empty.
 
+**Group lock** (a toggle in the Time panel, or `wlwidgets track lock [on|off]`)
+keeps the monitors together. Switching one monitor to a project workspace
+brings the others to that project's workspaces too. Leaving it sends the others
+back to what they showed before. Focus stays on the monitor you used. The
+setting is remembered.
+
 Time counts while one of a project's workspaces is focused. Numbered
 workspaces are not counted. Counting pauses after `idle_minutes` without input
 (through the `ext-idle-notify-v1` protocol; idle inhibitors such as a playing
@@ -143,6 +149,7 @@ wlwidgets toggle perf   # open a specific panel (switches if another one is open
 wlwidgets show [panel] | hide | quit
 wlwidgets restart    # new binary + re-read config; keeps graph history
 wlwidgets track ACME # open the project's workspaces (time tracking)
+wlwidgets track lock on   # group-lock monitors into/out of project workspaces
 wlwidgets daemon     # start in the background without showing
 wlwidgets status     # waybar JSON for the bar button (see below)
 ```

@@ -26,6 +26,7 @@ commands:
   quit     stop the running daemon
   restart  restart the daemon (new binary, re-read config); keeps graph history
   track <project>  create/focus the project's workspaces (one per monitor) to track time
+  track lock [on|off]  group-lock monitors: they follow each other into/out of projects
   status [sensors|timer]  print waybar JSON every few seconds for a custom module:
                    the panel button (memory warning), a room temperature + CO2,
                    or the running project timer
@@ -107,7 +108,17 @@ handle_command :: proc(line: string) -> string {
 	case "restart":
 		restart_requested = true
 	case "track":
-		if len(f) < 2 {return "usage: track <project>\n"}
+		if len(f) < 2 {return "usage: track <project> | track lock [on|off]\n"}
+		if f[1] == "lock" {
+			mode := len(f) > 2 ? f[2] : "toggle"
+			switch mode {
+			case "on":     tracker_set_lock(true)
+			case "off":    tracker_set_lock(false)
+			case "toggle": tracker_set_lock(!tracker.lock)
+			case:          return "usage: track lock [on|off]\n"
+			}
+			return tracker.lock ? "lock on\n" : "lock off\n"
+		}
 		i := project_find(strings.join(f[1:], " ", context.temp_allocator))
 		if i < 0 {return "unknown project\n"}
 		tracker_start(i)
