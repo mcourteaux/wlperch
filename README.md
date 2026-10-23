@@ -153,6 +153,8 @@ The panel shows:
 - the running timer;
 - the projects as quick-switch rows with today's totals;
 - a bar of today's time against an 8 h day;
+- a 24 h timeline of today. Scroll over it to zoom (down to 15 minutes, around
+  the pointer), drag to pan, double-click to see the whole day again.
 - a 7-day stacked chart (hover a day for its breakdown).
 
 `wlwidgets status timer` feeds a waybar pill (`⏱ ACME 1:23`, class `running`).

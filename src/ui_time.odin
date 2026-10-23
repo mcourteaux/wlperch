@@ -2,6 +2,7 @@
 package main
 
 import "core:fmt"
+import "core:math"
 import "core:strings"
 import "core:time"
 
@@ -239,6 +240,20 @@ draw_time :: proc(w: f32) {
 	im.Dummy({inner, gh + label_h})
 }
 
+// Visible part of today's timeline, in seconds since midnight.
+@(private = "file")
+TL_MIN_SPAN :: 15 * 60
+@(private = "file")
+tl := struct {
+	start, span: f64,
+}{0, 86400}
+
+@(private = "file")
+tl_clamp_view :: proc() {
+	tl.span = clamp(tl.span, TL_MIN_SPAN, 86400)
+	tl.start = clamp(tl.start, 0, 86400 - tl.span)
+}
+
 // Today as a 24 h timeline: work in the project's color, breaks in a dim
 // version of it, breaks outside projects in gray; untracked time is the track.
 @(private = "file")
@@ -282,22 +297,60 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 	p := im.GetCursorScreenPos()
 	bh: f32 = 22
 	d := dl()
-	x_of :: proc(t, day_start: i64, x0, w: f32) -> f32 {
-		return x0 + w * f32(f64(clamp(t, day_start, day_start + 86400) - day_start) / 86400)
+
+	// Zoom & pan: scroll zooms around the pointer, drag pans, double-click resets.
+	tl_clamp_view()
+	im.InvisibleButton("##timeline", {inner, bh + 14})
+	tl_hovered := im.IsItemHovered()
+	im.SetItemKeyOwner(.MouseWheelY) // the wheel zooms instead of scrolling the panel
+	if tl_hovered {
+		wheel := im.GetIO().MouseWheel
+		if wheel != 0 {
+			frac := f64(clamp((im.GetMousePos().x - p.x) / inner, 0, 1))
+			anchor := tl.start + frac * tl.span
+			tl.span = clamp(tl.span * (wheel > 0 ? 0.8 : 1.25), TL_MIN_SPAN, 86400)
+			tl.start = anchor - frac * tl.span
+			tl_clamp_view()
+		}
+		if im.IsMouseDoubleClicked(.Left) {tl.start, tl.span = 0, 86400}
+		if tl.span < 86400 {im.SetMouseCursor(.ResizeEW)}
+	}
+	if im.IsItemActive() && im.IsMouseDragging(.Left, 1) {
+		dx := im.GetIO().MouseDelta.x
+		tl.start -= f64(dx / inner) * tl.span
+		tl_clamp_view()
+	}
+	im.SetCursorScreenPos(p)
+
+	view_from := f64(day_start) + tl.start
+	view_span := tl.span
+	x_of :: proc(t: i64, from, span: f64, x0, w: f32) -> f32 {
+		return x0 + w * f32((f64(t) - from) / span)
 	}
 	im.DrawList_AddRectFilled(d, p, {p.x + inner, p.y + bh}, col32(0x12151b), 6)
-	// Hour grid.
-	for h in 1 ..< 24 {
-		x := p.x + inner * f32(h) / 24
-		a: f32 = h % 6 == 0 ? 0.10 : 0.04
-		im.DrawList_AddLine(d, {x, p.y + 3}, {x, p.y + bh - 3}, col32(0xffffff, a))
+
+	// Ticks: pick a step giving roughly 6-12 labels at this zoom.
+	steps := [?]f64{300, 600, 900, 1800, 3600, 7200, 10800, 21600}
+	step := steps[len(steps) - 1]
+	for st in steps {
+		if view_span / st <= 12 {
+			step = st
+			break
+		}
+	}
+	minor := step / (step >= 3600 ? 3 : 5)
+	im.DrawList_PushClipRect(d, p, {p.x + inner, p.y + bh}, true)
+	for t := math.floor(tl.start / minor) * minor; t <= tl.start + view_span; t += minor {
+		x := x_of(i64(f64(day_start) + t), view_from, view_span, p.x, inner)
+		major := math.mod(t, step) < 1
+		im.DrawList_AddLine(d, {x, p.y + 3}, {x, p.y + bh - 3}, col32(0xffffff, major ? 0.10 : 0.035))
 	}
 	hovered_seg := -1
 	mouse := im.GetMousePos()
-	im.DrawList_PushClipRect(d, p, {p.x + inner, p.y + bh}, true)
 	for sg, i in segs {
-		x0 := x_of(sg.s, day_start, p.x, inner)
-		x1 := max(x_of(sg.e, day_start, p.x, inner), x0 + 1)
+		x0 := x_of(sg.s, view_from, view_span, p.x, inner)
+		x1 := max(x_of(sg.e, view_from, view_span, p.x, inner), x0 + 1)
+		if x1 < p.x || x0 > p.x + inner {continue}
 		col, is_project := color_of(sg.project)
 		c: u32
 		switch {
@@ -309,20 +362,26 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 		if mouse.x >= x0 && mouse.x < x1 && mouse.y >= p.y && mouse.y < p.y + bh {hovered_seg = i}
 	}
 	// "Now" marker.
-	nx := x_of(now, day_start, p.x, inner)
+	nx := x_of(now, view_from, view_span, p.x, inner)
 	im.DrawList_AddLine(d, {nx, p.y}, {nx, p.y + bh}, col32(C_TEXT, 0.9), 1.5)
 	im.DrawList_PopClipRect(d)
 	im.Dummy({inner, bh})
 
-	// Hour labels.
+	// Tick labels.
 	lp := im.GetCursorScreenPos()
-	for h := 0; h <= 24; h += 3 {
-		lbl := fmt.tprintf("%02d", h % 24)
-		if h == 24 {lbl = "24"}
+	for t := math.ceil(tl.start / step) * step; t <= tl.start + view_span + 1; t += step {
+		secs := int(t)
+		lbl := step >= 3600 ? fmt.tprintf("%02d", secs / 3600) : fmt.tprintf("%02d:%02d", secs / 3600, (secs / 60) % 60)
+		if secs >= 86400 {lbl = step >= 3600 ? "24" : "24:00"}
 		lsz := measure(fonts.ui, 10.5, lbl)
-		x := p.x + inner * f32(h) / 24 - lsz.x / 2
+		x := x_of(i64(f64(day_start) + t), view_from, view_span, p.x, inner) - lsz.x / 2
 		x = clamp(x, p.x, p.x + inner - lsz.x)
 		draw_text(fonts.ui, 10.5, {x, lp.y}, col32(C_FAINT), lbl)
+	}
+	if tl.span < 86400 {
+		hint := "double-click: whole day"
+		hsz := measure(fonts.ui, 10, hint)
+		draw_text(fonts.ui, 10, {p.x + inner - hsz.x, p.y - 15}, col32(C_FAINT), hint)
 	}
 	im.Dummy({inner, 14})
 
