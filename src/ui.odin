@@ -532,7 +532,9 @@ draw_weather :: proc(w: f32) {
 	card_begin("weather", w)
 	defer card_end()
 	sync.guard(&weather.mu)
-	card_title(ICON_W_PARTLY, "Weather", C_YELLOW, weather.place)
+	title_icon := ICON_W_PARTLY
+	if weather.ok {title_icon, _ = weather_desc(weather.code, weather.is_day)}
+	card_title(title_icon, "Weather", C_YELLOW, weather.place)
 
 	inner := im.GetContentRegionAvail().x
 	if !weather.ok {

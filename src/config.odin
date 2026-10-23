@@ -6,6 +6,7 @@ import "core:log"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:time"
 
 import "wl"
 
@@ -22,6 +23,7 @@ Config :: struct {
 	output:             string,
 	close_on_click_outside: bool,
 	max_height:         i32, // 0 = fit the output
+	release_gpu_after:  time.Duration, // 0 = never
 
 	// [weather]
 	location:           string, // "auto", a place name, or "lat,lon"
@@ -62,6 +64,9 @@ output =
 close_on_click_outside = true
 # Maximum popup height in logical pixels (0 = up to the output height). Scrolls when needed.
 max_height = 0
+# Seconds hidden before GPU memory is released (the daemon re-executes itself,
+# ~40 MB instead of ~165 MB on NVIDIA). Next open then takes ~0.1 s longer. 0 = never.
+release_gpu_after = 30
 
 [weather]
 # "auto" (IP geolocation), a place name ("Ghent"), or "lat,lon".
@@ -171,6 +176,7 @@ config_load :: proc() {
 	c.output = strings.clone(get(m, defaults, "popup", "output"))
 	c.close_on_click_outside = parse_bool(get(m, defaults, "popup", "close_on_click_outside"), true)
 	c.max_height = i32(strconv.parse_int(get(m, defaults, "popup", "max_height")) or_else 0)
+	c.release_gpu_after = time.Duration(max(strconv.parse_int(get(m, defaults, "popup", "release_gpu_after")) or_else 30, 0)) * time.Second
 
 	c.location = strings.clone(get(m, defaults, "weather", "location"))
 	c.units = strings.clone(get(m, defaults, "weather", "units"))

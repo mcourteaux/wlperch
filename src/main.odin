@@ -163,8 +163,6 @@ open_progress :: proc() -> f32 {
 	return 1 - u * u * u
 }
 
-// GPU state is released when the popup stays hidden this long.
-GL_IDLE_TEARDOWN :: 30 * time.Second
 hidden_since: time.Tick
 last_render_second: i64
 
@@ -202,6 +200,7 @@ render_frame :: proc() {
 	}
 	platform_end_frame()
 	app.frame_count += 1
+	if ui.shown_frames == 1 {log.debugf("first frame %v after show", time.tick_since(app.show_time))}
 	log.debugf("frame %d %dx%d@%.2f content_h=%.1f", app.frame_count, plat.width, plat.height, platform_scale(), content_h)
 
 	if content_h > 0 {
@@ -229,9 +228,9 @@ loop_iteration :: proc() {
 		if r := platform_key_repeat(); r >= 0 {
 			timeout = min(timeout < 0 ? max(int) : timeout, int(time.duration_milliseconds(r)) + 1)
 		}
-	} else if plat.egl_context != nil {
+	} else if plat.egl_context != nil && config.release_gpu_after > 0 {
 		// Wake up to release GPU resources once we've been hidden long enough.
-		left := GL_IDLE_TEARDOWN - time.tick_since(hidden_since)
+		left := config.release_gpu_after - time.tick_since(hidden_since)
 		timeout = max(int(time.duration_milliseconds(left)), 0) + 1
 	}
 
@@ -291,7 +290,7 @@ loop_iteration :: proc() {
 			last_render_second = sec
 			render_frame()
 		}
-	} else if plat.egl_context != nil && time.tick_since(hidden_since) >= GL_IDLE_TEARDOWN {
+	} else if plat.egl_context != nil && config.release_gpu_after > 0 && time.tick_since(hidden_since) >= config.release_gpu_after {
 		// The GPU driver keeps its memory after eglTerminate; a fresh process image doesn't.
 		reexec_self()
 		// exec failed: at least release what we can and carry on.

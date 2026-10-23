@@ -115,6 +115,8 @@ anchor = top right            # any of: top bottom left right
 margin = 4 8 0 0              # top right bottom left
 output =                      # connector (e.g. DP-1); empty = focused output
 close_on_click_outside = true
+max_height = 0                # 0 = up to the output height; scrolls when needed
+release_gpu_after = 30        # seconds hidden before GPU memory is released (0 = never)
 
 [weather]
 location = auto               # auto | place name ("Ghent") | "lat,lon"
@@ -146,10 +148,12 @@ Restart the daemon (`wlwidgets quit`) to apply changes.
 When hidden, the daemon uses ~0 % CPU and ~40 MB RSS (about 24 MB of that is
 NVML). It doesn't create an EGL context until the popup is first shown. GPU
 drivers don't give their memory back on `eglTerminate`, so after the popup has
-been hidden for 30 s the daemon **re-executes itself**. It keeps the same PID
+been hidden for `release_gpu_after` seconds (30 by default) the daemon
+**re-executes itself**. It keeps the same PID
 and the control socket, and hands the graph history over in a memfd, which
-returns RSS to the baseline. While visible, it redraws once per second plus on
-input.
+returns RSS to the baseline. Opening the popup takes ~25 ms while GPU state is
+warm and ~140 ms after a release. While visible, it redraws once per second plus
+on input.
 
 ## Layout of the code
 
