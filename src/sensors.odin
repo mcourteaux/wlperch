@@ -3,6 +3,7 @@
 // read names/units from devices.json (never the keys) and values from state.json.
 package main
 
+import "core:encoding/endian"
 import "core:encoding/json"
 import "core:fmt"
 import "core:log"
@@ -45,7 +46,7 @@ Sensor_Sample :: struct {
 Sensors :: struct {
 	mu:       sync.Mutex,
 	// History of every numeric value, keyed "<device id>/<code>"; persisted in
-	// <data>/sensors.tsv (one line per new reading).
+	// <data>/sensors.bin (last SENSOR_HISTORY_DAYS days only).
 	history:  map[string][dynamic]Sensor_Sample,
 	ok:       bool,
 	error:    string,
@@ -177,67 +178,152 @@ SENSOR_HISTORY_DAYS :: 7
 // Set by `wlwidgets status sensors`: only the daemon writes the history file.
 sensors_read_only: bool
 
+// History file: "WLSH", u32 version, u32 key count, then per key a u16-length
+// name and a u32 sample count followed by (f64 time, f32 value) pairs, all
+// little-endian. Rewritten whole on every change, holding only the last
+// SENSOR_HISTORY_DAYS days, so it never grows past that.
+SENSOR_HISTORY_MAGIC :: "WLSH"
+SENSOR_HISTORY_VERSION :: 1
+
 @(private = "file")
-history_path :: proc() -> string {return strings.concatenate({data_dir(), "/sensors.tsv"}, context.temp_allocator)}
+history_path :: proc() -> string {return strings.concatenate({data_dir(), "/sensors.bin"}, context.temp_allocator)}
+
+// Text log written by earlier versions; imported once, then removed.
+@(private = "file")
+legacy_history_path :: proc() -> string {return strings.concatenate({data_dir(), "/sensors.tsv"}, context.temp_allocator)}
 
 @(private = "file")
 history_key :: proc(dev_id, code: string) -> string {return fmt.tprintf("%s/%s", dev_id, code)}
 
-// Append a sample under the lock; returns false if it isn't newer than the last one.
-@(private = "file")
-history_add :: proc(key: string, t: f64, v: f32) -> bool {
-	list, has := &sensors.history[key]
+history_cutoff :: proc() -> f64 {return f64(time.to_unix_seconds(time.now())) - SENSOR_HISTORY_DAYS * 86400}
+
+// Drop samples older than `cutoff` from every list.
+history_trim :: proc(h: ^map[string][dynamic]Sensor_Sample, cutoff: f64) -> (dropped: bool) {
+	for _, &list in h {
+		old := 0
+		for old < len(list) && list[old].t < cutoff {old += 1}
+		if old > 0 {
+			remove_range(&list, 0, old)
+			dropped = true
+		}
+	}
+	return
+}
+
+// Append a sample to one list; false if it isn't newer than the last one or
+// already outside the window.
+history_append :: proc(h: ^map[string][dynamic]Sensor_Sample, key: string, t: f64, v: f32, cutoff: f64) -> bool {
+	if t < cutoff {return false}
+	list, has := &h[key]
 	if !has {
-		sensors.history[strings.clone(key)] = {}
-		list = &sensors.history[key]
+		h[strings.clone(key)] = {}
+		list = &h[key]
 	}
 	if n := len(list); n > 0 && t <= list[n - 1].t {return false}
 	append(list, Sensor_Sample{t, v})
-	// Drop what fell out of the window (keep one older sample as the start value).
-	cutoff := t - SENSOR_HISTORY_DAYS * 86400
-	old := 0
-	for old + 1 < len(list) && list[old + 1].t < cutoff {old += 1}
-	if old > 64 {remove_range(list, 0, old)}
 	return true
 }
 
-// Load the last few days of the history file.
+history_encode :: proc(h: map[string][dynamic]Sensor_Sample, allocator := context.allocator) -> []byte {
+	out: [dynamic]byte
+	out.allocator = allocator
+	put_u16 :: proc(out: ^[dynamic]byte, v: u16) {b: [2]byte; endian.put_u16(b[:], .Little, v); append(out, ..b[:])}
+	put_u32 :: proc(out: ^[dynamic]byte, v: u32) {b: [4]byte; endian.put_u32(b[:], .Little, v); append(out, ..b[:])}
+	append(&out, SENSOR_HISTORY_MAGIC)
+	put_u32(&out, SENSOR_HISTORY_VERSION)
+	keys := 0
+	for k, list in h {if len(list) > 0 && len(k) <= int(max(u16)) {keys += 1}}
+	put_u32(&out, u32(keys))
+	for k, list in h {
+		if len(list) == 0 || len(k) > int(max(u16)) {continue}
+		put_u16(&out, u16(len(k)))
+		append(&out, k)
+		put_u32(&out, u32(len(list)))
+		for s in list {
+			b: [12]byte
+			endian.put_f64(b[0:8], .Little, s.t)
+			endian.put_f32(b[8:12], .Little, s.v)
+			append(&out, ..b[:])
+		}
+	}
+	return out[:]
+}
+
+// Reads what it can: a truncated or damaged file keeps the samples before the damage.
+history_decode :: proc(data: []byte, h: ^map[string][dynamic]Sensor_Sample, cutoff: f64) -> bool {
+	if len(data) < 12 || string(data[:4]) != SENSOR_HISTORY_MAGIC {return false}
+	if v, _ := endian.get_u32(data[4:8], .Little); v != SENSOR_HISTORY_VERSION {return false}
+	keys, _ := endian.get_u32(data[8:12], .Little)
+	pos := 12
+	for _ in 0 ..< keys {
+		if pos + 2 > len(data) {return false}
+		klen, _ := endian.get_u16(data[pos:pos + 2], .Little)
+		pos += 2
+		if pos + int(klen) + 4 > len(data) {return false}
+		key := string(data[pos:pos + int(klen)])
+		pos += int(klen)
+		n, _ := endian.get_u32(data[pos:pos + 4], .Little)
+		pos += 4
+		for _ in 0 ..< n {
+			if pos + 12 > len(data) {return false}
+			t, _ := endian.get_f64(data[pos:pos + 8], .Little)
+			v, _ := endian.get_f32(data[pos + 8:pos + 12], .Little)
+			pos += 12
+			history_append(h, key, t, v, cutoff)
+		}
+	}
+	return true
+}
+
+@(private = "file")
+save_history :: proc() {
+	data := history_encode(sensors.history, context.temp_allocator)
+	os.make_directory_all(data_dir())
+	path := history_path()
+	tmp := strings.concatenate({path, ".tmp"}, context.temp_allocator)
+	if os.write_entire_file(tmp, data) != nil {return}
+	if os.rename(tmp, path) != nil {_ = os.remove(tmp)}
+}
+
 @(private = "file")
 load_history :: proc() {
-	data, err := os.read_entire_file(history_path(), context.temp_allocator)
-	if err != nil {return}
-	cutoff := f64(time.to_unix_seconds(time.now())) - SENSOR_HISTORY_DAYS * 86400
-	text := string(data)
+	cutoff := history_cutoff()
 	sync.guard(&sensors.mu)
-	for line in strings.split_lines_iterator(&text) {
-		f := strings.split(line, "\t", context.temp_allocator)
-		if len(f) < 4 {continue}
-		t, ok1 := strconv.parse_f64(f[0])
-		v, ok2 := strconv.parse_f64(f[3])
-		if !ok1 || !ok2 || t < cutoff {continue}
-		history_add(history_key(f[1], f[2]), t, f32(v))
+	if data, err := os.read_entire_file(history_path(), context.temp_allocator); err == nil {
+		history_decode(data, &sensors.history, cutoff)
 	}
+	if sensors_read_only {return}
+	// One-time import of the old text log ("time dev code value" lines).
+	legacy := legacy_history_path()
+	if data, err := os.read_entire_file(legacy, context.temp_allocator); err == nil {
+		text := string(data)
+		for line in strings.split_lines_iterator(&text) {
+			f := strings.split(line, "\t", context.temp_allocator)
+			if len(f) < 4 {continue}
+			t, ok1 := strconv.parse_f64(f[0])
+			v, ok2 := strconv.parse_f64(f[3])
+			if !ok1 || !ok2 {continue}
+			history_append(&sensors.history, history_key(f[1], f[2]), t, f32(v), cutoff)
+		}
+	}
+	// Rewrite: drops whatever aged out while the daemon wasn't running.
+	save_history()
+	if os.exists(history_path()) {_ = os.remove(legacy)}
 }
 
 // New readings since the last reload go into memory and the history file.
 // Called with sensors.mu held.
 @(private = "file")
 record_history :: proc() {
-	b := strings.builder_make(context.temp_allocator)
+	cutoff := history_cutoff()
+	changed := history_trim(&sensors.history, cutoff)
 	for &d in sensors.devices {
 		for v in d.values {
 			if !v.is_num || v.t <= 0 {continue}
-			if history_add(history_key(d.id, v.code), v.t, f32(v.num)) {
-				fmt.sbprintf(&b, "%.0f\t%s\t%s\t%g\n", v.t, d.id, v.code, v.num)
-			}
+			if history_append(&sensors.history, history_key(d.id, v.code), v.t, f32(v.num), cutoff) {changed = true}
 		}
 	}
-	if strings.builder_len(b) == 0 {return}
-	os.make_directory_all(data_dir())
-	f, err := os.open(history_path(), {.Write, .Create, .Append}, os.Permissions_Default_File)
-	if err != nil {return}
-	defer os.close(f)
-	os.write_string(f, strings.to_string(b))
+	if changed {save_history()}
 }
 
 // Samples of one value within [from, now] (temp copy; call with sensors.mu held).
@@ -261,12 +347,19 @@ sensors_start :: proc() {
 	thread.create_and_start(proc() {
 		path := strings.concatenate({config.sensors_dir, "/state.json"})
 		last := mtime(path)
+		last_trim := time.tick_now()
 		for {
 			time.sleep(3 * time.Second)
 			if m := mtime(path); m != last {
 				last = m
 				reload()
 				wake_ui()
+			}
+			// Age out old samples even when no new readings arrive.
+			if !sensors_read_only && time.tick_since(last_trim) > time.Hour {
+				last_trim = time.tick_now()
+				sync.guard(&sensors.mu)
+				if history_trim(&sensors.history, history_cutoff()) {save_history()}
 			}
 			free_all(context.temp_allocator)
 		}

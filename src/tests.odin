@@ -297,3 +297,39 @@ test_jsonc_array_end :: proc(t: ^testing.T) {
 	check(t, "[ // only a comment ]\n]", "<empty>")
 	check(t, `["a]b"]`, `["a]b"`)
 }
+
+@(test)
+test_sensor_history_binary :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	now: f64 = 1_800_000_000
+	cutoff := now - SENSOR_HISTORY_DAYS * 86400
+	h: map[string][dynamic]Sensor_Sample
+	// Samples outside the window never get in; non-increasing times are ignored.
+	testing.expect(t, !history_append(&h, "dev/temp", cutoff - 1, 20, cutoff))
+	testing.expect(t, history_append(&h, "dev/temp", cutoff + 10, 21.5, cutoff))
+	testing.expect(t, history_append(&h, "dev/temp", now, 22.25, cutoff))
+	testing.expect(t, !history_append(&h, "dev/temp", now, 23, cutoff))
+	testing.expect(t, history_append(&h, "air/co2", now - 3600, 612, cutoff))
+
+	data := history_encode(h)
+	testing.expect_value(t, string(data[:4]), SENSOR_HISTORY_MAGIC)
+	back: map[string][dynamic]Sensor_Sample
+	testing.expect(t, history_decode(data, &back, cutoff))
+	testing.expect_value(t, len(back), 2)
+	testing.expect_value(t, len(back["dev/temp"]), 2)
+	testing.expect_value(t, back["dev/temp"][1].v, 22.25)
+	testing.expect_value(t, back["air/co2"][0].t, now - 3600)
+
+	// A later cutoff drops what aged out, on decode and on trim.
+	later: map[string][dynamic]Sensor_Sample
+	history_decode(data, &later, cutoff + 60)
+	testing.expect_value(t, len(later["dev/temp"]), 1)
+	testing.expect(t, history_trim(&back, cutoff + 60))
+	testing.expect_value(t, len(back["dev/temp"]), 1)
+	testing.expect(t, !history_trim(&back, cutoff + 60))
+
+	// Truncated file: keeps what was readable, reports the damage.
+	cut: map[string][dynamic]Sensor_Sample
+	testing.expect(t, !history_decode(data[:len(data) - 5], &cut, cutoff))
+	testing.expect(t, !history_decode(transmute([]byte)string("nope"), &cut, cutoff))
+}

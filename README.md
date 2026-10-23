@@ -173,9 +173,10 @@ keys) and `state.json` from `[sensors] dir`, and reloads whenever
 so the daemon keeps `[sensors] watch` (the tool's `--watch` mode) running and
 restarts it if it exits. Leave `watch` empty if you run the watcher yourself.
 
-Every reading change is appended to `~/.local/share/wlwidgets/sensors.tsv`
-(`time device code value`), so history survives restarts. The last 7 days are
-kept in memory. Hover a room, the air monitor or the heater to see 24-hour
+Readings are kept in `~/.local/share/wlwidgets/sensors.bin`, a small binary file
+holding only the last 7 days (older samples are dropped as they age out), so
+history survives restarts without growing. An older `sensors.tsv` is imported
+once and removed. Hover a room, the air monitor or the heater to see 24-hour
 graphs of each value.
 
 ## Installing
