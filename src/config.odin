@@ -149,14 +149,16 @@ bar_room =
 # columns: module names per column, columns separated by "|".
 # Modules: quick audio network weather clocks displays bluetooth storage
 #          cpu gpu memory processes thermals sensors time notifications media
+#          calculator
 # quick = night light, do not disturb, Bluetooth, project toggles, keyboard
 #         layouts and buttons that open the other panels.
 # header = true shows the big clock and date on top;
 # otherwise "title" (if set) is shown as a compact title row.
+# tab = false leaves a panel out of the tab strip (open it with a key binding).
 
 [panel.main]
 header = true
-columns = quick media audio | weather clocks displays bluetooth
+columns = quick media audio calculator | weather clocks displays bluetooth
 
 [panel.system]
 title = System
@@ -177,6 +179,12 @@ columns = notifications
 title = Time
 width = 600
 columns = time
+
+[panel.calc]
+title = Calculator
+width = 560
+tab = false
+columns = calculator
 `
 
 // wlperch was called wlwidgets: move its config and data (projects, time log,

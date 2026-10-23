@@ -576,3 +576,71 @@ test_sensor_decoding :: proc(t: ^testing.T) {
 	p, _ := sensor_parse_dp("ch2o_value 3 mg/m³")
 	testing.expect(t, p.code == "ch2o_value" && p.scale == 3 && p.unit == "mg/m³")
 }
+
+@(test)
+test_calc_eval :: proc(t: ^testing.T) {
+	ok :: proc(t: ^testing.T, src: string, want: string, loc := #caller_location) {
+		v, err := calc_eval(src)
+		testing.expectf(t, err == "", "%q: %s", src, err, loc = loc)
+		testing.expect_value(t, calc_decimal(v), want, loc = loc)
+	}
+	ok(t, "1 + 2 * 3", "7")
+	ok(t, "-2^2", "-4")
+	ok(t, "2^-1", "0.5")
+	ok(t, "2^3^2", "512")
+	ok(t, "7 % -3", "-2")
+	ok(t, "-7 mod 3", "2")
+	ok(t, "0xff & 0b1010 | 0o100", "74")
+	ok(t, "3 xor 5", "6")
+	ok(t, "~0", "-1")
+	ok(t, "1 << 100", "1267650600228229401496703205376")
+	ok(t, "0xFFFFFFFFFFFFFFFF + 1", "18446744073709551616")
+	ok(t, "floor(7/2) + ceil(-1.5)", "2")
+	ok(t, "round(2.5) trunc(-2.7)", "-6")
+	ok(t, "2pi / tau", "1")
+	ok(t, "3(4+1)", "15")
+	ok(t, "5! + 0!", "121")
+	ok(t, "sqrt 16", "4")
+	ok(t, "log(8, 2)", "3")
+	ok(t, "gcd(12, 18) lcm(4, 6)", "72")
+	ok(t, "max(1, 2.5, 2)", "2.5")
+	ok(t, "0.1 + 0.2", "0.30000000000000004")
+	ok(t, "1_000 / 8", "125")
+	ok(t, "0x1.8p+1", "3")
+	ok(t, "1.5e3", "1500")
+
+	v, _ := calc_eval("asin(1)", degrees = true)
+	testing.expect_value(t, calc_decimal(v), "90")
+	v, _ = calc_eval("ans * 2", ans = calc_int(21))
+	testing.expect_value(t, calc_decimal(v), "42")
+
+	for bad in ([]string{"", "(1 + 2", "foo(1)", "2 3", "1 & 0.5", "5 % 0"}) {
+		_, err := calc_eval(bad)
+		testing.expectf(t, err != "", "%q should fail", bad)
+	}
+}
+
+@(test)
+test_calc_formats :: proc(t: ^testing.T) {
+	testing.expect_value(t, calc_hexfloat(3), "0x1.8p+1")
+	testing.expect_value(t, calc_hexfloat(1), "0x1p+0")
+	testing.expect_value(t, calc_hexfloat(-0.1), "-0x1.999999999999ap-4")
+	testing.expect_value(t, calc_hexfloat(5e-324), "0x0.0000000000001p-1022")
+	testing.expect_value(t, calc_hexfloat(0), "0x0p+0")
+
+	find :: proc(fs: []Calc_Format, label: string) -> string {
+		for f in fs {if f.label == label {return f.copy}}
+		return ""
+	}
+	fs := calc_formats(calc_int(255))
+	testing.expect_value(t, find(fs, "hex"), "0xFF")
+	testing.expect_value(t, find(fs, "oct"), "0o377")
+	testing.expect_value(t, find(fs, "bin"), "0b11111111")
+	testing.expect_value(t, find(fs, "f64 bits"), "0x406FE00000000000")
+	testing.expect_value(t, find(fs, "f32 bits"), "0x437F0000")
+	fs = calc_formats(calc_int(-1))
+	testing.expect_value(t, find(fs, "hex (64-bit)"), "0xFFFFFFFFFFFFFFFF")
+	fs = calc_formats(calc_flt(0.1))
+	testing.expect_value(t, find(fs, "hex"), "") // not whole: no integer bases
+	testing.expect_value(t, find(fs, "f32 bits ≈"), "0x3DCCCCCD")
+}

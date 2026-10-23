@@ -235,12 +235,19 @@ draw_header :: proc(width: f32) {
 // Tabs for every panel, right-aligned at `right`; icons only when the
 // labels don't fit in `max_w`. Hidden when there's a single panel.
 panel_tabs :: proc(right, y, max_w: f32) {
-	if len(panels) < 2 {return}
+	// Panels with "tab = false" (e.g. the calculator, opened by a key binding)
+	// only get a tab while they're open.
+	shown := make([dynamic]int, context.temp_allocator)
+	for p, i in panels {
+		if p.tab || i == current_panel {append(&shown, i)}
+	}
+	if len(shown) < 2 {return}
 	h: f32 = 28
 	names := make([]string, len(panels), context.temp_allocator)
 	widths := make([]f32, len(panels), context.temp_allocator)
 	full: f32 = 4
-	for p, i in panels {
+	for i in shown {
+		p := panels[i]
 		names[i] = p.title
 		if names[i] == "" && p.name != "" {names[i] = strings.concatenate({strings.to_upper(p.name[:1], context.temp_allocator), p.name[1:]}, context.temp_allocator)}
 		widths[i] = measure(fonts.ui, SZ_SMALL + 1, names[i]).x + 44
@@ -248,9 +255,9 @@ panel_tabs :: proc(right, y, max_w: f32) {
 	}
 	labels := full <= max_w
 	total: f32 = 4
-	for &w in widths {
-		if !labels {w = 34}
-		total += w
+	for i in shown {
+		if !labels {widths[i] = 34}
+		total += widths[i]
 	}
 	if total > max_w {return}
 	d := dl()
@@ -258,7 +265,8 @@ panel_tabs :: proc(right, y, max_w: f32) {
 	im.DrawList_AddRectFilled(d, {x0, y}, {right, y + h + 4}, col32(C_CARD_HI), 10)
 	target := -1
 	x := x0 + 2
-	for p, i in panels {
+	for i in shown {
+		p := panels[i]
 		w := widths[i]
 		im.SetCursorScreenPos({x, y + 2})
 		if im.InvisibleButton(cstr(fmt.tprintf("##tab:%s", p.name)), {w, h}) && i != current_panel {target = i}

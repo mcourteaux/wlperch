@@ -425,7 +425,9 @@ keyboard_listener := wl.Keyboard_Listener {
 			}
 			if plat.repeat_key == key {plat.repeat_key = 0}
 		}
-		request_redraw()
+		// ImGui trickles queued input over frames (about one key per frame):
+		// keep drawing until a burst (e.g. fast typing) has been consumed.
+		plat.redraw = min(max(plat.redraw, 3) + 2, 240)
 	},
 	modifiers = proc "c" (data: rawptr, self: ^wl.Keyboard, serial, depressed, latched, locked, group: u32) {
 		context = g_ctx

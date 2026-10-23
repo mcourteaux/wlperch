@@ -102,6 +102,8 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Sensor history graphs: readings persisted to sensors.bin (binary, last 7 days only), 24 h graphs on hover (tooltips grow the popup surface)
 - [x] Native Tuya reader (no Python/tinytuya): discovery listener + probe, 3.3/3.4/3.5 status queries, state in sensors-state.json (seeded from tuya-sensors' state.json); devices from devices.json and/or [sensor.*]; `wlperch sensors scan|read`; sensors opt-in (panel hidden when none)
 - [ ] Tuya 3.3/3.4 against real devices: only 3.5 verified live; 3.3/3.4 covered by tinytuya test vectors
+- [x] Calculator module + `calc` popup (`tab = false`, bound to $mod+equal / XF86Calculator): live result, exact 128-bit integers, functions (floor/ceil/round, trig with RAD/DEG, logs, gcd/lcm, n!…), bitwise ops; decimal/hex/oct/bin, f64/f32 bits and hex float tiles (click to copy); ans, history (Up/Down), inline syntax help; `wlperch calc <expr>`
+- [ ] Calculator: history is per daemon run (not persisted)
 
 ## Setup window (self-install)
 - [x] `wlperch setup` (and auto-open when run from a download): xdg_toplevel window with the same renderer

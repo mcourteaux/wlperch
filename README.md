@@ -24,6 +24,7 @@ pressing <kbd>Esc</kbd>, closes it.
 | **Network** | Public IP and per-interface addresses. Click any of them to copy it (`wl-copy`). |
 | **Bluetooth** | Connected and paired devices with battery level (BlueZ `Battery1`, falling back to UPower). Click a device to connect or disconnect it. |
 | **Notifications** | wlperch is the desktop notification server (see [Notifications](#notifications)): popups in the top-right corner, and this panel keeps the history of the last 7 days, grouped by day, with unread dots, action buttons for notifications the app still listens to, remove / clear all, and do not disturb. |
+| **Calculator** | Type an expression and the result updates as you type: `sqrt(2) * 0x10`, `floor(7/2)`, `sin(pi/6)`, `5!`, `0xff & ~0b1010`, `2pi`. Shows it as decimal, hex, octal and binary (integers; negatives as 64-bit two's complement) and as IEEE-754: f64 and f32 bit patterns and a C hex float literal (`0x1.8p+1`). Click any of them to copy it. Integers stay exact up to 128 bits. Enter keeps the result as `ans` (an expression starting with an operator continues from it), Up/Down recall the history, RAD/DEG switches the angle unit, and **?** lists the syntax. It has its own popup for a key binding (`wlperch toggle calc`, which takes the keyboard right away), and `wlperch calc <expression>` prints every format in a terminal. |
 | **Storage** | Each drive with its mounted volumes: free space and a fill bar (orange from 85 %, red from 95 %). Click a volume to open it in the file manager. External drives (USB / hotplug) also list unmounted volumes with a **Mount** button, and an **eject** button unmounts everything and powers the drive off (udisks, no root needed). Boot, EFI and swap partitions are hidden. While the popup is open, drives you plug in show up within a few seconds. |
 
 ### How the HDMI audio → monitor mapping works
@@ -57,13 +58,14 @@ switches in place. The first panel in the config is the default.
 
 | Panel (built-in) | Modules |
 |---|---|
-| `main` | header · quick · media · audio \| weather · clocks · displays · bluetooth |
+| `main` | header · quick · media · audio · calculator \| weather · clocks · displays · bluetooth |
 | `system` | cpu · memory · storage \| gpu · thermals · network \| processes |
 | `sensors` | sensors (only when sensors are configured) |
 | `notifications` | notifications |
 | `time` | time |
+| `calc` | calculator (no tab: `tab = false`; open it with a key binding) |
 
-Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time notifications media`.
+Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time notifications media calculator`.
 
 The system panel's graphs keep the last hour. Scroll over any of them to zoom
 (they zoom together); zooming out from the live view stays live. Dragging or
@@ -337,6 +339,8 @@ wlperch track pin       # for a minute, go/move target this project from anywher
 wlperch track lock on   # group-lock monitors into/out of project workspaces
 wlperch track keep on   # placeholder windows keep empty project workspaces
 wlperch media play-pause # also play, pause, next, previous [player]
+wlperch toggle calc     # the calculator popup (bind it to a key)
+wlperch calc '0x1f * 3' # print a result as decimal, hex, octal, binary, f64/f32 bits, hex float
 wlperch notify dnd [on|off]  # do not disturb (no argument: toggle)
 wlperch notify clear    # empty the notification history
 wlperch notify dismiss  # close the popups on screen
@@ -353,7 +357,8 @@ CPU/GPU at 1 Hz, so the graphs are already full when you open the popup.
 
 Everything sway needs is in **one file**, [`contrib/sway/wlperch.conf`](contrib/sway/wlperch.conf):
 - `exec wlperch daemon`;
-- the panel toggle (`$mod+o`);
+- the panel toggle (`$mod+o`) and the calculator (`$mod+equal`, and the
+  keyboard's calculator key);
 - the project-workspace bindings (`$mod+p` / `$mod+Shift+p`);
 - the placeholder window style.
 
@@ -442,7 +447,7 @@ enabled = true                # serve desktop notifications (takes over from dun
 # Panels: the first is the default. columns: modules per column, separated by |
 [panel.main]
 header = true                 # big clock and date
-columns = quick media audio | weather clocks displays bluetooth
+columns = quick media audio calculator | weather clocks displays bluetooth
 
 [panel.system]
 title = System                # compact title row when there's no header
@@ -458,6 +463,12 @@ columns = sensors
 title = Notifications
 width = 560
 columns = notifications
+
+[panel.calc]                  # wlperch toggle calc
+title = Calculator
+width = 560
+tab = false                   # no tab in the tab strip
+columns = calculator
 
 [panel.time]
 title = Time
@@ -508,6 +519,7 @@ src/notifications.odin   notification server (D-Bus via sd-bus), history, do not
 src/notify_popup.odin    software-rendered notification popups (layer surfaces + shm)
 src/notify_icons.odin    icon lookup and decoding (theme, PNG/JPEG, SVG via librsvg)
 src/media.odin           MPRIS players (sd-bus): scan, commands, `status media`
+src/calc.odin            calculator: expression parser/evaluator, number formats, `wlperch calc`
 src/dbus.odin            minimal sd-bus bindings
 src/softtext.odin        stb_truetype text into pixel buffers (placeholders, popups)
 ```

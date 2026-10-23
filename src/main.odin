@@ -40,6 +40,8 @@ commands:
   notify dnd [on|off]  do not disturb (popups held; they wait in the Notifications panel)
   notify clear     empty the notification history
   notify dismiss   close the notification popups on screen
+  calc <expression>  evaluate and print it as decimal, hex, octal, binary and
+                   IEEE-754 (hex float, f64/f32 bits); "toggle calc" opens the popup
   sensors scan [seconds]  list the Tuya devices announcing themselves on the LAN
   sensors read <name|id>  query one configured Tuya device once (read-only)
   status media [prev|next]  waybar JSON: the playing track (click: play/pause),
@@ -242,6 +244,8 @@ main :: proc() {
 	case "toggle", "show", "hide", "quit", "daemon", "restart", "track", "audio", "notify":
 	case "media":
 		os.exit(media_cli(os.args[2:]))
+	case "calc":
+		os.exit(calc_cli(os.args[2:]))
 	case "sensors":
 		config_load()
 		os.exit(sensors_cli(os.args[2:]))

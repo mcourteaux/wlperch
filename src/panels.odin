@@ -5,6 +5,7 @@
 //   title   = System                 ; compact title row (when there's no header)
 //   header  = false                  ; big clock, date, setup + restart
 //   columns = cpu gpu memory | processes
+//   tab     = false                  ; no tab in the tab strip (open it with a key binding)
 //
 // `wlperch toggle system` opens it; the first panel in the file is the default.
 package main
@@ -32,6 +33,7 @@ MODULES := [?]Module {
 	{"storage", draw_storage},
 	{"notifications", draw_notifications},
 	{"media", draw_media},
+	{"calculator", draw_calculator},
 	{"cpu", draw_cpu_card},
 	{"gpu", draw_gpu_card},
 	{"memory", draw_memory_card},
@@ -53,6 +55,7 @@ Panel :: struct {
 	title:       string,
 	width:       i32,
 	header:      bool,
+	tab:         bool, // listed in the tab strip
 	columns:     [dynamic][dynamic]string,
 	last_height: i32,
 	last_panel_h: f32, // panel height (without shadow / tooltip room)
@@ -79,6 +82,7 @@ panel_icon :: proc(p: Panel) -> string {
 	case "weather":                                                  return ICON_W_PARTLY
 	case "audio":                                                    return ICON_SPEAKER
 	case "notifications":                                            return ICON_BELL
+	case "calculator":                                               return ICON_CALC
 	}
 	return ICON_TUNE
 }
@@ -105,6 +109,7 @@ panels_load :: proc(src: string, m: ini.Map) {
 			title  = strings.clone(unquote(strings.trim_space(kv["title"]))),
 			width  = i32(strconv.parse_int(strings.trim_space(kv["width"])) or_else int(config.width)),
 			header = strings.trim_space(kv["header"]) == "true",
+			tab    = strings.trim_space(kv["tab"]) != "false",
 		}
 		for col in strings.split(unquote(strings.trim_space(kv["columns"])), "|", context.temp_allocator) {
 			c: [dynamic]string
