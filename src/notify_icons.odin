@@ -20,13 +20,15 @@ Notif_Icon :: struct {
 	px:      []u32, // premultiplied ARGB8888
 	rounded: bool,  // a picture (avatar, photo): drawn with rounded corners
 	tex:     u32,   // GL texture in the popup (0 = not uploaded)
+	symbolic: bool, // a theme glyph tinted with the text colour (retinted per theme)
+	stale:   bool,  // pixels changed since tex was uploaded
 }
 
 icon_cache: map[u64]^Notif_Icon
 
 // Intern pixels: returns the shared icon with the same content.
 @(private = "file")
-icon_intern :: proc(px: []u32, rounded: bool) -> ^Notif_Icon {
+icon_intern :: proc(px: []u32, rounded: bool, symbolic := false) -> ^Notif_Icon {
 	key := hash.fnv64a(([^]u8)(raw_data(px))[:len(px) * 4])
 	if rounded {key ~= 0x9e3779b97f4a7c15}
 	if ic, ok := icon_cache[key]; ok {
@@ -34,9 +36,18 @@ icon_intern :: proc(px: []u32, rounded: bool) -> ^Notif_Icon {
 		return ic
 	}
 	ic := new(Notif_Icon)
-	ic^ = {key = key, size = ICON_PX, px = px, rounded = rounded}
+	ic^ = {key = key, size = ICON_PX, px = px, rounded = rounded, symbolic = symbolic}
 	icon_cache[key] = ic
 	return ic
+}
+
+// The theme changed: symbolic glyphs take the new text colour.
+icons_retint :: proc() {
+	for _, ic in icon_cache {
+		if !ic.symbolic {continue}
+		tint(ic.px, C_TEXT)
+		ic.stale = true
+	}
 }
 
 icon_from_pixels :: proc(key: u64, px: []u32, rounded: bool) -> ^Notif_Icon {
@@ -281,23 +292,26 @@ desktop_icon :: proc(entry: string) -> string {
 // Resolve an icon from what the app sent: a path, file:// URI or theme name,
 // falling back to the desktop entry's icon and the app name.
 icon_resolve :: proc(candidates: ..string) -> ^Notif_Icon {
-	try_one :: proc(s: string) -> []u32 {
+	try_one :: proc(s: string) -> (px: []u32, symbolic: bool) {
 		s := strings.trim_prefix(s, "file://")
-		if s == "" {return nil}
-		if strings.has_prefix(s, "/") {return load_file(s)}
+		if s == "" {return}
+		if strings.has_prefix(s, "/") {return load_file(s), false}
 		if !theme_indexed {build_theme_index()}
 		for name in ([]string{s, strings.to_lower(s, context.temp_allocator), strings.concatenate({s, "-symbolic"}, context.temp_allocator)}) {
 			path, ok := theme_index[name]
 			if !ok {continue}
-			px := load_file(path)
-			// Symbolic icons are dark glyphs meant to be recolored: light on our cards.
-			if px != nil && strings.contains(path, "symbolic") {tint(px, C_TEXT)}
-			return px
+			px = load_file(path)
+			// Symbolic icons are dark glyphs meant to be recolored: in the text colour.
+			if px != nil && strings.contains(path, "symbolic") {
+				tint(px, C_TEXT)
+				symbolic = true
+			}
+			return
 		}
-		return nil
+		return
 	}
 	for cand in candidates {
-		if px := try_one(cand); px != nil {return icon_intern(px, strings.has_prefix(cand, "/") || strings.has_prefix(cand, "file://"))}
+		if px, sym := try_one(cand); px != nil {return icon_intern(px, strings.has_prefix(cand, "/") || strings.has_prefix(cand, "file://"), sym)}
 	}
 	return nil
 }

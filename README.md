@@ -410,8 +410,10 @@ keys over:
 settings, switches wlperch and the rest of the desktop. Without the daemon
 running, the CLI switches the desktop itself and prints what it changed.
 
-- **wlperch:** the panels, notification popups, setup window and launcher
-  switch at once. The lock screen follows the mode it is started in (a light
+- **wlperch:** the panels, notification popups, setup window, launcher and
+  bar (with its tooltips and tray menus) switch at once, also when only the
+  CLI ran: the bar watches the saved mode. In light mode the accent colours
+  are darker so coloured text stays readable on white. The lock screen follows the mode it is started in (a light
   background from `[lock] background_light`, unless a picture is set).
 - **GTK, libadwaita and portal apps:** the gsettings `color-scheme`
   (`prefer-dark` / `prefer-light`), which Firefox, Chromium, Electron and
@@ -451,6 +453,71 @@ over:
   through the link. **Switch back** restores them.
 - **Without a theme key:** setup adds `config.d/wlperch-theme.conf` with
   `$mod+Shift+t` for `wlperch theme toggle`.
+
+### Bar
+
+`wlperch bar` is a status bar in place of waybar, styled like the waybar
+setup below: a dark block with the workspaces and window title on the left,
+one with the modules on the right. Sway runs it from a bar block:
+
+```
+bar {
+    swaybar_command wlperch bar
+}
+```
+
+- **Workspaces:** numbered ones first, then each project's (see Time
+  tracking) in one pill of the project's colour, then other named ones. The
+  focused workspace is solid, one visible on this monitor underlined, an
+  urgent one red. A project with several workspaces on one monitor shows its
+  name with a number chip per workspace. Click goes there, scrolling steps
+  through this monitor's workspaces.
+- **Left side:** the binding mode (`resize`), the scratchpad (count; the
+  windows in the tooltip; click shows it) and the focused window's title.
+- **Right side:** idle inhibitor (click: keep the screen awake), power profile
+  (click / right click: next / previous), backlight (scroll), battery (click:
+  time left), media (⏮ · track · ⏭; click: play/pause, scroll: skip, right
+  click: main panel), project timer, sensors, memory, clock (tooltip: this
+  month), tray, notifications (right click: do not disturb) and the wlperch
+  button. Modules without data (no battery, nothing playing) are hidden.
+- **Panels:** clicking the clock, memory, timer, sensors, bell or wlperch
+  button opens that panel from the daemon under the clicked module
+  (`wlperch toggle <panel> --at OUTPUT:X:WIDTH`); without a daemon it starts
+  one.
+- **Tray:** StatusNotifierItem. The bar serves `org.kde.StatusNotifierWatcher`
+  (when another program such as waybar has it, the bar shows that one's
+  items and takes over once it goes). Left click activates (or opens the
+  menu of an item that is one), middle click is the secondary action, scroll
+  is passed on, right click opens the item's menu (dbusmenu: submenus,
+  check marks, radio items, separators). Passive items are hidden; items
+  asking for attention get a red background.
+- **Config:** `[bar]`: `position` (top/bottom), `height`, `outputs`, the
+  `left`/`center`/`right` module lists, `clock_format` and `tray_icon_size`.
+- **How it runs:** its own process (`wlperch-bar` in `ps`), not part of the
+  daemon. The daemon re-executes itself to give GPU memory back, which would
+  make a bar inside it disappear and come back, and a crash on either side
+  leaves the other running. It draws in software into shared memory (no
+  GPU), and only when something it shows changes. Sway state comes from its
+  own IPC subscription; the notification count from the daemon; MPRIS,
+  battery, backlight (logind), power profile, memory, sensors and the timer
+  from a worker thread.
+- **Dark / light:** follows `wlperch theme` (it watches the saved mode in
+  `~/.local/share/wlperch/theme`, so this works with or without the daemon).
+  Project colours are darkened as text in light mode; text on a solid project
+  pill is dark or white, whichever reads.
+
+**Setup → Bar → Use wlperch bar** switches sway over:
+- **What changes:** in your sway config and `config.d/*`,
+  `swaybar_command waybar` and `exec[_always] waybar …` become `wlperch bar`; a
+  `bar { }` block without a program (swaybar) gets `swaybar_command wlperch
+  bar`; `killall waybar && ` before `swaymsg reload` goes (sway restarts its
+  bar itself, and killall would now fail and stop the reload).
+- **Backups:** each file is copied to `~/.local/share/wlperch/bar-backup/`
+  first. Symlinked dotfiles are edited through the link.
+- **Without a bar:** setup adds `config.d/wlperch-bar.conf`.
+- **Applying it:** setup reloads sway, stops this session's waybar and starts
+  the bar if sway didn't. **Switch back** restores the copies and brings
+  waybar back.
 
 ## Installing
 
@@ -752,7 +819,13 @@ src/setup_lock.odin      setup component: switch swayidle / the lock key from sw
 src/launcher.odin        launcher data: desktop entries, $PATH, matching, usage counts, starting apps
 src/ui_launcher.odin     the launcher module (search field, rows, calculator row, keys)
 src/setup_menu.odin      setup component: switch rofi/wofi/fuzzel/… key bindings to the launcher and back
-src/config_switch.odin   rewriting sway files with backups and restoring them (lock screen, launcher)
+src/config_switch.odin   rewriting sway files with backups and restoring them (lock screen, launcher, bar)
+src/bar.odin             `wlperch bar`: layer surfaces per output, input, tooltips and tray menus (own process, shm)
+src/bar_draw.odin        the bar's palette and software drawing (rounded rects, text, icons)
+src/bar_modules.odin     the bar's modules: data worker, items, clicks and scrolling, clock and calendar
+src/bar_sway.odin        the bar's sway subscription: workspaces (and project groups), mode, scratchpad, titles
+src/bar_tray.odin        StatusNotifierWatcher/Host and dbusmenu
+src/setup_bar.odin       setup component: switch sway's bar from waybar/swaybar to wlperch bar and back
 ```
 
 ## Licenses

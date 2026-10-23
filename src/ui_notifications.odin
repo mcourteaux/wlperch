@@ -14,7 +14,7 @@ import gl "vendor:OpenGL"
 // GL texture for an icon (straight alpha, as imgui blends), made on first use.
 // Also used by the media card.
 icon_texture :: proc(ic: ^Notif_Icon) -> im.TextureID {
-	if ic.tex != 0 {return im.TextureID(ic.tex)}
+	if ic.tex != 0 && !ic.stale {return im.TextureID(ic.tex)}
 	rgba := make([]u8, ICON_PX * ICON_PX * 4, context.temp_allocator)
 	for p, i in ic.px {
 		a := p >> 24
@@ -24,7 +24,8 @@ icon_texture :: proc(ic: ^Notif_Icon) -> im.TextureID {
 		rgba[i * 4 + 2] = un(p & 0xff, a)
 		rgba[i * 4 + 3] = u8(a)
 	}
-	gl.GenTextures(1, &ic.tex)
+	if ic.tex == 0 {gl.GenTextures(1, &ic.tex)}
+	ic.stale = false
 	gl.BindTexture(gl.TEXTURE_2D, ic.tex)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)

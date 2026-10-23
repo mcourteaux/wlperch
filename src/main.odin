@@ -49,6 +49,8 @@ commands:
                    color-scheme, waybar, kitty, nvim, wallpaper… see [theme])
   calc <expression>  evaluate and print it as decimal, hex, octal, binary and
                    IEEE-754 (hex float, f64/f32 bits); "toggle calc" opens the popup
+  bar              the status bar (instead of waybar); run it from sway:
+                   bar { swaybar_command wlperch bar }
   lock [-f]        lock the screen (clock, notification count, media, battery);
                    -f forks once locked, for swayidle before-sleep
   sensors scan [seconds]  list the Tuya devices announcing themselves on the LAN
@@ -90,6 +92,24 @@ plat_visible_flag: bool
 // Opened by "toggle --center": no anchor, so the compositor centres it.
 popup_centered: bool
 
+// Opened by "toggle --at OUTPUT:X:WIDTH" (the bar): under that spot of the
+// output, kept inside its edges.
+Popup_At :: struct {
+	set:    bool,
+	output: string,
+	x, w:   i32, // logical x of the clicked item's centre, the output's width
+}
+popup_at: Popup_At
+
+parse_popup_at :: proc(s: string) -> (at: Popup_At, ok: bool) {
+	f := strings.split(s, ":", context.temp_allocator)
+	if len(f) != 3 {return}
+	x, xok := strconv.parse_int(f[1])
+	w, wok := strconv.parse_int(f[2])
+	if !xok || !wok || w <= 0 {return}
+	return {true, f[0], i32(x), i32(w)}, true
+}
+
 show_popup :: proc() {
 	if platform_visible() {return}
 	w, h := popup_size()
@@ -97,6 +117,14 @@ show_popup :: proc() {
 	if popup_centered {
 		placement.anchor = 0
 		placement.margin = {}
+	} else if popup_at.set {
+		vertical := config.anchor & (wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM)
+		if vertical == 0 {vertical = wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP}
+		placement.anchor = vertical | wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT
+		placement.output = popup_at.output
+		edge := config.margin[1] - (SHADOW - SHADOW_BASE)
+		right := popup_at.w - popup_at.x - w / 2
+		placement.margin[1] = clamp(right, edge, max(popup_at.w - w - edge, edge))
 	}
 	if platform_show(placement, w, h) {
 		plat_visible_flag = true
@@ -117,10 +145,20 @@ hide_popup :: proc() {
 handle_command :: proc(line: string) -> string {
 	f := strings.fields(line, context.temp_allocator)
 	center := false
+	at: Popup_At
 	if len(f) > 0 && (f[0] == "toggle" || f[0] == "show") {
 		kept := make([dynamic]string, 0, len(f), context.temp_allocator)
-		for w in f {
-			if w == "--center" || w == "--centre" {center = true} else {append(&kept, w)}
+		for i := 0; i < len(f); i += 1 {
+			w := f[i]
+			switch {
+			case w == "--center" || w == "--centre":
+				center = true
+			case w == "--at" && i + 1 < len(f):
+				i += 1
+				at, _ = parse_popup_at(f[i])
+			case:
+				append(&kept, w)
+			}
 		}
 		f = kept[:]
 	}
@@ -133,11 +171,15 @@ handle_command :: proc(line: string) -> string {
 	}
 	switch cmd {
 	case "toggle":
+		// From the bar, another module's panel opens under that module.
+		moved := at.set && (!popup_at.set || at.output != popup_at.output || abs(at.x - popup_at.x) > 2)
+		if platform_visible() && moved && target >= 0 && target != current_panel {hide_popup()}
 		if platform_visible() {
 			if target < 0 || target == current_panel {hide_popup()} else {switch_panel(target)}
 		} else {
 			current_panel = target >= 0 ? target : 0
 			popup_centered = center
+			set_popup_at(at)
 			show_popup()
 		}
 	case "show":
@@ -146,6 +188,7 @@ handle_command :: proc(line: string) -> string {
 		} else {
 			current_panel = target >= 0 ? target : 0
 			popup_centered = center
+			set_popup_at(at)
 			show_popup()
 		}
 	case "hide":
@@ -247,6 +290,12 @@ handle_command :: proc(line: string) -> string {
 	return "ok\n"
 }
 
+set_popup_at :: proc(at: Popup_At) {
+	delete(popup_at.output)
+	popup_at = at
+	popup_at.output = strings.clone(at.output)
+}
+
 // Swap the content of the open popup for another panel.
 switch_panel :: proc(index: int) {
 	current_panel = index
@@ -277,6 +326,10 @@ main :: proc() {
 		os.exit(media_cli(os.args[2:]))
 	case "calc":
 		os.exit(calc_cli(os.args[2:]))
+	case "bar":
+		// Its own process too: see bar.odin.
+		config_load()
+		os.exit(bar_main(os.args[2:]))
 	case "lock":
 		// Its own process, never the daemon's: see lock.odin.
 		config_load()

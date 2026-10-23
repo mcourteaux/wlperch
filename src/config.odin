@@ -223,6 +223,25 @@ kvantum_theme =
 vscode_theme =
 command =
 
+[bar]
+# wlperch's own bar ("wlperch bar"), a waybar replacement: run it from sway
+# with  bar { swaybar_command wlperch bar }  ("wlperch setup" can switch).
+# top | bottom
+position = top
+height = 34
+# Connector names (e.g. DP-1 HDMI-A-1) to show the bar on; empty = all.
+outputs =
+# Modules per side, in order. Available: workspaces mode scratchpad window
+# idle power-profile backlight battery media timer sensors memory clock tray
+# notifications wlperch
+left = workspaces mode scratchpad window
+center =
+right = idle power-profile backlight battery media timer sensors memory clock tray notifications wlperch
+# strftime-like: %a %A %b %B %d %e %m %Y %H %I %M %S %p; <b>…</b> is bold.
+clock_format = %a %d %b  <b>%H:%M</b>
+# Tray icon size (logical pixels).
+tray_icon_size = 20
+
 [timetracker]
 # Minutes without input after which counting pauses (the idle time is not counted).
 idle_minutes = 5
@@ -487,6 +506,7 @@ config_load :: proc() {
 		t.vscode_theme = strings.clone(get(m, defaults, sec, "vscode_theme"))
 		t.command = strings.clone(get(m, defaults, sec, "command"))
 	}
+	bar_config_load(m, defaults)
 
 	c.sensors_dir = expand_home(get(m, defaults, "sensors", "dir"))
 	c.sensors_watch = strings.clone(get(m, defaults, "sensors", "watch"))

@@ -64,17 +64,29 @@ theme_set_palette :: proc(light: bool) {
 	C_BG, C_CARD, C_CARD_HI, C_BORDER = p.bg, p.card, p.card_hi, p.border
 	C_TEXT, C_MUTED, C_FAINT = p.text, p.muted, p.faint
 	C_WELL, C_TRACK, C_TRACK_HI, C_OVERLAY, C_POPUP = p.well, p.track, p.track_hi, p.overlay, p.popup
+	a := light ? ACCENTS_LIGHT : ACCENTS_DARK
+	C_BLUE, C_CYAN, C_GREEN, C_ORANGE = a.blue, a.cyan, a.green, a.orange
+	C_YELLOW, C_RED, C_PURPLE, C_TEAL = a.yellow, a.red, a.purple, a.teal
 	if im.GetCurrentContext() != nil {theme_style_colors()}
 }
 
-C_BLUE :: 0x7aa2f7
-C_CYAN :: 0x7dcfff
-C_GREEN :: 0x9ece6a
-C_ORANGE :: 0xff9e64
-C_YELLOW :: 0xe0af68
-C_RED :: 0xf7768e
-C_PURPLE :: 0xbb9af7
-C_TEAL :: 0x73daca
+// Accents: the dark set is bright for dark cards; the light set is darker
+// (same hues) so text and thin lines in them stay readable on white.
+C_BLUE: u32 = 0x7aa2f7
+C_CYAN: u32 = 0x7dcfff
+C_GREEN: u32 = 0x9ece6a
+C_ORANGE: u32 = 0xff9e64
+C_YELLOW: u32 = 0xe0af68
+C_RED: u32 = 0xf7768e
+C_PURPLE: u32 = 0xbb9af7
+C_TEAL: u32 = 0x73daca
+
+Accents :: struct {
+	blue, cyan, green, orange, yellow, red, purple, teal: u32,
+}
+
+ACCENTS_DARK :: Accents{0x7aa2f7, 0x7dcfff, 0x9ece6a, 0xff9e64, 0xe0af68, 0xf7768e, 0xbb9af7, 0x73daca}
+ACCENTS_LIGHT :: Accents{0x2e6bd9, 0x0b7fa8, 0x4f7a1f, 0xc2570a, 0x9a6a14, 0xd6264f, 0x7c4fd6, 0x118a74}
 
 @(private = "file")
 add_font :: proc(atlas: ^im.FontAtlas, data: []u8, size: f32, merge := false, offset_y: f32 = 0) -> ^im.Font {

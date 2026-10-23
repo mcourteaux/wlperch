@@ -56,6 +56,22 @@ foreign sdbus {
 	sd_bus_message_unref :: proc(m: ^Sd_Bus_Message) -> ^Sd_Bus_Message ---
 	sd_bus_reply_method_return :: proc(call: ^Sd_Bus_Message, types: cstring, #c_vararg args: ..any) -> c.int ---
 	sd_bus_reply_method_errorf :: proc(call: ^Sd_Bus_Message, name, format: cstring, #c_vararg args: ..any) -> c.int ---
+
+	// The bar: tray (StatusNotifierWatcher/Host, dbusmenu), power profiles, logind.
+	sd_bus_open_system :: proc(ret: ^^Sd_Bus) -> c.int ---
+	sd_bus_get_unique_name :: proc(bus: ^Sd_Bus, unique: ^cstring) -> c.int ---
+	sd_bus_call_method_async :: proc(bus: ^Sd_Bus, slot: ^^Sd_Bus_Slot, dest, path, iface, member: cstring, callback: Sd_Bus_Handler, userdata: rawptr, types: cstring, #c_vararg args: ..any) -> c.int ---
+	sd_bus_get_property_string :: proc(bus: ^Sd_Bus, dest, path, iface, member: cstring, ret_error: ^Sd_Bus_Error, ret: ^cstring) -> c.int ---
+	sd_bus_set_property :: proc(bus: ^Sd_Bus, dest, path, iface, member: cstring, ret_error: ^Sd_Bus_Error, type: cstring, #c_vararg args: ..any) -> c.int ---
+	sd_bus_slot_unref :: proc(slot: ^Sd_Bus_Slot) -> ^Sd_Bus_Slot ---
+	sd_bus_message_get_member :: proc(m: ^Sd_Bus_Message) -> cstring ---
+	sd_bus_message_get_path :: proc(m: ^Sd_Bus_Message) -> cstring ---
+	sd_bus_message_get_interface :: proc(m: ^Sd_Bus_Message) -> cstring ---
+	sd_bus_message_is_method_error :: proc(m: ^Sd_Bus_Message, name: cstring) -> c.int ---
+	sd_bus_message_append :: proc(m: ^Sd_Bus_Message, types: cstring, #c_vararg args: ..any) -> c.int ---
+	sd_bus_message_open_container :: proc(m: ^Sd_Bus_Message, type: u8, contents: cstring) -> c.int ---
+	sd_bus_message_close_container :: proc(m: ^Sd_Bus_Message) -> c.int ---
+	sd_bus_message_at_end :: proc(m: ^Sd_Bus_Message, complete: c.int) -> c.int ---
 }
 
 foreign import libc_ "system:c"

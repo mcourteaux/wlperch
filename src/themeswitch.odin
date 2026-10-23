@@ -75,6 +75,7 @@ theme_init_mode :: proc() {
 // In the daemon: switch wlperch now, the desktop on a worker thread.
 theme_switch :: proc(m: Theme_Mode) {
 	theme_set_palette(m == .Light)
+	icons_retint()
 	theme_mode_save(m)
 	notify_popups_restyle()
 	request_redraw()
