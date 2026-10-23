@@ -16,6 +16,16 @@ import "core:time"
 
 import "wl"
 
+TILE_RADIUS :: 28
+TILE_ALPHA :: 0.55
+
+@(private = "file")
+Tile_Part :: struct {
+	surf:     ^wl.Surface,
+	sub:      ^wl.Subsurface,
+	viewport: ^wl.Wp_Viewport,
+}
+
 @(private = "file")
 Placeholder :: struct {
 	ws:         string,
@@ -24,6 +34,7 @@ Placeholder :: struct {
 	xdg:        ^wl.Xdg_Surface,
 	toplevel:   ^wl.Xdg_Toplevel,
 	viewport:   ^wl.Wp_Viewport,
+	tile:       [7]Tile_Part,   // rounded translucent tile: 4 corners + 3 strips
 	label_surf: ^wl.Surface,    // centered label, a subsurface
 	label_sub:  ^wl.Subsurface,
 	label_buf:  ^wl.Buffer,
@@ -42,7 +53,9 @@ Placeholders :: struct {
 	ruled:     map[string]bool, // for_window rules installed this session
 	styled:    bool,            // global "no border" rule installed
 	dismissed: map[string]bool, // workspaces whose placeholder the user closed
-	buffer:    ^wl.Buffer,
+	buffer:    ^wl.Buffer,    // tile color, single pixel
+	clear:     ^wl.Buffer,    // fully transparent, single pixel
+	corners:   [4]^wl.Buffer, // TL, TR, BL, BR quarter circles
 }
 placeholders: Placeholders
 
@@ -97,11 +110,12 @@ xdg_surface_listener := wl.Xdg_Surface_Listener {
 		wl.xdg_surface_ack_configure(self, serial)
 		if p.w <= 0 || p.h <= 0 {p.w, p.h = 640, 400}
 		wl.wp_viewport_set_destination(p.viewport, p.w, p.h)
+		layout_tile(p)
 		if p.label_sub != nil {
 			wl.subsurface_set_position(p.label_sub, (p.w - p.lw) / 2, (p.h - p.lh) / 2)
 		}
 		if !p.configured {
-			wl.surface_attach(p.surface, placeholders.buffer, 0, 0)
+			wl.surface_attach(p.surface, placeholders.clear, 0, 0)
 			wl.surface_damage_buffer(p.surface, 0, 0, 1, 1)
 			if p.label_surf != nil {
 				wl.surface_attach(p.label_surf, p.label_buf, 0, 0)
@@ -119,9 +133,11 @@ xdg_surface_listener := wl.Xdg_Surface_Listener {
 spawn :: proc(ws: string) {
 	if plat.xdg_wm_base == nil || plat.single_pixel == nil || plat.viewporter == nil {return}
 	if placeholders.buffer == nil {
-		// #111318 (the panel background) at 55 %, premultiplied: the wallpaper shows through.
-		c :: proc(v: f64) -> u32 {return u32(v * 0.55 / 255 * f64(max(u32)))}
+		// #111318 (the panel background), translucent and premultiplied.
+		c :: proc(v: f64) -> u32 {return u32(v * TILE_ALPHA / 255 * f64(max(u32)))}
 		placeholders.buffer = wl.wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(plat.single_pixel, c(0x11), c(0x13), c(0x18), c(255))
+		placeholders.clear = wl.wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(plat.single_pixel, 0, 0, 0, 0)
+		make_corner_buffers()
 	}
 	if !placeholders.styled {
 		sway_command(fmt.tprintf(`for_window [app_id="%s"] border none`, PLACEHOLDER_APP_ID))
@@ -143,6 +159,7 @@ spawn :: proc(ws: string) {
 	wl.xdg_toplevel_add_listener(p.toplevel, &toplevel_listener, p)
 	wl.xdg_toplevel_set_app_id(p.toplevel, PLACEHOLDER_APP_ID)
 	wl.xdg_toplevel_set_title(p.toplevel, strings.clone_to_cstring(p.title, context.temp_allocator))
+	make_tile(p) // before the label so the label stacks on top
 	make_label(p)
 	wl.surface_commit(p.surface)
 	append(&placeholders.list, p)
@@ -152,6 +169,12 @@ spawn :: proc(ws: string) {
 @(private = "file")
 destroy :: proc(i: int) {
 	p := placeholders.list[i]
+	for &t in p.tile {
+		if t.sub == nil {continue}
+		if t.viewport != nil {wl.wp_viewport_destroy(t.viewport)}
+		wl.subsurface_destroy(t.sub)
+		wl.surface_destroy(t.surf)
+	}
 	if p.label_sub != nil {
 		wl.subsurface_destroy(p.label_sub)
 		wl.surface_destroy(p.label_surf)
@@ -287,4 +310,78 @@ make_label :: proc(p: ^Placeholder) {
 	region := wl.compositor_create_region(plat.compositor)
 	wl.surface_set_input_region(p.label_surf, region)
 	wl.region_destroy(region)
+}
+
+// ---- Rounded tile ---------------------------------------------------------
+// Sway (without SwayFX) can't round window corners, so the window itself is
+// transparent and the tile is drawn from 9-slice parts: four antialiased
+// quarter-circle corners (tiny shm buffers) and three single-pixel strips
+// stretched with wp_viewport.
+
+@(private = "file")
+make_corner_buffers :: proc() {
+	if plat.shm == nil {return}
+	R :: TILE_RADIUS
+	size := R * R * 4 * 4
+	fd, err := linux.memfd_create("wlwidgets-corners", {.CLOEXEC})
+	if err != .NONE {return}
+	defer linux.close(fd)
+	if linux.ftruncate(fd, i64(size)) != .NONE {return}
+	mem := posix.mmap(nil, uint(size), {.READ, .WRITE}, {.SHARED}, posix.FD(fd), 0)
+	if mem == posix.MAP_FAILED {return}
+	all := ([^]u32)(mem)[:R * R * 4]
+	for corner in 0 ..< 4 {
+		px := all[corner * R * R:][:R * R]
+		for y in 0 ..< R {
+			for x in 0 ..< R {
+				// Distance from the circle centre, which sits at the inner corner.
+				fx := f32(x) + 0.5
+				fy := f32(y) + 0.5
+				cx: f32 = (corner == 0 || corner == 2) ? R : 0
+				cy: f32 = (corner == 0 || corner == 1) ? R : 0
+				d := R - math.sqrt((fx - cx) * (fx - cx) + (fy - cy) * (fy - cy))
+				cov := clamp(d + 0.5, 0, 1) * TILE_ALPHA
+				px[y * R + x] = u32(cov * 255 + 0.5) << 24 | u32(0x11 * cov) << 16 | u32(0x13 * cov) << 8 | u32(0x18 * cov)
+			}
+		}
+	}
+	posix.munmap(mem, uint(size))
+	pool := wl.shm_create_pool(plat.shm, i32(fd), i32(size))
+	for i in 0 ..< 4 {
+		placeholders.corners[i] = wl.shm_pool_create_buffer(pool, i32(i * R * R * 4), R, R, R * 4, wl.SHM_FORMAT_ARGB8888)
+	}
+	wl.shm_pool_destroy(pool)
+}
+
+@(private = "file")
+make_tile :: proc(p: ^Placeholder) {
+	if plat.subcompositor == nil || placeholders.corners[0] == nil {return}
+	for i in 0 ..< 7 {
+		t := &p.tile[i]
+		t.surf = wl.compositor_create_surface(plat.compositor)
+		t.sub = wl.subcompositor_get_subsurface(plat.subcompositor, t.surf, p.surface)
+		if i < 4 {
+			wl.surface_attach(t.surf, placeholders.corners[i], 0, 0)
+			wl.surface_damage_buffer(t.surf, 0, 0, TILE_RADIUS, TILE_RADIUS)
+		} else {
+			t.viewport = wl.wp_viewporter_get_viewport(plat.viewporter, t.surf)
+			wl.surface_attach(t.surf, placeholders.buffer, 0, 0)
+			wl.surface_damage_buffer(t.surf, 0, 0, 1, 1)
+		}
+	}
+}
+
+@(private = "file")
+layout_tile :: proc "contextless" (p: ^Placeholder) {
+	if p.tile[0].sub == nil {return}
+	R :: i32(TILE_RADIUS)
+	w, h := max(p.w, 2 * R + 1), max(p.h, 2 * R + 1)
+	pos := [7][2]i32{{0, 0}, {w - R, 0}, {0, h - R}, {w - R, h - R}, {R, 0}, {0, R}, {R, h - R}}
+	dst := [7][2]i32{{}, {}, {}, {}, {w - 2 * R, R}, {w, h - 2 * R}, {w - 2 * R, R}}
+	for i in 0 ..< 7 {
+		t := &p.tile[i]
+		wl.subsurface_set_position(t.sub, pos[i][0], pos[i][1])
+		if t.viewport != nil {wl.wp_viewport_set_destination(t.viewport, dst[i][0], dst[i][1])}
+		wl.surface_commit(t.surf)
+	}
 }
