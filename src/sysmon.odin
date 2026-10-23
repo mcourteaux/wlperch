@@ -54,6 +54,9 @@ Sysmon :: struct {
 }
 sysmon: Sysmon
 
+sysmon_lock :: proc() {sync.mutex_lock(&sysmon.mu)}
+sysmon_unlock :: proc() {sync.mutex_unlock(&sysmon.mu)}
+
 // ---- NVML ------------------------------------------------------------------
 
 @(private = "file")

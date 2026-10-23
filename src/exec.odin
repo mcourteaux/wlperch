@@ -5,6 +5,7 @@ package main
 import "core:c"
 import "core:log"
 import "core:strings"
+import "core:sync"
 import "core:sys/posix"
 import "core:time"
 
@@ -101,6 +102,22 @@ Stream :: struct {
 	buf: [dynamic]u8,
 }
 
+// Long-running children, so they can be stopped before we re-exec.
+@(private = "file")
+streams_mu: sync.Mutex
+@(private = "file")
+stream_pids: [dynamic]posix.pid_t
+
+stop_children :: proc() {
+	sync.guard(&streams_mu)
+	for pid in stream_pids {posix.kill(pid, .SIGTERM)}
+	for pid in stream_pids {
+		status: c.int
+		posix.waitpid(pid, &status, {})
+	}
+	clear(&stream_pids)
+}
+
 stream_start :: proc(argv: []string) -> (s: Stream, ok: bool) {
 	fds: [2]c.int
 	if pipe2(&fds, O_CLOEXEC) != 0 {return}
@@ -109,6 +126,10 @@ stream_start :: proc(argv: []string) -> (s: Stream, ok: bool) {
 	if !spawned {
 		posix.close(posix.FD(fds[0]))
 		return
+	}
+	{
+		sync.guard(&streams_mu)
+		append(&stream_pids, pid)
 	}
 	return Stream{pid = pid, fd = posix.FD(fds[0])}, true
 }
@@ -130,6 +151,15 @@ stream_read_line :: proc(s: ^Stream, allocator := context.temp_allocator) -> (li
 }
 
 stream_stop :: proc(s: ^Stream) {
+	{
+		sync.guard(&streams_mu)
+		for p, i in stream_pids {
+			if p == s.pid {
+				unordered_remove(&stream_pids, i)
+				break
+			}
+		}
+	}
 	if s.pid > 0 {
 		posix.kill(s.pid, .SIGTERM)
 		status: c.int

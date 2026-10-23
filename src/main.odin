@@ -3,6 +3,8 @@ package main
 import "core:fmt"
 import "core:log"
 import "core:os"
+import "core:strconv"
+import "core:strings"
 import "core:sys/posix"
 import "core:time"
 
@@ -58,6 +60,7 @@ hide_popup :: proc() {
 	if !platform_visible() && plat.surface == nil {return}
 	platform_hide()
 	plat_visible_flag = false
+	hidden_since = time.tick_now()
 	on_hide()
 }
 
@@ -93,14 +96,18 @@ main :: proc() {
 		os.exit(2)
 	}
 
-	if ipc_send(cmd) {return}
-	if cmd == "quit" || cmd == "hide" {return} // nothing running
+	if fd, ok := resume_from_args(); ok {
+		app.ipc_fd = fd
+	} else {
+		if ipc_send(cmd) {return}
+		if cmd == "quit" || cmd == "hide" {return} // nothing running
 
-	// We are the daemon.
-	app.ipc_fd = ipc_listen()
-	if app.ipc_fd < 0 {
-		log.error("cannot create control socket", ipc_socket_path())
-		os.exit(1)
+		// We are the daemon.
+		app.ipc_fd = ipc_listen()
+		if app.ipc_fd < 0 {
+			log.error("cannot create control socket", ipc_socket_path())
+			os.exit(1)
+		}
 	}
 	defer {
 		posix.close(app.ipc_fd)
@@ -115,8 +122,11 @@ main :: proc() {
 	posix.signal(.SIGCHLD, auto_cast posix.SIG_DFL)
 
 	config_load()
+	log.debugf("rss after config: %d kB", rss_kb())
 
+	t0 := time.tick_now()
 	if !platform_init() {os.exit(1)}
+	log.debugf("platform_init took %v, rss %d kB", time.tick_since(t0), rss_kb())
 
 	im.CHECKVERSION()
 	im.CreateContext()
@@ -126,7 +136,9 @@ main :: proc() {
 	io.BackendFlags += {.HasMouseCursors}
 	theme_init()
 
+	t0 = time.tick_now()
 	services_start()
+	log.debugf("services_start took %v, rss %d kB", time.tick_since(t0), rss_kb())
 
 	if cmd != "daemon" {show_popup()}
 
@@ -140,6 +152,20 @@ main :: proc() {
 }
 
 imgl_ready: bool
+
+// GPU state is released when the popup stays hidden this long.
+GL_IDLE_TEARDOWN :: 30 * time.Second
+hidden_since: time.Tick
+last_render_second: i64
+
+rss_kb :: proc() -> int {
+	data, err := os.read_entire_file("/proc/self/statm", context.temp_allocator)
+	if err != nil {return 0}
+	f := strings.fields(string(data), context.temp_allocator)
+	if len(f) < 2 {return 0}
+	pages, _ := strconv.parse_int(f[1])
+	return pages * 4
+}
 
 render_frame :: proc() {
 	if !imgl_ready {
@@ -188,6 +214,10 @@ loop_iteration :: proc() {
 		if r := platform_key_repeat(); r >= 0 {
 			timeout = min(timeout < 0 ? max(int) : timeout, int(time.duration_milliseconds(r)) + 1)
 		}
+	} else if plat.egl_context != nil {
+		// Wake up to release GPU resources once we've been hidden long enough.
+		left := GL_IDLE_TEARDOWN - time.tick_since(hidden_since)
+		timeout = max(int(time.duration_milliseconds(left)), 0) + 1
 	}
 
 	pfds := [3]posix.pollfd {
@@ -215,7 +245,7 @@ loop_iteration :: proc() {
 	if .IN in pfds[1].revents {
 		buf: [64]u8
 		for posix.read(app.wake_r, &buf[0], len(buf)) > 0 {}
-		request_redraw(2)
+		request_redraw(1)
 	}
 	if .IN in pfds[2].revents {
 		if cmd, client, ok := ipc_accept(app.ipc_fd); ok {
@@ -237,11 +267,25 @@ loop_iteration :: proc() {
 			hide_popup()
 			return
 		}
-		if n == 0 && plat.redraw == 0 {request_redraw(1)} // timer tick
+		// Once-per-second tick for the clocks, unless something else already
+		// redrew during this second (the CPU sampler usually does).
+		sec := time.to_unix_seconds(time.now())
+		if n == 0 && plat.redraw == 0 && sec != last_render_second {request_redraw(1)}
 		if plat.redraw > 0 && platform_can_render() {
 			plat.redraw -= 1
+			last_render_second = sec
 			render_frame()
 		}
+	} else if plat.egl_context != nil && time.tick_since(hidden_since) >= GL_IDLE_TEARDOWN {
+		// The GPU driver keeps its memory after eglTerminate; a fresh process image doesn't.
+		reexec_self()
+		// exec failed: at least release what we can and carry on.
+		gl_down(proc() {
+			if imgl_ready {
+				imgl.Shutdown()
+				imgl_ready = false
+			}
+		})
 	}
 	free_all(context.temp_allocator)
 }

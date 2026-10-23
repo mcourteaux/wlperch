@@ -65,7 +65,7 @@ odin build tools/wlscan -out:build/wlscan -o:speed
 
 # ---- App ------------------------------------------------------------------
 MODE=${1:-release}
-FLAGS=(-collection:third_party=third_party -extra-linker-flags:"$(pkg-config --libs freetype2)")
+FLAGS=(-collection:third_party=third_party -define:DEFAULT_TEMP_ALLOCATOR_BACKING_SIZE=262144 -extra-linker-flags:"$(pkg-config --libs freetype2)")
 case $MODE in
 	debug|run) FLAGS+=(-debug -o:none) ;;
 	*)         FLAGS+=(-o:speed) ;;

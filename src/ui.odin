@@ -2,6 +2,7 @@
 package main
 
 import "core:fmt"
+import "core:log"
 import "core:strings"
 import "core:sync"
 import "core:time"
@@ -32,13 +33,16 @@ toast :: proc(msg: string) {
 
 services_start :: proc() {
 	clocks_init()
+	log.debugf("  clocks: rss %d kB", rss_kb())
 	sysmon_start()
+	log.debugf("  sysmon: rss %d kB", rss_kb())
 	sway_start()
 	audio_start()
 	weather_start()
 	network_start()
 	bluetooth_start()
 	displays_scan()
+	log.debugf("  rest: rss %d kB", rss_kb())
 }
 
 on_show :: proc() {

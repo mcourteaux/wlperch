@@ -5,6 +5,8 @@ package main
 import "base:runtime"
 import "core:c"
 import "core:log"
+import "core:os"
+import "core:path/filepath"
 import "core:strings"
 import "core:sys/posix"
 import "core:time"
@@ -550,7 +552,32 @@ platform_init :: proc() -> bool {
 		return false
 	}
 
-	// EGL
+	return true
+}
+
+// On machines where every GPU is NVIDIA, keep glvnd from also loading Mesa's
+// EGL vendor (and with it ~30 MB of LLVM) just to probe it.
+@(private = "file")
+restrict_egl_vendor :: proc() {
+	if os.exists("/sys/module/nvidia_drm") == false {return}
+	json := "/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
+	if !os.exists(json) {return}
+	if _, set := os.lookup_env("__EGL_VENDOR_LIBRARY_FILENAMES", context.temp_allocator); set {return}
+	cards, _ := filepath.glob("/sys/class/drm/card[0-9]*/device/vendor", context.temp_allocator)
+	if len(cards) == 0 {return}
+	for c in cards {
+		data, err := os.read_entire_file(c, context.temp_allocator)
+		if err != nil || strings.trim_space(string(data)) != "0x10de" {return}
+	}
+	os.set_env("__EGL_VENDOR_LIBRARY_FILENAMES", json)
+}
+
+// Bring up EGL + a GL 3.3 core context. Done lazily on first show and torn
+// down again after the popup has been hidden for a while (see gl_down).
+gl_up :: proc() -> bool {
+	if plat.egl_context != nil {return true}
+	t0 := time.tick_now()
+	restrict_egl_vendor()
 	plat.egl_display = egl.GetPlatformDisplay(.WAYLAND_KHR, plat.display, nil)
 	if plat.egl_display == nil {
 		log.error("eglGetPlatformDisplay failed")
@@ -584,7 +611,24 @@ platform_init :: proc() -> bool {
 		log.error("eglCreateContext failed")
 		return false
 	}
+	log.debugf("EGL %d.%d up in %v", major, minor, time.tick_since(t0))
 	return true
+}
+
+// Release all GPU resources. `before_destroy` runs with the context current
+// (to free renderer objects).
+gl_down :: proc(before_destroy: proc()) {
+	if plat.egl_context == nil {return}
+	egl.MakeCurrent(plat.egl_display, egl.NO_SURFACE, egl.NO_SURFACE, plat.egl_context)
+	if before_destroy != nil {before_destroy()}
+	egl.MakeCurrent(plat.egl_display, egl.NO_SURFACE, egl.NO_SURFACE, egl.NO_CONTEXT)
+	egl.DestroyContext(plat.egl_display, plat.egl_context)
+	egl.Terminate(plat.egl_display)
+	egl.ReleaseThread()
+	plat.egl_context = nil
+	plat.egl_display = nil
+	plat.gl_ready = false
+	log.debug("EGL torn down")
 }
 
 Popup_Placement :: struct {
@@ -641,6 +685,10 @@ platform_show :: proc(placement: Popup_Placement, width, height: i32) -> bool {
 		return false
 	}
 
+	if !gl_up() {
+		platform_hide()
+		return false
+	}
 	plat.egl_window = wl.egl_window_create(plat.surface, plat.width * plat.scale, plat.height * plat.scale)
 	plat.egl_surface = egl.CreateWindowSurface(plat.egl_display, plat.egl_config, egl.NativeWindowType(plat.egl_window), nil)
 	if plat.egl_surface == nil {
