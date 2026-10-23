@@ -169,7 +169,10 @@ draw_header :: proc(width: f32) {
 		hm := config.clock_24h ? fmt.tprintf("%02d:%02d", hour, dt.minute) : fmt.tprintf("%d:%02d", (hour + 11) % 12 + 1, dt.minute)
 		hsz := measure(fonts.bold, 40, hm)
 		draw_text(fonts.bold, 40, {p.x, p.y - 4}, col32(C_TEXT), hm)
-		draw_text(fonts.mono, 16, {p.x + hsz.x + 6, p.y + 21}, col32(C_MUTED), fmt.tprintf("%02d", dt.second))
+		// Seconds share the big time's baseline (digits sit on the baseline).
+		_, big_base := glyph_ink_y(fonts.bold, 40, '0')
+		_, small_base := glyph_ink_y(fonts.mono, 16, '0')
+		draw_text(fonts.mono, 16, {p.x + hsz.x + 6, p.y - 4 + big_base - small_base}, col32(C_MUTED), fmt.tprintf("%02d", dt.second))
 		if !config.clock_24h {
 			draw_text(fonts.bold, 13, {p.x + hsz.x + 6, p.y + 4}, col32(C_MUTED), hour < 12 ? "AM" : "PM")
 		}
@@ -199,6 +202,12 @@ draw_header :: proc(width: f32) {
 		}
 		draw_text(fonts.ui, SZ_BODY, {sw_x - lsz.x - 10, y + 2}, col32(C_TEXT, 0.9), lbl)
 		draw_text(fonts.ui, 17, {sw_x - lsz.x - 34, y + 1}, col32(nl_on ? C_ORANGE : C_MUTED), ICON_NIGHT_LIGHT)
+
+		// Restart: picks up a newly installed binary and config changes.
+		im.SetCursorScreenPos({sw_x - lsz.x - 34 - 44, y - 3})
+		if icon_button("##restart", ICON_REFRESH, C_MUTED, 28, tooltip = "Restart wlwidgets (new build, config)") {
+			restart_requested = true
+		}
 	}
 
 	// Keyboard layouts

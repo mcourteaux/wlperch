@@ -156,9 +156,9 @@ config_load :: proc() {
 	}
 	get :: proc(m, d: ini.Map, section, key: string) -> string {
 		if s, ok := m[section]; ok {
-			if v, vok := s[key]; vok {return strings.trim_space(v)}
+			if v, vok := s[key]; vok {return unquote(strings.trim_space(v))}
 		}
-		return strings.trim_space(d[section][key])
+		return unquote(strings.trim_space(d[section][key]))
 	}
 
 	c := &config
@@ -211,6 +211,14 @@ config_load :: proc() {
 
 	c.history_seconds = clamp(strconv.parse_int(get(m, defaults, "system", "history_seconds")) or_else 120, 30, 600)
 	c.memory_warn_pct = clamp(strconv.parse_int(get(m, defaults, "system", "memory_warn_percent")) or_else 90, 1, 100)
+}
+
+// `location = "Ghent, Belgium"` -> Ghent, Belgium
+unquote :: proc(s: string) -> string {
+	if len(s) >= 2 && ((s[0] == '"' && s[len(s) - 1] == '"') || (s[0] == '\'' && s[len(s) - 1] == '\'')) {
+		return s[1:len(s) - 1]
+	}
+	return s
 }
 
 popup_size :: proc() -> (w, h: i32) {

@@ -24,6 +24,7 @@ commands:
   hide     hide the popup
   daemon   start the background daemon without showing the popup
   quit     stop the running daemon
+  restart  restart the daemon (new binary, re-read config); keeps graph history
   status   print waybar JSON (icon; memory warning) every 2 s, for a custom module
 `
 
@@ -75,6 +76,8 @@ handle_command :: proc(cmd: string) -> string {
 		hide_popup()
 	case "quit":
 		app.running = false
+	case "restart":
+		restart_requested = true
 	case "daemon", "ping":
 	case:
 		return "unknown command\n"
@@ -91,7 +94,7 @@ main :: proc() {
 	case "-h", "--help", "help":
 		fmt.print(USAGE)
 		return
-	case "toggle", "show", "hide", "quit", "daemon":
+	case "toggle", "show", "hide", "quit", "daemon", "restart":
 	case "status":
 		config_load()
 		status_loop()
@@ -101,8 +104,10 @@ main :: proc() {
 		os.exit(2)
 	}
 
-	if fd, ok := resume_from_args(); ok {
+	resume_show := false
+	if fd, ok, show := resume_from_args(); ok {
 		app.ipc_fd = fd
+		resume_show = show
 	} else {
 		if ipc_send(cmd) {return}
 		if cmd == "quit" || cmd == "hide" {return} // nothing running
@@ -146,7 +151,7 @@ main :: proc() {
 	services_start()
 	log.debugf("services_start took %v, rss %d kB", time.tick_since(t0), rss_kb())
 
-	if cmd != "daemon" {show_popup()}
+	if (cmd != "daemon" && cmd != "restart") || resume_show {show_popup()}
 
 	app.running = true
 	for app.running {
@@ -171,6 +176,7 @@ open_progress :: proc() -> f32 {
 
 hidden_since: time.Tick
 last_render_second: i64
+restart_requested: bool
 
 rss_kb :: proc() -> int {
 	data, err := os.read_entire_file("/proc/self/statm", context.temp_allocator)
@@ -271,6 +277,17 @@ loop_iteration :: proc() {
 		if cmd, client, ok := ipc_accept(app.ipc_fd); ok {
 			ipc_reply(client, handle_command(cmd))
 		}
+	}
+
+	if restart_requested {
+		restart_requested = false
+		was_visible := platform_visible()
+		hide_popup()
+		wl.display_flush(d)
+		reexec_self(was_visible)
+		log.error("restart failed")
+		if was_visible {show_popup()}
+		return
 	}
 
 	if platform_visible() {

@@ -127,17 +127,37 @@ resolve_location :: proc() -> bool {
 		lon, _ = strconv.parse_f64(strings.trim_space(parts[1]))
 		place = fmt.tprintf("%.2f, %.2f", lat, lon)
 	} else {
+		// "Ghent, Belgium": search "Ghent", prefer a result in Belgium.
 		name := loc
-		if c := strings.index_byte(loc, ','); c >= 0 {name = loc[:c]}
-		url := fmt.tprintf("https://geocoding-api.open-meteo.com/v1/search?count=1&format=json&name=%s", net.percent_encode(strings.trim_space(name), context.temp_allocator))
+		hint := ""
+		if c := strings.index_byte(loc, ','); c >= 0 {
+			name = loc[:c]
+			hint = strings.to_lower(strings.trim_space(loc[c + 1:]), context.temp_allocator)
+		}
+		url := fmt.tprintf("https://geocoding-api.open-meteo.com/v1/search?count=10&format=json&name=%s", net.percent_encode(strings.trim_space(name), context.temp_allocator))
 		body, ok := fetch(url)
+		if !ok {
+			set_error("Weather service unreachable")
+			return false
+		}
 		v, _ := jparse(body)
 		results := jarr(jobj(v, "results"))
-		if !ok || len(results) == 0 {
+		if len(results) == 0 {
 			set_error(fmt.tprintf("Unknown location \"%s\"", loc))
 			return false
 		}
 		r := results[0]
+		if hint != "" {
+			for cand in results {
+				country := strings.to_lower(jstr(jobj(cand, "country")), context.temp_allocator)
+				code := strings.to_lower(jstr(jobj(cand, "country_code")), context.temp_allocator)
+				admin := strings.to_lower(jstr(jobj(cand, "admin1")), context.temp_allocator)
+				if country == hint || code == hint || admin == hint {
+					r = cand
+					break
+				}
+			}
+		}
 		lat, lon = jfloat(jobj(r, "latitude")), jfloat(jobj(r, "longitude"))
 		place = fmt.tprintf("%s, %s", jstr(jobj(r, "name")), jstr(jobj(r, "country_code")))
 	}

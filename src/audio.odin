@@ -187,6 +187,19 @@ refresh :: proc() {
 			hdmi := strings.trim_suffix(strings.trim_prefix(profile_desc, "Digital Stereo ("), ")")
 			dev.label = own(monitor != "" ? monitor : desc)
 			dev.sublabel = own(conn != "" ? fmt.tprintf("%s · %s", hdmi, conn) : hdmi)
+		} else if jstr(jobj(props, "sess.media")) == "raop" || desc == "" || desc == "(null)" {
+			// AirPlay (RAOP) receivers found on the network carry no description;
+			// node.name is "raop_sink.<host>.local.<ip>.<port>".
+			node := jstr(jobj(props, "node.name"))
+			host := strings.trim_prefix(node, "raop_sink.")
+			if i := strings.index(host, ".local"); i > 0 {host = host[:i]}
+			// "Some-Host-3" -> "Some-Host" (drop the mDNS conflict suffix)
+			if i := strings.last_index_byte(host, '-'); i > 0 && i + 1 < len(host) && host[i + 1] >= '0' && host[i + 1] <= '9' && len(host) - i <= 3 {
+				host = host[:i]
+			}
+			dev.label = own(host != "" ? host : node)
+			dev.sublabel = jstr(jobj(props, "sess.media")) == "raop" ? "AirPlay · network" : "Network"
+			dev.icon = ICON_WIFI
 		} else if jstr(jobj(props, "device.bus")) == "bluetooth" {
 			dev.label = own(desc)
 			dev.sublabel = "Bluetooth"

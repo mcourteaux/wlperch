@@ -28,7 +28,8 @@ clear_cloexec :: proc(fd: posix.FD) {
 }
 
 // Replace the process image with a fresh copy of ourselves. Only returns on failure.
-reexec_self :: proc() {
+// `show_after`: the new image shows the popup right away (used by restart).
+reexec_self :: proc(show_after := false) {
 	state := new(Saved_State, context.temp_allocator)
 	state.magic = STATE_MAGIC
 	{
@@ -66,11 +67,13 @@ reexec_self :: proc() {
 	}
 	clear_cloexec(app.ipc_fd)
 
-	// Exec the real path so the process keeps its name; fall back to
-	// /proc/self/exe if the binary was replaced (e.g. rebuilt) meanwhile.
+	// Exec whatever binary is at our original path now, so a freshly
+	// installed build is picked up (install replaces the file, which makes
+	// the link read "<path> (deleted)"). Fall back to our own image.
 	exe := "/proc/self/exe"
-	if target, lerr := os.read_link("/proc/self/exe", context.temp_allocator); lerr == nil && !strings.has_suffix(target, " (deleted)") {
-		exe = target
+	if target, lerr := os.read_link("/proc/self/exe", context.temp_allocator); lerr == nil {
+		path := strings.trim_suffix(target, " (deleted)")
+		if os.exists(path) {exe = path}
 	}
 	args := []cstring {
 		"wlwidgets",
@@ -78,9 +81,10 @@ reexec_self :: proc() {
 		"--resume",
 		strings.clone_to_cstring(int_to_string(int(app.ipc_fd)), context.temp_allocator),
 		strings.clone_to_cstring(int_to_string(int(mfd)), context.temp_allocator),
+		show_after ? "show" : "hidden",
 		nil,
 	}
-	log.debug("re-executing to release GPU memory")
+	log.debugf("re-executing %s", exe)
 	posix.execv(strings.clone_to_cstring(exe, context.temp_allocator), raw_data(args))
 	log.errorf("execv failed: %v", posix.errno())
 	posix.fcntl(app.ipc_fd, .SETFD, i32(posix.FD_CLOEXEC))
@@ -88,11 +92,12 @@ reexec_self :: proc() {
 }
 
 // Called early in main() when started with `daemon --resume <ipc fd> <state fd>`.
-resume_from_args :: proc() -> (ipc_fd: posix.FD, ok: bool) {
-	if len(os.args) < 5 || os.args[2] != "--resume" {return -1, false}
+resume_from_args :: proc() -> (ipc_fd: posix.FD, ok: bool, show: bool) {
+	if len(os.args) < 5 || os.args[2] != "--resume" {return -1, false, false}
+	show = len(os.args) > 5 && os.args[5] == "show"
 	ifd, ok1 := strconv.parse_int(os.args[3])
 	sfd, ok2 := strconv.parse_int(os.args[4])
-	if !ok1 || !ok2 {return -1, false}
+	if !ok1 || !ok2 {return -1, false, false}
 	set_cloexec_nonblock(posix.FD(ifd))
 
 	state: Saved_State
@@ -110,7 +115,7 @@ resume_from_args :: proc() -> (ipc_fd: posix.FD, ok: bool) {
 		sysmon.gpu = state.gpu
 	}
 	reap_children()
-	return posix.FD(ifd), true
+	return posix.FD(ifd), true, show
 }
 
 // Reap children inherited from our previous image (e.g. `pactl subscribe`).
