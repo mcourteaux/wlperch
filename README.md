@@ -57,8 +57,9 @@ switches in place. The first panel in the config is the default.
 | `main` | header · audio · system · network \| weather · clocks · displays · bluetooth |
 | `perf` | cpu · memory · gpu \| processes |
 | `sensors` | sensors |
+| `time` | time |
 
-Modules: `audio system network weather clocks displays bluetooth cpu gpu memory processes sensors`.
+Modules: `audio system network weather clocks displays bluetooth cpu gpu memory processes sensors time`.
 
 - **cpu, memory, gpu:** large history graphs. CPU adds load average, per-core
   bars and uptime. Memory shows used/cache/free and swap, and turns red past
@@ -71,7 +72,38 @@ Modules: `audio system network weather clocks displays bluetooth cpu gpu memory 
   air-quality monitors show CO₂ (with a verdict), PM1/2.5/10 and HCHO; heaters
   show on/off and current/target temperature. Readings older than 3 h are dimmed.
 
+- **time:** time tracking by workspace (see below).
+
 Define your own panels with `[panel.NAME]` sections (see Configuration).
+
+### Time tracking
+
+Each `[project.NAME]` gets its own workspace on every monitor, named after the
+project and numbered left to right (`ACME 1`, `ACME 2`). Starting a project from
+the Time panel, or with `wlwidgets track <project>`:
+- creates those workspaces;
+- pins each one to its output;
+- shows them all, keeping focus on the monitor you were using.
+
+Doing it again simply recreates them after sway has removed them as empty.
+
+Time counts while one of a project's workspaces is focused. Numbered
+workspaces are not counted. Counting pauses after `idle_minutes` without input
+(through the `ext-idle-notify-v1` protocol; idle inhibitors such as a playing
+video count as activity), and the idle time itself is not counted.
+
+Finished segments are appended to `~/.local/share/wlwidgets/timelog.tsv`, one
+per line: start and end (UTC, ISO 8601), project, client. The open segment is
+written to `timetracker.current` every 30 s, so a crash loses at most that.
+Segments shorter than 5 s are dropped.
+
+The panel shows:
+- the running timer;
+- the projects as quick-switch rows with today's totals;
+- a bar of today's time against an 8 h day;
+- a 7-day stacked chart (hover a day for its breakdown).
+
+`wlwidgets status timer` feeds a waybar pill (`⏱ ACME 1:23`, class `running`).
 
 ### Sensors
 
@@ -110,6 +142,7 @@ wlwidgets            # = toggle: show, or hide if shown (starts the daemon if ne
 wlwidgets toggle perf   # open a specific panel (switches if another one is open)
 wlwidgets show [panel] | hide | quit
 wlwidgets restart    # new binary + re-read config; keeps graph history
+wlwidgets track ACME # open the project's workspaces (time tracking)
 wlwidgets daemon     # start in the background without showing
 wlwidgets status     # waybar JSON for the bar button (see below)
 ```
@@ -138,6 +171,10 @@ Any number of bar items can open panels:
 "custom/sensors": {            // "󰔏 20.4°  439 ppm"
     "exec": "wlwidgets status sensors", "return-type": "json", "format": "{}",
     "on-click": "wlwidgets toggle sensors"
+},
+"custom/timer": {             // "󰅐 ACME 1:23" while counting
+    "exec": "wlwidgets status timer", "return-type": "json", "format": "{}",
+    "on-click": "wlwidgets toggle time"
 },
 "memory": { "on-click": "wlwidgets toggle perf" }
 ```
@@ -213,6 +250,19 @@ columns = cpu memory gpu | processes
 title = Home
 width = 560
 columns = sensors
+
+[panel.time]
+title = Time
+width = 600
+columns = time
+
+[timetracker]
+idle_minutes = 5
+
+[project.acme]                # one section per project
+name = ACME                   # workspaces "ACME 1", "ACME 2", ...
+client = ACME Corp            # omit for personal projects
+color = #7aa2f7               # optional
 ```
 
 Restart the daemon (`wlwidgets quit`) to apply changes.

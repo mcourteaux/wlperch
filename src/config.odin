@@ -106,6 +106,19 @@ history_seconds = 120
 # Memory use (%) at which the popup and the waybar button ("wlwidgets status") turn red.
 memory_warn_percent = 90
 
+[timetracker]
+# Minutes without input after which counting pauses (the idle time is not counted).
+idle_minutes = 5
+
+# Projects for time tracking. "wlwidgets track <project>" (or the Time panel)
+# creates one workspace per monitor ("<name> 1", "<name> 2", ...); time counts
+# while one of them is focused. Numbered workspaces are not counted.
+#
+# [project.acme]
+# name = ACME
+# client = ACME Corp      ; omit for personal projects
+# color = #7aa2f7         ; optional
+
 [sensors]
 # Directory of the tuya-sensors tool (devices.json + state.json).
 dir = ~/tuya-sensors
@@ -118,7 +131,7 @@ bar_room = Living
 # "wlwidgets toggle <name>" opens a panel; the first one is the default.
 # columns: module names per column, columns separated by "|".
 # Modules: audio system network weather clocks displays bluetooth
-#          cpu gpu memory processes sensors
+#          cpu gpu memory processes sensors time
 # header = true shows the big clock, night light and keyboard layouts on top;
 # otherwise "title" (if set) is shown as a compact title row.
 
@@ -135,6 +148,11 @@ columns = cpu memory gpu | processes
 title = Home
 width = 560
 columns = sensors
+
+[panel.time]
+title = Time
+width = 600
+columns = time
 `
 
 config_path :: proc() -> string {
@@ -251,6 +269,9 @@ config_load :: proc() {
 	c.sensors_watch = strings.clone(get(m, defaults, "sensors", "watch"))
 	c.sensors_bar_room = strings.clone(get(m, defaults, "sensors", "bar_room"))
 
+	tracker.idle = time.Duration(max(strconv.parse_int(get(m, defaults, "timetracker", "idle_minutes")) or_else 5, 1)) * time.Minute
+	projects_load(string(src_for_projects(path)), m)
+
 	// Panels: from the user's file, or the built-in set if it defines none.
 	src, _ := os.read_entire_file(path, context.temp_allocator)
 	panels_load(string(src), m)
@@ -263,6 +284,12 @@ unquote :: proc(s: string) -> string {
 		return s[1:len(s) - 1]
 	}
 	return s
+}
+
+@(private = "file")
+src_for_projects :: proc(path: string) -> []u8 {
+	data, _ := os.read_entire_file(path, context.temp_allocator)
+	return data
 }
 
 popup_size :: proc() -> (w, h: i32) {

@@ -1,0 +1,168 @@
+// Time tracker module.
+package main
+
+import "core:fmt"
+import "core:strings"
+import "core:time"
+
+import im "third_party:odin-imgui"
+
+@(private = "file")
+DAY_LETTERS := [7]string{"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"}
+
+draw_time :: proc(w: f32) {
+	now := time.to_unix_seconds(time.now())
+	today := local_day_start(now)
+	week_from := today - 6 * 86400
+	week := tracker_totals(week_from, now + 1)
+	week_total: i64
+	for _, s in week {week_total += s}
+
+	card_begin("time", w)
+	defer card_end()
+	card_title(ICON_CLOCK, "Time tracking", C_TEAL, fmt.tprintf("7 days %s", fmt_duration(week_total)))
+	inner := im.GetContentRegionAvail().x
+
+	if len(tracker.projects) == 0 {
+		label(fonts.ui, SZ_BODY, col32(C_MUTED), "No projects yet: add [project.NAME] sections to")
+		label(fonts.mono, SZ_SMALL, col32(C_TEXT), config_path())
+		return
+	}
+	totals_today := tracker_totals(today, now + 1)
+
+	// ---- Status -----------------------------------------------------------
+	p := im.GetCursorScreenPos()
+	if tracker.running >= 0 {
+		pr := tracker.projects[tracker.running]
+		im.DrawList_AddCircleFilled(dl(), {p.x + 7, p.y + 16}, 6, col32(pr.color))
+		draw_text(fonts.bold, 22, {p.x + 22, p.y + 2}, col32(C_TEXT), pr.name)
+		sub := pr.client != "" ? pr.client : "personal"
+		draw_text(fonts.ui, SZ_SMALL, {p.x + 22, p.y + 30}, col32(C_MUTED), fmt.tprintf("%s   ·   today %s", sub, fmt_duration(totals_today[pr.name])))
+		el := fmt_duration(now - tracker.seg_start, true)
+		esz := measure(fonts.mono, 24, el)
+		draw_text(fonts.mono, 24, {p.x + inner - esz.x, p.y + 4}, col32(pr.color), el)
+		cap := "counting"
+		csz := measure(fonts.ui, SZ_SMALL, cap)
+		draw_text(fonts.ui, SZ_SMALL, {p.x + inner - csz.x, p.y + 32}, col32(C_GREEN), cap)
+	} else {
+		msg := tracker.paused_idle ? "Paused — you were away" : "Not on a project workspace"
+		col: u32 = tracker.paused_idle ? C_ORANGE : C_MUTED
+		draw_text(fonts.bold, 18, {p.x, p.y + 4}, col32(col), msg)
+		hint := tracker.paused_idle ? "counting resumes with your next input" : "pick a project below to open its workspaces"
+		draw_text(fonts.ui, SZ_SMALL, {p.x, p.y + 30}, col32(C_FAINT), hint)
+	}
+	im.Dummy({inner, 50})
+
+	// ---- Projects (quick switch) ----------------------------------------
+	sub_heading("Projects")
+	start := -1
+	for pr, i in tracker.projects {
+		rp := im.GetCursorScreenPos()
+		h: f32 = 34
+		clicked := im.InvisibleButton(cstr(fmt.tprintf("proj:%s", pr.key)), {inner, h})
+		hovered := im.IsItemHovered()
+		d := dl()
+		active := i == tracker.running
+		if active {
+			im.DrawList_AddRectFilled(d, {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h}, col32(pr.color, 0.12), 8)
+		} else if hovered {
+			im.SetMouseCursor(.Hand)
+			im.DrawList_AddRectFilled(d, {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h}, col32(0xffffff, 0.05), 8)
+			tip(fmt.tprintf("Open %s's workspaces", pr.name))
+		}
+		if clicked && !active {start = i}
+		im.DrawList_AddCircleFilled(d, {rp.x + 6, rp.y + h / 2}, 5, col32(pr.color, active ? 1 : 0.7))
+		draw_text(active ? fonts.bold : fonts.ui, SZ_BODY, {rp.x + 20, rp.y + 8}, col32(C_TEXT), pr.name)
+		if pr.client != "" {
+			nsz := measure(active ? fonts.bold : fonts.ui, SZ_BODY, pr.name)
+			draw_text(fonts.ui, SZ_SMALL, {rp.x + 28 + nsz.x, rp.y + 10}, col32(C_FAINT), pr.client)
+		}
+		tt := fmt_duration(totals_today[pr.name])
+		tsz := measure(fonts.mono, SZ_BODY, tt)
+		right: f32 = active ? 0 : 26
+		draw_text(fonts.mono, SZ_BODY, {rp.x + inner - tsz.x - right, rp.y + 8}, col32(totals_today[pr.name] > 0 ? C_TEXT : C_FAINT), tt)
+		if !active {
+			draw_text(fonts.ui, 15, {rp.x + inner - 16, rp.y + 8}, col32(hovered ? pr.color : C_FAINT), ICON_PLAY)
+		}
+	}
+	if start >= 0 {
+		tracker_start(start)
+		hide_requested = true // get out of the way of the new workspaces
+	}
+
+	// ---- Today ----------------------------------------------------------
+	day_total: i64
+	for _, s in totals_today {day_total += s}
+	sub_heading(fmt.tprintf("Today   ·   %s", fmt_duration(day_total)))
+	bp := im.GetCursorScreenPos()
+	bh: f32 = 10
+	d := dl()
+	im.DrawList_AddRectFilled(d, bp, {bp.x + inner, bp.y + bh}, col32(0x12151b), bh / 2)
+	if day_total > 0 {
+		// Scale against an 8 h day so the bar reads as "how much of a workday".
+		scale := f64(max(day_total, 8 * 3600))
+		x := bp.x
+		for pr in tracker.projects {
+			s := totals_today[pr.name]
+			if s <= 0 {continue}
+			wseg := f32(f64(s) / scale) * inner
+			im.DrawList_AddRectFilled(d, {x, bp.y}, {x + wseg, bp.y + bh}, col32(pr.color), 3)
+			x += wseg
+		}
+	}
+	im.Dummy({inner, bh})
+	label(fonts.ui, SZ_SMALL, col32(C_FAINT), "bar = 8 hour workday")
+
+	// ---- Week -----------------------------------------------------------
+	sub_heading("Last 7 days")
+	gp := im.GetCursorScreenPos()
+	gh: f32 = 110
+	label_h: f32 = 18
+	days: [7]map[string]i64
+	most: i64 = 4 * 3600
+	for i in 0 ..< 7 {
+		from := week_from + i64(i) * 86400
+		days[i] = tracker_totals(from, from + 86400)
+		tot: i64
+		for _, s in days[i] {tot += s}
+		most = max(most, tot)
+	}
+	hours := (most + 3599) / 3600
+	im.DrawList_AddRectFilled(d, gp, {gp.x + inner, gp.y + gh}, col32(0x12151b), 8)
+	for hgrid := i64(2); hgrid < hours; hgrid += 2 {
+		y := gp.y + gh - gh * f32(hgrid) / f32(hours)
+		im.DrawList_AddLine(d, {gp.x + 4, y}, {gp.x + inner - 4, y}, col32(0xffffff, 0.04))
+		draw_text(fonts.ui, 10, {gp.x + 6, y - 12}, col32(C_FAINT), fmt.tprintf("%dh", hgrid))
+	}
+	colw := (inner - 40) / 7
+	for i in 0 ..< 7 {
+		x0 := gp.x + 32 + f32(i) * colw + colw * 0.2
+		x1 := x0 + colw * 0.6
+		y := gp.y + gh - 4
+		tot: i64
+		for pr in tracker.projects {
+			s := days[i][pr.name]
+			if s <= 0 {continue}
+			tot += s
+			hseg := (gh - 8) * f32(f64(s) / f64(hours * 3600))
+			im.DrawList_AddRectFilled(d, {x0, y - hseg}, {x1, y}, col32(pr.color), 3)
+			y -= hseg
+		}
+		day := week_from + i64(i) * 86400
+		wd := 0
+		if r, ok := clock_read(local_region, time.unix(day + 43200, 0)); ok {wd = weekday_of(r.dt)}
+		lbl := DAY_LETTERS[wd]
+		is_today := i == 6
+		lsz := measure(is_today ? fonts.bold : fonts.ui, SZ_SMALL, lbl)
+		draw_text(is_today ? fonts.bold : fonts.ui, SZ_SMALL, {(x0 + x1) / 2 - lsz.x / 2, gp.y + gh + 3}, col32(is_today ? C_TEXT : C_MUTED), lbl)
+		if tot > 0 && im.IsMouseHoveringRect({x0 - 4, gp.y}, {x1 + 4, gp.y + gh}) {
+			lines: [dynamic]string
+			lines.allocator = context.temp_allocator
+			for pr in tracker.projects {
+				if s := days[i][pr.name]; s > 0 {append(&lines, fmt.tprintf("%s  %s", pr.name, fmt_duration(s)))}
+			}
+			tip(strings.join(lines[:], "\n", context.temp_allocator))
+		}
+	}
+	im.Dummy({inner, gh + label_h})
+}

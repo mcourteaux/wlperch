@@ -34,6 +34,7 @@ MODULES := [?]Module {
 	{"memory", draw_memory_card},
 	{"processes", draw_processes},
 	{"sensors", draw_sensors},
+	{"time", draw_time},
 }
 
 module_find :: proc(name: string) -> Module_Proc {

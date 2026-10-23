@@ -60,6 +60,7 @@ PROTOCOLS=(
 	$P/staging/cursor-shape/cursor-shape-v1.xml
 	$P/staging/fractional-scale/fractional-scale-v1.xml
 	$P/staging/single-pixel-buffer/single-pixel-buffer-v1.xml
+	$P/staging/ext-idle-notify/ext-idle-notify-v1.xml
 	$WLR/wlr-layer-shell-unstable-v1.xml
 	$WLR/wlr-virtual-pointer-unstable-v1.xml # only used by tools/vptr (UI tests)
 )

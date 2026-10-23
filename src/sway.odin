@@ -16,6 +16,8 @@ IPC_COMMAND :: 0
 IPC_SUBSCRIBE :: 2
 IPC_GET_OUTPUTS :: 3
 IPC_GET_INPUTS :: 100
+IPC_GET_WORKSPACES :: 1
+EVENT_WORKSPACE :: 0x80000000
 
 Sway_Output :: struct {
 	name, make, model: string,
@@ -34,6 +36,8 @@ Sway_State :: struct {
 	outputs:       [dynamic]Sway_Output,
 	layouts:       [dynamic]string,
 	active_layout: int,
+	focused_ws:    string, // name of the focused workspace
+	focused_ws_seq: int,   // bumped on every workspace change
 }
 sway: Sway_State
 
@@ -126,6 +130,23 @@ sway_command :: proc(cmd: string) -> bool {
 	return strings.contains(reply, `"success": true`) || strings.contains(reply, `"success":true`)
 }
 
+sway_refresh_workspaces :: proc() {
+	reply, ok := sway_request(IPC_GET_WORKSPACES, "")
+	if !ok {return}
+	v, _ := jparse(reply)
+	sync.guard(&sway.mu)
+	for ws in jarr(v) {
+		if jbool(jobj(ws, "focused")) {
+			name := jstr(jobj(ws, "name"))
+			if name != sway.focused_ws {
+				delete(sway.focused_ws)
+				sway.focused_ws = strings.clone(name)
+			}
+		}
+	}
+	sway.focused_ws_seq += 1
+}
+
 @(private = "file")
 refresh :: proc() {
 	outs_json, ok1 := sway_request(IPC_GET_OUTPUTS, "")
@@ -185,12 +206,15 @@ sway_switch_layout :: proc(index: int) {
 }
 
 // Swallow events that are already queued so a burst causes one refresh.
+// Returns whether any non-workspace event was among them.
 @(private = "file")
-drain_events :: proc(fd: posix.FD) {
+drain_events :: proc(fd: posix.FD) -> (other: bool) {
 	for {
 		pfd := posix.pollfd{fd = fd, events = {.IN}}
 		if posix.poll(&pfd, 1, 0) <= 0 {return}
-		if _, _, ok := ipc_read(fd); !ok {return}
+		type, _, ok := ipc_read(fd)
+		if !ok {return}
+		if type != EVENT_WORKSPACE {other = true}
 	}
 }
 
@@ -207,17 +231,21 @@ sway_start :: proc() {
 				time.sleep(2 * time.Second)
 				continue
 			}
-			ipc_write(fd, IPC_SUBSCRIBE, `["output", "input"]`)
+			ipc_write(fd, IPC_SUBSCRIBE, `["output", "input", "workspace"]`)
+			sway_refresh_workspaces()
 			for {
 				type, _, ok := ipc_read(fd)
 				if !ok {break}
 				if type & 0x80000000 != 0 {
 					// Events come in bursts (e.g. one per input device); coalesce.
 					time.sleep(50 * time.Millisecond)
-					drain_events(fd)
-					refresh()
-					audio_refresh_async() // HDMI port -> connector mapping may have changed
-					wake_ui()
+					other := drain_events(fd) || type != EVENT_WORKSPACE
+					sway_refresh_workspaces()
+					if other {
+						refresh()
+						audio_refresh_async() // HDMI port -> connector mapping may have changed
+					}
+					wake_main() // the time tracker follows workspace focus even when hidden
 				}
 				free_all(context.temp_allocator)
 			}

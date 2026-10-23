@@ -61,6 +61,7 @@ reexec_self :: proc(show_after := false) {
 		off += n
 	}
 
+	tracker_shutdown() // the new image opens a fresh segment right away
 	stop_children()
 	// Some drivers (NVIDIA) open their device files without O_CLOEXEC; don't
 	// let them leak into the new image.

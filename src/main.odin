@@ -25,8 +25,10 @@ commands:
   daemon   start the background daemon without showing the popup
   quit     stop the running daemon
   restart  restart the daemon (new binary, re-read config); keeps graph history
-  status [sensors]  print waybar JSON every few seconds for a custom module:
-                   the panel button (memory warning), or a room temperature + CO2
+  track <project>  create/focus the project's workspaces (one per monitor) to track time
+  status [sensors|timer]  print waybar JSON every few seconds for a custom module:
+                   the panel button (memory warning), a room temperature + CO2,
+                   or the running project timer
 `
 
 App :: struct {
@@ -42,6 +44,12 @@ app: App
 // Wake the main loop from any thread (e.g. new data arrived).
 wake_ui :: proc "contextless" () {
 	if !plat_visible_flag {return}
+	b := u8(1)
+	posix.write(app.wake_w, &b, 1)
+}
+
+// Wake the main loop regardless of visibility (e.g. the time tracker).
+wake_main :: proc "contextless" () {
 	b := u8(1)
 	posix.write(app.wake_w, &b, 1)
 }
@@ -73,7 +81,7 @@ handle_command :: proc(line: string) -> string {
 	if len(f) == 0 {return "unknown command\n"}
 	cmd := f[0]
 	target := -1
-	if len(f) > 1 {
+	if len(f) > 1 && (cmd == "toggle" || cmd == "show") {
 		target = panel_find(f[1])
 		if target < 0 {return "unknown panel\n"}
 	}
@@ -98,6 +106,12 @@ handle_command :: proc(line: string) -> string {
 		app.running = false
 	case "restart":
 		restart_requested = true
+	case "track":
+		if len(f) < 2 {return "usage: track <project>\n"}
+		i := project_find(strings.join(f[1:], " ", context.temp_allocator))
+		if i < 0 {return "unknown project\n"}
+		tracker_start(i)
+		return "ok\n"
 	case "daemon", "ping":
 	case:
 		return "unknown command\n"
@@ -126,11 +140,14 @@ main :: proc() {
 	case "-h", "--help", "help":
 		fmt.print(USAGE)
 		return
-	case "toggle", "show", "hide", "quit", "daemon", "restart":
+	case "toggle", "show", "hide", "quit", "daemon", "restart", "track":
 	case "status":
 		config_load()
 		if len(os.args) > 2 && os.args[2] == "sensors" {
 			status_sensors_loop()
+		} else if len(os.args) > 2 && os.args[2] == "timer" {
+			clocks_init()
+			status_timer_loop()
 		} else {
 			status_loop()
 		}
@@ -185,6 +202,7 @@ main :: proc() {
 
 	t0 = time.tick_now()
 	services_start()
+	tracker_init()
 	log.debugf("services_start took %v, rss %d kB", time.tick_since(t0), rss_kb())
 
 	if resume_show {
@@ -199,6 +217,7 @@ main :: proc() {
 		loop_iteration()
 	}
 
+	tracker_shutdown()
 	hide_popup()
 	if plat.gl_ready {imgl.Shutdown()}
 }
@@ -286,6 +305,10 @@ loop_iteration :: proc() {
 		left := config.release_gpu_after - time.tick_since(hidden_since)
 		timeout = max(int(time.duration_milliseconds(left)), 0) + 1
 	}
+	if hb := tracker_timeout(); hb >= 0 {
+		ms := int(time.duration_milliseconds(hb)) + 1
+		timeout = timeout < 0 ? ms : min(timeout, ms)
+	}
 
 	pfds := [3]posix.pollfd {
 		{fd = platform_fd(), events = {.IN}},
@@ -319,6 +342,8 @@ loop_iteration :: proc() {
 			ipc_reply(client, handle_command(cmd))
 		}
 	}
+
+	tracker_tick()
 
 	if restart_requested {
 		restart_requested = false

@@ -100,3 +100,44 @@ status_sensors_loop :: proc() {
 		time.sleep(20 * time.Second)
 	}
 }
+
+// `wlwidgets status timer`: "⏱ NeonRAW 1:23" (today's time on the project
+// being counted), or a dim clock when nothing is counted.
+status_timer_loop :: proc() {
+	dir := data_dir()
+	cur_path := strings.concatenate({dir, "/timetracker.current"})
+	log_path := strings.concatenate({dir, "/timelog.tsv"})
+	for {
+		text := ICON_CLOCK
+		class := "idle"
+		tooltip := "Time tracking: not on a project workspace"
+		if data, err := os.read_entire_file(cur_path, context.temp_allocator); err == nil {
+			f := strings.split(strings.trim_space(string(data)), "\t", context.temp_allocator)
+			if len(f) >= 3 {
+				start, _ := strconv.parse_i64(f[0])
+				beat, _ := strconv.parse_i64(f[1])
+				now := time.to_unix_seconds(time.now())
+				if now - beat < 90 { // heartbeat is fresh: the daemon is counting
+					project := f[2]
+					total := now - start
+					entries: [dynamic]Time_Entry
+					entries.allocator = context.temp_allocator
+					if ld, lerr := os.read_entire_file(log_path, context.temp_allocator); lerr == nil {
+						timelog_parse(string(ld), &entries)
+					}
+					day := local_day_start(now)
+					for e in entries {
+						if e.project == project && e.end > day {total += e.end - max(e.start, day)}
+					}
+					text = fmt.tprintf("%s %s %s", ICON_CLOCK, project, fmt_duration(total))
+					class = "running"
+					tooltip = fmt.tprintf("%s: %s today", project, fmt_duration(total))
+				}
+			}
+		}
+		line := fmt.tprintf(`{{"text": "%s", "tooltip": "%s", "class": "%s"}}` + "\n", text, tooltip, class)
+		if _, err := os.write_string(os.stdout, line); err != nil {return}
+		free_all(context.temp_allocator)
+		time.sleep(2 * time.Second)
+	}
+}

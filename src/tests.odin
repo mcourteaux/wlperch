@@ -7,6 +7,7 @@ import "core:strconv"
 import "core:strings"
 import "core:sys/posix"
 import "core:testing"
+import "core:time"
 
 @(test)
 test_shell_int :: proc(t: ^testing.T) {
@@ -163,4 +164,42 @@ test_panels_load :: proc(t: ^testing.T) {
 	testing.expect_value(t, panels[1].columns[1][0], "processes")
 	testing.expect_value(t, panel_find("perf"), 1)
 	testing.expect_value(t, panel_find("nope"), -1)
+}
+
+@(test)
+test_timetracker :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	saved := tracker
+	defer tracker = saved
+	tracker = Tracker{running = -1}
+	append(&tracker.projects, Project{key = "neon", name = "NeonRAW", client = "Zec"})
+	append(&tracker.projects, Project{key = "home", name = "Home Lab"})
+
+	// Workspace names -> projects.
+	testing.expect_value(t, project_for_workspace("NeonRAW 1"), 0)
+	testing.expect_value(t, project_for_workspace("NeonRAW 12"), 0)
+	testing.expect_value(t, project_for_workspace("Home Lab 2"), 1)
+	testing.expect_value(t, project_for_workspace("NeonRAWx 1"), -1)
+	testing.expect_value(t, project_for_workspace("NeonRAW"), -1)
+	testing.expect_value(t, project_for_workspace("4"), -1)
+	testing.expect_value(t, project_find("neon"), 0)
+	testing.expect_value(t, project_find("home lab"), 1)
+
+	// Log parsing (bad lines are skipped).
+	LOG :: "2026-10-23T08:00:00Z\t2026-10-23T09:30:00Z\tNeonRAW\tZec\n" +
+		"garbage line\n" +
+		"2026-10-23T10:00:00Z\t2026-10-23T09:00:00Z\tNeonRAW\tZec\n" + // end before start
+		"2026-10-22T23:00:00Z\t2026-10-23T01:00:00Z\tHome Lab\t\n"
+	timelog_parse(LOG, &tracker.entries)
+	testing.expect_value(t, len(tracker.entries), 2)
+	testing.expect_value(t, tracker.entries[0].end - tracker.entries[0].start, 5400)
+
+	// Totals clip segments to the requested range.
+	day, _ := time.datetime_to_time(2026, 10, 23, 0, 0, 0)
+	from := time.to_unix_seconds(day)
+	totals := tracker_totals(from, from + 86400)
+	testing.expect_value(t, totals["NeonRAW"], 5400)
+	testing.expect_value(t, totals["Home Lab"], 3600) // only the part after midnight UTC
+	testing.expect_value(t, fmt_duration(5400), "1:30")
+	testing.expect_value(t, fmt_duration(3725, true), "1:02:05")
 }

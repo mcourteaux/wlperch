@@ -33,6 +33,10 @@ Platform :: struct {
 	cursor_shape_mgr: ^wl.Wp_Cursor_Shape_Manager_V1,
 	viewporter:       ^wl.Wp_Viewporter,
 	frac_scale_mgr:   ^wl.Wp_Fractional_Scale_Manager_V1,
+	idle_notifier:    ^wl.Ext_Idle_Notifier_V1,
+	idle_note:        ^wl.Ext_Idle_Notification_V1,
+	idle:             bool,      // no user input for the configured time
+	idle_since:       time.Time, // when input actually stopped
 	single_pixel:     ^wl.Wp_Single_Pixel_Buffer_Manager_V1,
 	seat:             ^wl.Seat,
 	pointer:          ^wl.Pointer,
@@ -112,6 +116,8 @@ registry_listener := wl.Registry_Listener {
 			plat.viewporter = cast(^wl.Wp_Viewporter)wl.registry_bind(registry, name, &wl.wp_viewporter_interface, 1)
 		case "wp_fractional_scale_manager_v1":
 			plat.frac_scale_mgr = cast(^wl.Wp_Fractional_Scale_Manager_V1)wl.registry_bind(registry, name, &wl.wp_fractional_scale_manager_v1_interface, 1)
+		case "ext_idle_notifier_v1":
+			plat.idle_notifier = cast(^wl.Ext_Idle_Notifier_V1)wl.registry_bind(registry, name, &wl.ext_idle_notifier_v1_interface, 1)
 		case "wp_single_pixel_buffer_manager_v1":
 			plat.single_pixel = cast(^wl.Wp_Single_Pixel_Buffer_Manager_V1)wl.registry_bind(registry, name, &wl.wp_single_pixel_buffer_manager_v1_interface, 1)
 		case "wp_cursor_shape_manager_v1":
@@ -532,6 +538,32 @@ frame_listener := wl.Callback_Listener {
 		plat.frame_cb = nil
 		plat.frame_pending = false
 	},
+}
+
+@(private = "file")
+idle_timeout: time.Duration
+
+@(private = "file")
+idle_listener := wl.Ext_Idle_Notification_V1_Listener {
+	idled = proc "c" (data: rawptr, self: ^wl.Ext_Idle_Notification_V1) {
+		plat.idle = true
+		// The event arrives after the timeout; the user actually left then.
+		plat.idle_since = time.time_add(time.now(), -idle_timeout)
+	},
+	resumed = proc "c" (data: rawptr, self: ^wl.Ext_Idle_Notification_V1) {
+		plat.idle = false
+	},
+}
+
+// Ask the compositor to tell us when there was no input for `timeout`
+// (idle inhibitors, e.g. a playing video, count as activity).
+platform_watch_idle :: proc(timeout: time.Duration) -> bool {
+	if plat.idle_notifier == nil || plat.seat == nil {return false}
+	if plat.idle_note != nil {wl.ext_idle_notification_v1_destroy(plat.idle_note)}
+	idle_timeout = timeout
+	plat.idle_note = wl.ext_idle_notifier_v1_get_idle_notification(plat.idle_notifier, u32(time.duration_milliseconds(timeout)), plat.seat)
+	wl.ext_idle_notification_v1_add_listener(plat.idle_note, &idle_listener, nil)
+	return true
 }
 
 @(private = "file")

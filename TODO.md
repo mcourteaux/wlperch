@@ -91,7 +91,9 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] perf panel: cpu (load, per-core, uptime), memory (history, used/cache/free, swap, warning), gpu (VRAM), processes (top CPU / memory, grouped by executable, sampled only while shown)
 - [x] sensors panel: Tuya rooms (temp/humidity/battery/age), air quality (CO2 verdict, PM, HCHO), heater; watcher kept running by the daemon
 - [x] waybar accessors: memory → perf, `wlwidgets status sensors` pill → sensors (CO2 warning classes)
-- [ ] Time tracker panel (needs design decisions — see conversation)
+- [x] Time tracker: [project.*] config, per-monitor project workspaces (create/recreate/pin), counting while focused, idle pause via ext-idle-notify-v1, TSV log + crash-safe heartbeat, today/week views, quick switch, `wlwidgets track`, waybar timer pill
+- [ ] Time tracker: visual check of the panel (screen was locked during the test run)
+- [ ] Time tracker: optional window-rule assignment on numbered workspaces (e.g. by app/title)
 - [ ] Sensor history graphs (record readings over time)
 
 ## Integration & docs
