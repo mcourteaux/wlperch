@@ -72,13 +72,13 @@ draw_ui :: proc() -> f32 {
 
 	panel_w := io.DisplaySize.x - SHADOW * 2
 	panel_h := io.DisplaySize.y - SHADOW * 2
-	panel_pos := Vec2{SHADOW, SHADOW - 4}
+	panel_pos := Vec2{SHADOW, SHADOW - 4 - (1 - open_progress()) * 8}
 
 	draw_shadow(panel_pos, {panel_w, panel_h})
 
 	im.SetNextWindowPos(panel_pos)
 	im.SetNextWindowSize({panel_w, panel_h})
-	im.PushStyleColorImVec4(.WindowBg, rgba(C_BG, 0.97))
+	im.PushStyleColorImVec4(.WindowBg, rgba(C_BG))
 	im.PushStyleColorImVec4(.Border, rgba(0xffffff, 0.07))
 	im.PushStyleVar(.WindowBorderSize, 1)
 	im.PushStyleVar(.WindowRounding, 18)

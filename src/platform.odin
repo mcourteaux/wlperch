@@ -638,6 +638,7 @@ Popup_Placement :: struct {
 	margin:     [4]i32, // top right bottom left
 	layer:      u32,
 	output:     string, // connector name; "" = compositor's choice (focused)
+	backdrop:   bool,   // transparent click-catcher below the popup
 }
 
 platform_show :: proc(placement: Popup_Placement, width, height: i32) -> bool {
@@ -666,7 +667,7 @@ platform_show :: proc(placement: Popup_Placement, width, height: i32) -> bool {
 	}
 
 	// The backdrop must be created first so it stacks below the popup.
-	catcher_create(output)
+	if placement.backdrop {catcher_create(output)}
 
 	plat.layer_surface = wl.zwlr_layer_shell_v1_get_layer_surface(plat.layer_shell, plat.surface, output, placement.layer, "wlwidgets")
 	wl.zwlr_layer_surface_v1_add_listener(plat.layer_surface, &layer_surface_listener, nil)

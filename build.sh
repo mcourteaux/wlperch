@@ -4,6 +4,7 @@
 #   ./build.sh debug      debug build
 #   ./build.sh run [...]  build (debug) and run with args
 #   ./build.sh test       run unit tests
+#   ./build.sh install    release build, copied to ~/.local/bin
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT=$PWD
@@ -79,6 +80,14 @@ esac
 odin build src -out:build/wlwidgets "${FLAGS[@]}"
 odin build tools/vptr -out:build/vptr -o:speed
 echo ">> built build/wlwidgets"
+
+if [[ $MODE == install ]]; then
+	mkdir -p "$HOME/.local/bin"
+	# Replace atomically: a running daemon keeps its (now unlinked) binary.
+	install -m 755 build/wlwidgets "$HOME/.local/bin/.wlwidgets.new"
+	mv -f "$HOME/.local/bin/.wlwidgets.new" "$HOME/.local/bin/wlwidgets"
+	echo ">> installed ~/.local/bin/wlwidgets (restart a running daemon with: wlwidgets quit)"
+fi
 
 if [[ $MODE == run ]]; then
 	shift

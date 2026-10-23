@@ -20,7 +20,7 @@ Config :: struct {
 	anchor:             u32,
 	margin:             [4]i32,
 	output:             string,
-	hide_on_focus_loss: bool,
+	close_on_click_outside: bool,
 
 	// [weather]
 	location:           string, // "auto", a place name, or "lat,lon"
@@ -58,7 +58,7 @@ anchor = top right
 margin = 4 8 0 0
 # Connector to show on (e.g. DP-1). Empty = the focused output.
 output =
-hide_on_focus_loss = true
+close_on_click_outside = true
 
 [weather]
 # "auto" (IP geolocation), a place name ("Ghent"), or "lat,lon".
@@ -166,7 +166,7 @@ config_load :: proc() {
 		if i < 4 {c.margin[i] = i32(strconv.parse_int(f) or_else 0)}
 	}
 	c.output = strings.clone(get(m, defaults, "popup", "output"))
-	c.hide_on_focus_loss = parse_bool(get(m, defaults, "popup", "hide_on_focus_loss"), true)
+	c.close_on_click_outside = parse_bool(get(m, defaults, "popup", "close_on_click_outside"), true)
 
 	c.location = strings.clone(get(m, defaults, "weather", "location"))
 	c.units = strings.clone(get(m, defaults, "weather", "units"))
@@ -209,5 +209,6 @@ popup_placement :: proc() -> Popup_Placement {
 		margin = config.margin,
 		layer = wl.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
 		output = config.output,
+		backdrop = config.close_on_click_outside,
 	}
 }

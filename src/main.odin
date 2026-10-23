@@ -153,6 +153,16 @@ main :: proc() {
 
 imgl_ready: bool
 
+OPEN_ANIM :: 140 * time.Millisecond
+
+// 0 -> 1 ease-out progress of the open animation.
+open_progress :: proc() -> f32 {
+	t := f32(time.duration_seconds(time.tick_since(app.show_time)) / time.duration_seconds(OPEN_ANIM))
+	if t >= 1 {return 1}
+	u := 1 - t
+	return 1 - u * u * u
+}
+
 // GPU state is released when the popup stays hidden this long.
 GL_IDLE_TEARDOWN :: 30 * time.Second
 hidden_since: time.Tick
@@ -185,6 +195,10 @@ render_frame :: proc() {
 	gl.ClearColor(0, 0, 0, 0)
 	gl.Clear(gl.COLOR_BUFFER_BIT)
 	imgl.RenderDrawData(im.GetDrawData())
+	if e := open_progress(); e < 1 {
+		fade_apply(e)
+		request_redraw(1)
+	}
 	platform_end_frame()
 	app.frame_count += 1
 	log.debugf("frame %d %dx%d@%d content_h=%.1f", app.frame_count, plat.width, plat.height, plat.scale, content_h)
@@ -263,7 +277,7 @@ loop_iteration :: proc() {
 			hide_popup()
 			return
 		}
-		if (plat.focus_lost || plat.outside_click) && config.hide_on_focus_loss {
+		if (plat.focus_lost || plat.outside_click) && config.close_on_click_outside {
 			hide_popup()
 			return
 		}
@@ -281,6 +295,7 @@ loop_iteration :: proc() {
 		reexec_self()
 		// exec failed: at least release what we can and carry on.
 		gl_down(proc() {
+			fade_reset()
 			if imgl_ready {
 				imgl.Shutdown()
 				imgl_ready = false
