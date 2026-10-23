@@ -99,7 +99,7 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Keep empty workspaces: placeholder xdg_toplevel windows (single-pixel buffer), placed via for_window, removed when a real window arrives, back when it leaves; verified live without focus changes
 - [ ] Time tracker: visual check of the panel (screen was locked during the test run)
 - [ ] Time tracker: optional window-rule assignment on numbered workspaces (e.g. by app/title)
-- [ ] Sensor history graphs (record readings over time)
+- [x] Sensor history graphs: readings persisted to sensors.tsv, 24 h graphs on hover (tooltips grow the popup surface)
 
 ## Setup window (self-install)
 - [x] `wlwidgets setup` (and auto-open when run from a download): xdg_toplevel window with the same renderer

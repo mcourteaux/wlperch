@@ -50,6 +50,7 @@ status_loop :: proc() {
 // `wlwidgets status sensors`: "󰔏 20.4°  ● 439" — the bar_room temperature and
 // the freshest CO2 reading; class co2-warn / co2-high when the air gets stale.
 status_sensors_loop :: proc() {
+	sensors_read_only = true
 	for {
 		sensors_reload()
 		temp_s, co2_s, tip: string

@@ -37,8 +37,16 @@ Sensor_Device :: struct {
 	last_t: f64,
 }
 
+Sensor_Sample :: struct {
+	t: f64, // unix seconds
+	v: f32,
+}
+
 Sensors :: struct {
 	mu:       sync.Mutex,
+	// History of every numeric value, keyed "<device id>/<code>"; persisted in
+	// <data>/sensors.tsv (one line per new reading).
+	history:  map[string][dynamic]Sensor_Sample,
 	ok:       bool,
 	error:    string,
 	devices:  [dynamic]Sensor_Device,
@@ -154,6 +162,7 @@ reload :: proc() {
 		}
 	}
 	sensors.ok = true
+	if !sensors_read_only {record_history()}
 }
 
 @(private = "file")
@@ -163,8 +172,90 @@ mtime :: proc(path: string) -> i64 {
 	return time.to_unix_nanoseconds(fi.modification_time)
 }
 
+SENSOR_HISTORY_DAYS :: 7
+
+// Set by `wlwidgets status sensors`: only the daemon writes the history file.
+sensors_read_only: bool
+
+@(private = "file")
+history_path :: proc() -> string {return strings.concatenate({data_dir(), "/sensors.tsv"}, context.temp_allocator)}
+
+@(private = "file")
+history_key :: proc(dev_id, code: string) -> string {return fmt.tprintf("%s/%s", dev_id, code)}
+
+// Append a sample under the lock; returns false if it isn't newer than the last one.
+@(private = "file")
+history_add :: proc(key: string, t: f64, v: f32) -> bool {
+	list, has := &sensors.history[key]
+	if !has {
+		sensors.history[strings.clone(key)] = {}
+		list = &sensors.history[key]
+	}
+	if n := len(list); n > 0 && t <= list[n - 1].t {return false}
+	append(list, Sensor_Sample{t, v})
+	// Drop what fell out of the window (keep one older sample as the start value).
+	cutoff := t - SENSOR_HISTORY_DAYS * 86400
+	old := 0
+	for old + 1 < len(list) && list[old + 1].t < cutoff {old += 1}
+	if old > 64 {remove_range(list, 0, old)}
+	return true
+}
+
+// Load the last few days of the history file.
+@(private = "file")
+load_history :: proc() {
+	data, err := os.read_entire_file(history_path(), context.temp_allocator)
+	if err != nil {return}
+	cutoff := f64(time.to_unix_seconds(time.now())) - SENSOR_HISTORY_DAYS * 86400
+	text := string(data)
+	sync.guard(&sensors.mu)
+	for line in strings.split_lines_iterator(&text) {
+		f := strings.split(line, "\t", context.temp_allocator)
+		if len(f) < 4 {continue}
+		t, ok1 := strconv.parse_f64(f[0])
+		v, ok2 := strconv.parse_f64(f[3])
+		if !ok1 || !ok2 || t < cutoff {continue}
+		history_add(history_key(f[1], f[2]), t, f32(v))
+	}
+}
+
+// New readings since the last reload go into memory and the history file.
+// Called with sensors.mu held.
+@(private = "file")
+record_history :: proc() {
+	b := strings.builder_make(context.temp_allocator)
+	for &d in sensors.devices {
+		for v in d.values {
+			if !v.is_num || v.t <= 0 {continue}
+			if history_add(history_key(d.id, v.code), v.t, f32(v.num)) {
+				fmt.sbprintf(&b, "%.0f\t%s\t%s\t%g\n", v.t, d.id, v.code, v.num)
+			}
+		}
+	}
+	if strings.builder_len(b) == 0 {return}
+	os.make_directory_all(data_dir())
+	f, err := os.open(history_path(), {.Write, .Create, .Append}, os.Permissions_Default_File)
+	if err != nil {return}
+	defer os.close(f)
+	os.write_string(f, strings.to_string(b))
+}
+
+// Samples of one value within [from, now] (temp copy; call with sensors.mu held).
+sensor_history :: proc(dev_id, code: string, from: f64) -> []Sensor_Sample {
+	list, has := sensors.history[history_key(dev_id, code)]
+	if !has {return nil}
+	i := len(list)
+	for i > 0 && list[i - 1].t >= from {i -= 1}
+	// Keep the sample just before the window so the step line starts at the left edge.
+	if i > 0 {i -= 1}
+	out := make([]Sensor_Sample, len(list) - i, context.temp_allocator)
+	copy(out, list[i:])
+	return out
+}
+
 sensors_start :: proc() {
 	if config.sensors_dir == "" || !os.exists(config.sensors_dir) {return}
+	load_history()
 	reload()
 	// Reload whenever the watcher rewrites state.json.
 	thread.create_and_start(proc() {

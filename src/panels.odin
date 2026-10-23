@@ -52,6 +52,7 @@ Panel :: struct {
 	header:      bool,
 	columns:     [dynamic][dynamic]string,
 	last_height: i32,
+	last_panel_h: f32, // panel height (without shadow / tooltip room)
 }
 
 panels: [dynamic]Panel

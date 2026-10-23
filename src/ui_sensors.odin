@@ -77,6 +77,16 @@ draw_rooms :: proc(w: f32) {
 		if d.kind != .Climate {continue}
 		p := im.GetCursorScreenPos()
 		h: f32 = 44
+		im.InvisibleButton(cstr(fmt.tprintf("room:%s", d.id)), {inner, h})
+		if im.IsItemHovered() {
+			im.DrawList_AddRectFilled(dl(), {p.x - 6, p.y}, {p.x + inner + 6, p.y + h}, col32(0xffffff, 0.04), 8)
+			history_tip(&d, d.name, {
+				{"va_temperature", "Temperature", "°", C_ORANGE, 1},
+				{"temp_current", "Temperature", "°", C_ORANGE, 0},
+				{"humidity_value", "Humidity", "%", C_CYAN, 0},
+			})
+		}
+		im.SetCursorScreenPos(p)
 		stale := is_stale(d.last_t)
 		alpha: f32 = stale ? 0.45 : 1
 		draw_text(fonts.bold, SZ_BODY + 1, {p.x, p.y + 4}, col32(C_TEXT, alpha), d.name)
@@ -120,6 +130,16 @@ draw_air :: proc(w: f32, d: ^Sensor_Device) {
 		return
 	}
 	p := im.GetCursorScreenPos()
+	im.InvisibleButton(cstr(fmt.tprintf("airhover:%s", d.id)), {inner, 44})
+	if im.IsItemHovered() {
+		history_tip(d, d.name, {
+			{"co2_value", "CO₂", " ppm", C_GREEN, 0},
+			{"pm25_value", "PM2.5", " µg/m³", C_YELLOW, 0},
+			{"temp_current", "Temperature", "°", C_ORANGE, 0},
+			{"humidity_value", "Humidity", "%", C_CYAN, 0},
+		})
+	}
+	im.SetCursorScreenPos(p)
 	if co2, ok := num(d, "co2_value"); ok {
 		v := fmt.tprintf("%.0f", co2.num)
 		vw := measure(fonts.bold, 34, v).x
@@ -168,6 +188,14 @@ draw_heater :: proc(w: f32, d: ^Sensor_Device) {
 		return
 	}
 	p := im.GetCursorScreenPos()
+	im.InvisibleButton(cstr(fmt.tprintf("heathover:%s", d.id)), {inner, 28})
+	if im.IsItemHovered() {
+		history_tip(d, d.name, {
+			{"temp_current", "Temperature", "°", C_ORANGE, 0},
+			{"temp_set", "Target", "°", C_MUTED, 0},
+		})
+	}
+	im.SetCursorScreenPos(p)
 	pill := on ? "ON" : "OFF"
 	pw := measure(fonts.bold, SZ_SMALL, pill).x + 18
 	im.DrawList_AddRectFilled(dl(), {p.x, p.y + 4}, {p.x + pw, p.y + 24}, col32(on ? C_ORANGE : 0x353b48, on ? 0.9 : 1), 10)
@@ -192,6 +220,43 @@ draw_heater :: proc(w: f32, d: ^Sensor_Device) {
 no_data_yet :: proc(inner: f32) {
 	msg := sensors.watching ? "No data yet — waiting for it to report" : "No data yet (watcher not running)"
 	label(fonts.ui, SZ_BODY, col32(C_MUTED), msg)
+}
+
+HISTORY_SPAN :: 24 * 3600.0
+
+// Hover tooltip with history graphs for the given codes of a device.
+@(private = "file")
+history_tip :: proc(d: ^Sensor_Device, title: string, graphs: []struct {
+		code, label, unit: string,
+		color:             u32,
+		decimals:          int,
+	}) {
+	now := f64(time.to_unix_seconds(time.now()))
+	from := now - HISTORY_SPAN
+	im.PushStyleVarImVec2(.WindowPadding, {12, 10})
+	// Right-aligned inside the panel, just below the pointer.
+	TIP_W :: 300 + 24
+	im.SetNextWindowPos({ui.panel_max.x - TIP_W - 12, im.GetMousePos().y + 20})
+	if im.BeginTooltip() {
+		label(fonts.bold, SZ_BODY, col32(C_TEXT), fmt.tprintf("%s — last 24 h", title))
+		for g in graphs {
+			samples := sensor_history(d.id, g.code, from)
+			if len(samples) == 0 {
+				if alt, ok := sensor_value(d, g.code); !ok || !alt.is_num {continue}
+			}
+			label(fonts.ui, SZ_SMALL, col32(g.color), g.label)
+			sample_graph(samples, from, now, g.color, g.unit, g.decimals, {300, 70})
+		}
+		// Time axis labels, aligned to the graphs' edges.
+		ap := im.GetCursorScreenPos()
+		draw_text(fonts.ui, 10.5, ap, col32(C_FAINT), "24 h ago")
+		nw := measure(fonts.ui, 10.5, "now").x
+		draw_text(fonts.ui, 10.5, {ap.x + 300 - nw, ap.y}, col32(C_FAINT), "now")
+		im.Dummy({300, 14})
+		note_overlay()
+		im.EndTooltip()
+	}
+	im.PopStyleVar()
 }
 
 draw_sensors :: proc(w: f32) {

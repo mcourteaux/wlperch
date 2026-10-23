@@ -223,10 +223,18 @@ icon_button :: proc(id: string, icon: string, col: u32, size: f32 = 28, active :
 	return clicked
 }
 
+// Call inside a tooltip window: lets the popup surface grow to show it fully.
+note_overlay :: proc() {
+	wp := im.GetWindowPos()
+	ws := im.GetWindowSize()
+	ui.overlay_bottom = max(ui.overlay_bottom, wp.y + ws.y)
+}
+
 tip :: proc(s: string) {
 	im.PushStyleVarImVec2(.WindowPadding, {10, 6})
 	if im.BeginTooltip() {
 		label(fonts.ui, SZ_SMALL, col32(C_TEXT), s)
+		note_overlay()
 		im.EndTooltip()
 	}
 	im.PopStyleVar()
@@ -460,4 +468,71 @@ history_graph_multi :: proc(series: []Graph_Series, n: int, max_v: f32, size: Ve
 		im.DrawList_AddPolyline(d, &pts[0], i32(count), col32(s.color), 1.6)
 		im.DrawList_AddCircleFilled(d, pts[count - 1], 3, col32(s.color))
 	}
+}
+
+// Irregularly sampled values (e.g. sensors that report on change) over
+// [from, to]: a step line (each value holds until the next report), auto
+// scaled with a little headroom, with min/max labels.
+sample_graph :: proc(samples: []Sensor_Sample, from, to: f64, color: u32, unit: string, decimals: int, size: Vec2) {
+	p := im.GetCursorScreenPos()
+	im.Dummy(size)
+	d := dl()
+	x0, y0, x1, y1 := p.x, p.y, p.x + size.x, p.y + size.y
+	im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, col32(0x12151b), 6)
+	if len(samples) < 2 {
+		msg := "collecting history…"
+		msz := measure(fonts.ui, SZ_SMALL, msg)
+		draw_text(fonts.ui, SZ_SMALL, {x0 + (size.x - msz.x) / 2, y0 + (size.y - msz.y) / 2}, col32(C_FAINT), msg)
+		return
+	}
+	lo, hi := max(f32), -max(f32)
+	for s in samples {
+		lo = min(lo, s.v)
+		hi = max(hi, s.v)
+	}
+	pad := max((hi - lo) * 0.15, 0.5)
+	vlo, vhi := lo - pad, hi + pad
+	xt :: proc(t, from, to: f64, x0, w: f32) -> f32 {return x0 + w * f32(clamp((t - from) / (to - from), 0, 1))}
+	yv :: proc(v, vlo, vhi, y0, h: f32) -> f32 {return y0 + h - 4 - (h - 8) * (v - vlo) / (vhi - vlo)}
+	pts: [dynamic]Vec2
+	pts.allocator = context.temp_allocator
+	for s, i in samples {
+		x := xt(s.t, from, to, x0, size.x)
+		y := yv(s.v, vlo, vhi, y0, size.y)
+		if i > 0 {append(&pts, Vec2{x, pts[len(pts) - 1].y})} // hold the previous value
+		append(&pts, Vec2{x, y})
+	}
+	// Extend the last value up to "now".
+	append(&pts, Vec2{x1 - 2, pts[len(pts) - 1].y})
+	im.DrawList_PushClipRect(d, {x0, y0}, {x1, y1}, true)
+	uv := im.GetFontTexUvWhitePixel()
+	top := col32(color, 0.25)
+	bot := col32(color, 0.02)
+	for i in 0 ..< len(pts) - 1 {
+		a, b := pts[i], pts[i + 1]
+		if b.x <= a.x {continue}
+		im.DrawList_PrimReserve(d, 6, 6)
+		im.DrawList_PrimVtx(d, a, uv, top)
+		im.DrawList_PrimVtx(d, b, uv, top)
+		im.DrawList_PrimVtx(d, {b.x, y1}, uv, bot)
+		im.DrawList_PrimVtx(d, a, uv, top)
+		im.DrawList_PrimVtx(d, {b.x, y1}, uv, bot)
+		im.DrawList_PrimVtx(d, {a.x, y1}, uv, bot)
+	}
+	im.DrawList_AddPolyline(d, &pts[0], i32(len(pts)), col32(color), 1.6)
+	for s in samples {
+		if s.t >= from {im.DrawList_AddCircleFilled(d, {xt(s.t, from, to, x0, size.x), yv(s.v, vlo, vhi, y0, size.y)}, 2, col32(color))}
+	}
+	im.DrawList_PopClipRect(d)
+	f := fmt.tprintf("%%.%df%%s", decimals)
+	hi_s := fmt.tprintf(f, hi, unit)
+	lo_s := fmt.tprintf(f, lo, unit)
+	// Labels on a backing so the line never runs through them.
+	corner_label :: proc(d: ^im.DrawList, pos: Vec2, text: string) {
+		sz := measure(fonts.ui, 10.5, text)
+		im.DrawList_AddRectFilled(d, {pos.x - 3, pos.y}, {pos.x + sz.x + 3, pos.y + sz.y}, col32(0x12151b, 0.85), 3)
+		draw_text(fonts.ui, 10.5, pos, col32(C_MUTED), text)
+	}
+	corner_label(d, {x0 + 5, y0 + 3}, fmt.tprintf("max %s", hi_s))
+	corner_label(d, {x0 + 5, y1 - 15}, fmt.tprintf("min %s", lo_s))
 }

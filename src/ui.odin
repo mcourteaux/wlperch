@@ -25,6 +25,9 @@ UI :: struct {
 	toast_until:   time.Tick,
 	nightlight_at: time.Tick,
 	shown_frames:  int,
+	panel_min:     Vec2, // panel rectangle this frame (surface coordinates)
+	panel_max:     Vec2,
+	overlay_bottom: f32, // lowest edge of any tooltip this frame (the surface grows to fit)
 }
 ui: UI
 
@@ -77,8 +80,13 @@ draw_ui :: proc() -> f32 {
 	}
 
 	panel_w := io.DisplaySize.x - SHADOW * 2
-	panel_h := io.DisplaySize.y - SHADOW * 2
+	// The surface may be taller than the panel while a tooltip needs room.
+	panel_h := (cur_panel().last_panel_h > 0 ? cur_panel().last_panel_h : io.DisplaySize.y - SHADOW * 2)
+	panel_h = min(panel_h, io.DisplaySize.y - SHADOW * 2)
 	panel_pos := Vec2{SHADOW, SHADOW - 4 - (1 - open_progress()) * 8}
+	ui.panel_min = panel_pos
+	ui.panel_max = panel_pos + Vec2{panel_w, panel_h}
+	ui.overlay_bottom = 0
 
 	draw_shadow(panel_pos, {panel_w, panel_h})
 
@@ -133,6 +141,9 @@ draw_ui :: proc() -> f32 {
 	}
 	if config.max_height > 0 {max_h = min(max_h, f32(config.max_height))}
 	h = min(h, max_h)
+	panel.last_panel_h = h - SHADOW * 2
+	// Tooltips below the panel need surface area too (transparent, no input).
+	if ui.overlay_bottom > 0 {h = min(max(h, ui.overlay_bottom + 12), max_h + 400)}
 	panel.last_height = i32(h)
 	return h
 }
