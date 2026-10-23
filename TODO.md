@@ -84,6 +84,16 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Drop-down list of presets with mini layout preview; selecting applies (runs the script)
 - [x] Highlight currently active preset (compare to current layout)
 
+## Panels (modular popups)
+- [x] `[panel.NAME]` sections: modules in columns, width, header/title; first = default
+- [x] `wlwidgets toggle|show <panel>`; switching panels in place (resize + fade)
+- [x] Restart keeps the open panel
+- [x] perf panel: cpu (load, per-core, uptime), memory (history, used/cache/free, swap, warning), gpu (VRAM), processes (top CPU / memory, grouped by executable, sampled only while shown)
+- [x] sensors panel: Tuya rooms (temp/humidity/battery/age), air quality (CO2 verdict, PM, HCHO), heater; watcher kept running by the daemon
+- [x] waybar accessors: memory → perf, `wlwidgets status sensors` pill → sensors (CO2 warning classes)
+- [ ] Time tracker panel (needs design decisions — see conversation)
+- [ ] Sensor history graphs (record readings over time)
+
 ## Integration & docs
 - [x] Waybar custom module snippet + sway keybinding snippet in README
 - [x] Integrated into the user's waybar: button rightmost, redundant modules removed (memory kept), bar restyled to match

@@ -46,6 +46,11 @@ Config :: struct {
 
 	// [system]
 	history_seconds:    int,
+
+	// [sensors]
+	sensors_dir:        string,
+	sensors_watch:      string,
+	sensors_bar_room:   string, // room shown by "wlwidgets status sensors"
 	memory_warn_pct:    int, // memory use (%) at which we draw attention
 }
 
@@ -100,6 +105,36 @@ preset_glob = *.sh
 history_seconds = 120
 # Memory use (%) at which the popup and the waybar button ("wlwidgets status") turn red.
 memory_warn_percent = 90
+
+[sensors]
+# Directory of the tuya-sensors tool (devices.json + state.json).
+dir = ~/tuya-sensors
+# Command (run inside dir) that keeps state.json up to date; empty = don't run it.
+watch = .venv/bin/python tuya_sensors.py --watch
+# Room whose temperature "wlwidgets status sensors" shows in the bar (empty = first).
+bar_room = Living
+
+# ---- Panels -------------------------------------------------------------
+# "wlwidgets toggle <name>" opens a panel; the first one is the default.
+# columns: module names per column, columns separated by "|".
+# Modules: audio system network weather clocks displays bluetooth
+#          cpu gpu memory processes sensors
+# header = true shows the big clock, night light and keyboard layouts on top;
+# otherwise "title" (if set) is shown as a compact title row.
+
+[panel.main]
+header = true
+columns = audio system network | weather clocks displays bluetooth
+
+[panel.perf]
+title = Performance
+width = 820
+columns = cpu memory gpu | processes
+
+[panel.sensors]
+title = Home
+width = 560
+columns = sensors
 `
 
 config_path :: proc() -> string {
@@ -211,6 +246,15 @@ config_load :: proc() {
 
 	c.history_seconds = clamp(strconv.parse_int(get(m, defaults, "system", "history_seconds")) or_else 120, 30, 600)
 	c.memory_warn_pct = clamp(strconv.parse_int(get(m, defaults, "system", "memory_warn_percent")) or_else 90, 1, 100)
+
+	c.sensors_dir = expand_home(get(m, defaults, "sensors", "dir"))
+	c.sensors_watch = strings.clone(get(m, defaults, "sensors", "watch"))
+	c.sensors_bar_room = strings.clone(get(m, defaults, "sensors", "bar_room"))
+
+	// Panels: from the user's file, or the built-in set if it defines none.
+	src, _ := os.read_entire_file(path, context.temp_allocator)
+	panels_load(string(src), m)
+	if len(panels) == 0 {panels_load(DEFAULT_CONFIG, defaults)}
 }
 
 // `location = "Ghent, Belgium"` -> Ghent, Belgium
@@ -222,7 +266,8 @@ unquote :: proc(s: string) -> string {
 }
 
 popup_size :: proc() -> (w, h: i32) {
-	return config.width + 2 * (SHADOW - SHADOW_BASE), last_content_height > 0 ? last_content_height : 600
+	p := cur_panel()
+	return p.width + 2 * (SHADOW - SHADOW_BASE), p.last_height > 0 ? p.last_height : 600
 }
 
 popup_placement :: proc() -> Popup_Placement {

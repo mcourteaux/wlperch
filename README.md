@@ -46,6 +46,41 @@ Positions may use shell arithmetic, as shown. Scripts without such lines are
 ignored. Symlinks (e.g. `~/.local/bin/desk.sh` → dotfiles) are de-duplicated.
 Applying a preset just runs the script, detached.
 
+## Panels
+
+The popup is made of **panels**, each built from modules laid out in columns.
+`wlwidgets toggle <panel>` opens one. If another panel is already open, it
+switches in place. The first panel in the config is the default.
+
+| Panel (built-in) | Modules |
+|---|---|
+| `main` | header · audio · system · network \| weather · clocks · displays · bluetooth |
+| `perf` | cpu · memory · gpu \| processes |
+| `sensors` | sensors |
+
+Modules: `audio system network weather clocks displays bluetooth cpu gpu memory processes sensors`.
+
+- **cpu, memory, gpu:** large history graphs. CPU adds load average, per-core
+  bars and uptime. Memory shows used/cache/free and swap, and turns red past
+  `memory_warn_percent`. GPU adds VRAM.
+- **processes:** top 8 by CPU (% of one core, like `top`) and by resident
+  memory. Processes are grouped by executable, e.g. `firefox ×38`. This is
+  sampled every 2 s, and only while the module is on screen.
+- **sensors:** Tuya devices through the
+  [tuya-sensors](#sensors) tool. Rooms show temperature, humidity and battery;
+  air-quality monitors show CO₂ (with a verdict), PM1/2.5/10 and HCHO; heaters
+  show on/off and current/target temperature. Readings older than 3 h are dimmed.
+
+Define your own panels with `[panel.NAME]` sections (see Configuration).
+
+### Sensors
+
+wlwidgets reads `devices.json` (names and data-point mappings only, never the
+keys) and `state.json` from `[sensors] dir`, and reloads whenever
+`state.json` changes. The battery sensors sleep and only report when they wake,
+so the daemon keeps `[sensors] watch` (the tool's `--watch` mode) running and
+restarts it if it exits. Leave `watch` empty if you run the watcher yourself.
+
 ## Building
 
 Requirements: `odin` (tested with dev-2026-10), `clang`, `python3`, `git`,
@@ -72,7 +107,9 @@ loaded at runtime); AMD GPUs use sysfs.
 
 ```sh
 wlwidgets            # = toggle: show, or hide if shown (starts the daemon if needed)
-wlwidgets show | hide | quit
+wlwidgets toggle perf   # open a specific panel (switches if another one is open)
+wlwidgets show [panel] | hide | quit
+wlwidgets restart    # new binary + re-read config; keeps graph history
 wlwidgets daemon     # start in the background without showing
 wlwidgets status     # waybar JSON for the bar button (see below)
 ```
@@ -91,27 +128,33 @@ bindsym $mod+w exec wlwidgets toggle
 
 ### Waybar
 
+Any number of bar items can open panels:
+
 ```jsonc
-// in "modules-right": [..., "custom/wlwidgets"]   (rightmost: the popup opens under it)
-"custom/wlwidgets": {
-    "exec": "wlwidgets status",
-    "return-type": "json",
-    "format": "{}",
+"custom/wlwidgets": {          // rightmost: the main panel opens under it
+    "exec": "wlwidgets status", "return-type": "json", "format": "{}",
     "on-click": "wlwidgets toggle"
-}
+},
+"custom/sensors": {            // "󰔏 20.4°  439 ppm"
+    "exec": "wlwidgets status sensors", "return-type": "json", "format": "{}",
+    "on-click": "wlwidgets toggle sensors"
+},
+"memory": { "on-click": "wlwidgets toggle perf" }
 ```
 
-`wlwidgets status` is a tiny loop (no GUI) that prints the button's state every
-2 s. When memory use reaches `memory_warn_percent`, the text becomes
-`󰕮 92%` and the module gets the CSS class `memory-warning`:
+`wlwidgets status` prints the button's state every 2 s. When memory use
+reaches `memory_warn_percent`, the text becomes `󰕮 92%` and the module gets the
+class `memory-warning`. `wlwidgets status sensors` shows the `bar_room`
+temperature and the latest CO₂ reading, with the classes `co2-warn` (>800 ppm)
+and `co2-high` (>1200 ppm). Its tooltip lists every room.
 
 ```css
 #custom-wlwidgets { color: #7aa2f7; background-color: rgba(122,162,247,.16);
                     border-radius: 8px; padding: 0 11px; margin: 3px 2px; font-size: 17px; }
 #custom-wlwidgets.memory-warning { color: #111318; background-color: #f7768e; font-weight: bold; }
+#custom-sensors.co2-warn { color: #ff9e64; }
+#custom-sensors.co2-high { color: #111318; background-color: #f7768e; }
 ```
-
-The popup's Memory row turns red ("running low") at the same threshold.
 
 ## Configuration
 
@@ -150,6 +193,26 @@ preset_glob = *.sh
 [system]
 history_seconds = 120
 memory_warn_percent = 90      # popup + bar button turn red at this memory use
+
+[sensors]
+dir = ~/tuya-sensors
+watch = .venv/bin/python tuya_sensors.py --watch   # run inside dir; empty = don't
+bar_room = Living             # shown by "wlwidgets status sensors"
+
+# Panels: the first is the default. columns: modules per column, separated by |
+[panel.main]
+header = true                 # big clock, night light, keyboard layouts
+columns = audio system network | weather clocks displays bluetooth
+
+[panel.perf]
+title = Performance           # compact title row when there's no header
+width = 820
+columns = cpu memory gpu | processes
+
+[panel.sensors]
+title = Home
+width = 560
+columns = sensors
 ```
 
 Restart the daemon (`wlwidgets quit`) to apply changes.
@@ -181,7 +244,7 @@ src/reexec.odin          memory-returning self re-exec with state hand-over
 src/theme.odin           fonts, palette, ImGui style
 src/widgets.odin         custom-drawn widgets
 src/ui.odin              the popup layout
-src/{audio,sysmon,sway,weather,network,bluetooth,nightlight,displays,clocks}.odin  data services
+src/{audio,sysmon,procs,sensors,sway,weather,network,bluetooth,nightlight,displays,clocks}.odin  data services
 ```
 
 ## Licenses

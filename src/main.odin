@@ -19,13 +19,14 @@ USAGE :: `wlwidgets — quick-settings popup for wlroots compositors
 usage: wlwidgets [command]
 
 commands:
-  toggle   show the popup, or hide it when shown (default)
-  show     show the popup
+  toggle [panel]  show the popup (default panel or the named one), or hide it
+  show [panel]    show the popup / switch to a panel
   hide     hide the popup
   daemon   start the background daemon without showing the popup
   quit     stop the running daemon
   restart  restart the daemon (new binary, re-read config); keeps graph history
-  status   print waybar JSON (icon; memory warning) every 2 s, for a custom module
+  status [sensors]  print waybar JSON every few seconds for a custom module:
+                   the panel button (memory warning), or a room temperature + CO2
 `
 
 App :: struct {
@@ -66,12 +67,31 @@ hide_popup :: proc() {
 	on_hide()
 }
 
-handle_command :: proc(cmd: string) -> string {
+// Commands: toggle|show [panel], hide, quit, restart, daemon, ping.
+handle_command :: proc(line: string) -> string {
+	f := strings.fields(line, context.temp_allocator)
+	if len(f) == 0 {return "unknown command\n"}
+	cmd := f[0]
+	target := -1
+	if len(f) > 1 {
+		target = panel_find(f[1])
+		if target < 0 {return "unknown panel\n"}
+	}
 	switch cmd {
 	case "toggle":
-		if platform_visible() {hide_popup()} else {show_popup()}
+		if platform_visible() {
+			if target < 0 || target == current_panel {hide_popup()} else {switch_panel(target)}
+		} else {
+			current_panel = target >= 0 ? target : 0
+			show_popup()
+		}
 	case "show":
-		show_popup()
+		if platform_visible() {
+			if target >= 0 && target != current_panel {switch_panel(target)}
+		} else {
+			current_panel = target >= 0 ? target : 0
+			show_popup()
+		}
 	case "hide":
 		hide_popup()
 	case "quit":
@@ -85,11 +105,23 @@ handle_command :: proc(cmd: string) -> string {
 	return "ok\n"
 }
 
+// Swap the content of the open popup for another panel.
+switch_panel :: proc(index: int) {
+	current_panel = index
+	w, h := popup_size()
+	platform_request_size(w, h)
+	app.show_time = time.tick_now() // replay the fade so the swap feels intentional
+	on_show()
+	request_redraw()
+}
+
 main :: proc() {
 	level := os.get_env("WLWIDGETS_DEBUG", context.temp_allocator) != "" ? log.Level.Debug : log.Level.Info
 	context.logger = log.create_console_logger(level, {.Level, .Terminal_Color, .Time})
 
 	cmd := len(os.args) > 1 ? os.args[1] : "toggle"
+	// Full command line for the daemon, e.g. "toggle perf".
+	full := len(os.args) > 1 ? strings.join(os.args[1:], " ") : "toggle"
 	switch cmd {
 	case "-h", "--help", "help":
 		fmt.print(USAGE)
@@ -97,7 +129,11 @@ main :: proc() {
 	case "toggle", "show", "hide", "quit", "daemon", "restart":
 	case "status":
 		config_load()
-		status_loop()
+		if len(os.args) > 2 && os.args[2] == "sensors" {
+			status_sensors_loop()
+		} else {
+			status_loop()
+		}
 		return
 	case:
 		fmt.eprint(USAGE)
@@ -109,7 +145,7 @@ main :: proc() {
 		app.ipc_fd = fd
 		resume_show = show
 	} else {
-		if ipc_send(cmd) {return}
+		if ipc_send(full) {return}
 		if cmd == "quit" || cmd == "hide" {return} // nothing running
 
 		// We are the daemon.
@@ -151,7 +187,12 @@ main :: proc() {
 	services_start()
 	log.debugf("services_start took %v, rss %d kB", time.tick_since(t0), rss_kb())
 
-	if (cmd != "daemon" && cmd != "restart") || resume_show {show_popup()}
+	if resume_show {
+		if i := panel_find(resume_panel); i >= 0 {current_panel = i}
+		show_popup()
+	} else if cmd == "toggle" || cmd == "show" {
+		if r := handle_command(full); r != "ok\n" {log.errorf("%s: %s", full, strings.trim_space(r))}
+	}
 
 	app.running = true
 	for app.running {

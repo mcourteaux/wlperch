@@ -6,6 +6,7 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:sync"
 import "core:time"
 
 read_meminfo :: proc() -> (used, total: u64, ok: bool) {
@@ -43,5 +44,59 @@ status_loop :: proc() {
 		if _, err := os.write_string(os.stdout, line); err != nil {return} // waybar went away
 		free_all(context.temp_allocator)
 		time.sleep(2 * time.Second)
+	}
+}
+
+// `wlwidgets status sensors`: "󰔏 20.4°  ● 439" — the bar_room temperature and
+// the freshest CO2 reading; class co2-warn / co2-high when the air gets stale.
+status_sensors_loop :: proc() {
+	for {
+		sensors_reload()
+		temp_s, co2_s, tip: string
+		class := "normal"
+		{
+			sync.guard(&sensors.mu)
+			room: ^Sensor_Device
+			for &d in sensors.devices {
+				if d.kind != .Climate {continue}
+				if room == nil || strings.equal_fold(d.name, config.sensors_bar_room) {room = &d}
+				if strings.equal_fold(d.name, config.sensors_bar_room) {break}
+			}
+			if room != nil {
+				if v, ok := sensor_value(room, "va_temperature"); ok && v.is_num {
+					temp_s = fmt.tprintf("%s %.1f°", ICON_THERMOMETER, v.num)
+				}
+			}
+			best_t: f64
+			lines: [dynamic]string
+			lines.allocator = context.temp_allocator
+			for &d in sensors.devices {
+				t, tok := sensor_value(&d, "va_temperature")
+				if !tok {t, tok = sensor_value(&d, "temp_current")}
+				h, hok := sensor_value(&d, "humidity_value")
+				if tok && t.is_num {
+					line := fmt.tprintf("%s: %.1f°", d.name, t.num)
+					if hok && h.is_num {line = fmt.tprintf("%s  %.0f%%", line, h.num)}
+					append(&lines, fmt.tprintf("%s  (%s)", line, age_text(d.last_t)))
+				}
+				if c, ok := sensor_value(&d, "co2_value"); ok && c.is_num && c.t > best_t {
+					best_t = c.t
+					co2_s = fmt.tprintf("%.0f ppm", c.num)
+					switch {
+					case c.num > 1200: class = "co2-high"
+					case c.num > 800:  class = "co2-warn"
+					case:              class = "normal"
+					}
+				}
+			}
+			tip = strings.join(lines[:], "\\n", context.temp_allocator)
+		}
+		text := temp_s
+		if co2_s != "" {text = fmt.tprintf("%s  %s", text, co2_s) if text != "" else co2_s}
+		if text == "" {text = ICON_THERMOMETER}
+		line := fmt.tprintf(`{{"text": "%s", "tooltip": "%s", "class": "%s"}}` + "\n", text, tip, class)
+		if _, err := os.write_string(os.stdout, line); err != nil {return}
+		free_all(context.temp_allocator)
+		time.sleep(20 * time.Second)
 	}
 }

@@ -18,7 +18,6 @@ SHADOW_BASE :: 16
 SHADOW_OFFSET_Y :: 5 // light comes from slightly above
 COL_GAP :: 12
 
-last_content_height: i32
 hide_requested: bool
 
 UI :: struct {
@@ -46,6 +45,8 @@ services_start :: proc() {
 	weather_start()
 	network_start()
 	bluetooth_start()
+	procs_start()
+	sensors_start()
 	displays_scan()
 	log.debugf("  rest: rss %d kB", rss_kb())
 }
@@ -95,24 +96,24 @@ draw_ui :: proc() -> f32 {
 	platform_set_input_rect(i32(panel_pos.x), i32(panel_pos.y), i32(panel_w), i32(panel_h))
 
 	content_w := im.GetContentRegionAvail().x
-	col_w := (content_w - COL_GAP) / 2
+	panel := cur_panel()
+	ncols := len(panel.columns)
+	col_w := (content_w - COL_GAP * f32(ncols - 1)) / f32(ncols)
 
-	draw_header(content_w)
-	im.Dummy({1, 4})
+	if panel.header {
+		draw_header(content_w)
+		im.Dummy({1, 4})
+	} else if panel.title != "" {
+		draw_title_row(panel.title, content_w)
+	}
 
 	im.PushStyleVarImVec2(.ItemSpacing, {COL_GAP, COL_GAP})
-	im.BeginGroup()
-	draw_audio(col_w)
-	draw_system(col_w)
-	draw_network(col_w)
-	im.EndGroup()
-	im.SameLine()
-	im.BeginGroup()
-	draw_weather(col_w)
-	draw_clocks(col_w)
-	draw_displays(col_w)
-	draw_bluetooth(col_w)
-	im.EndGroup()
+	for col, ci in panel.columns {
+		if ci > 0 {im.SameLine()}
+		im.BeginGroup()
+		for mod in col {module_find(mod)(col_w)}
+		im.EndGroup()
+	}
 	im.PopStyleVar()
 
 	content_bottom := im.GetCursorPosY() - im.GetStyle().ItemSpacing.y + 16
@@ -132,7 +133,7 @@ draw_ui :: proc() -> f32 {
 	}
 	if config.max_height > 0 {max_h = min(max_h, f32(config.max_height))}
 	h = min(h, max_h)
-	last_content_height = i32(h)
+	panel.last_height = i32(h)
 	return h
 }
 
@@ -241,6 +242,24 @@ draw_header :: proc(width: f32) {
 
 	im.SetCursorScreenPos(p)
 	im.Dummy({width, 66})
+}
+
+// Compact header for panels without the big clock: title, time, restart.
+draw_title_row :: proc(title: string, width: f32) {
+	p := im.GetCursorScreenPos()
+	draw_text(fonts.bold, 22, {p.x, p.y}, col32(C_TEXT), title)
+	if r, ok := clock_read(local_region, time.now()); ok {
+		hour := int(r.dt.hour)
+		tm := config.clock_24h ? fmt.tprintf("%02d:%02d", hour, r.dt.minute) : fmt.tprintf("%d:%02d %s", (hour + 11) % 12 + 1, r.dt.minute, hour < 12 ? "AM" : "PM")
+		tsz := measure(fonts.mono, 16, tm)
+		draw_text(fonts.mono, 16, {p.x + width - tsz.x, p.y + 5}, col32(C_MUTED), tm)
+		im.SetCursorScreenPos({p.x + width - tsz.x - 40, p.y + 1})
+		if icon_button("##restart", ICON_REFRESH, C_MUTED, 28, tooltip = "Restart wlwidgets (new build, config)") {
+			restart_requested = true
+		}
+	}
+	im.SetCursorScreenPos(p)
+	im.Dummy({width, 34})
 }
 
 // ---- Audio ------------------------------------------------------------------

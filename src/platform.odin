@@ -49,6 +49,7 @@ Platform :: struct {
 	configured:       bool,
 	width, height:    i32, // logical size of the surface
 	want_height:      i32,
+	want_width:       i32,
 	scale:            i32,
 	preferred_scale:  bool, // compositor sends preferred_buffer_scale
 	frac_scale:       ^wl.Wp_Fractional_Scale_V1,
@@ -692,6 +693,7 @@ platform_show :: proc(placement: Popup_Placement, width, height: i32) -> bool {
 	plat.outside_click = false
 	plat.width, plat.height = width, height
 	plat.want_height = height
+	plat.want_width = width
 
 	plat.surface = wl.compositor_create_surface(plat.compositor)
 	wl.surface_add_listener(plat.surface, &surface_listener, nil)
@@ -794,9 +796,15 @@ platform_visible :: proc() -> bool {
 
 // Ask the compositor for a new surface height (content changed size).
 platform_request_height :: proc(h: i32) {
-	if plat.layer_surface == nil || h == plat.want_height {return}
-	plat.want_height = h
-	wl.zwlr_layer_surface_v1_set_size(plat.layer_surface, u32(plat.width), u32(h))
+	platform_request_size(plat.want_width > 0 ? plat.want_width : plat.width, h)
+}
+
+// Ask for a new surface size (e.g. switching to a panel of another width).
+platform_request_size :: proc(w, h: i32) {
+	if plat.layer_surface == nil {return}
+	if h == plat.want_height && w == (plat.want_width > 0 ? plat.want_width : plat.width) {return}
+	plat.want_width, plat.want_height = w, h
+	wl.zwlr_layer_surface_v1_set_size(plat.layer_surface, u32(w), u32(h))
 	wl.surface_commit(plat.surface)
 }
 

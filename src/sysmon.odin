@@ -51,6 +51,14 @@ Sysmon :: struct {
 
 	mem_used:    u64,
 	mem_total:   u64,
+	mem_cached:  u64, // page cache + reclaimable slab
+	swap_used:   u64,
+	swap_total:  u64,
+	mem:         History, // memory use in %
+	swap:        History, // swap use in %
+	vram:        History, // VRAM use in %
+	load:        [3]f32,  // 1/5/15 min load average
+	uptime:      f64,     // seconds
 }
 sysmon: Sysmon
 
@@ -127,6 +135,7 @@ nvml_sample :: proc() -> bool {
 	sysmon.gpu_now = f32(u.gpu)
 	history_push(&sysmon.gpu, f32(u.gpu))
 	sysmon.vram_used, sysmon.vram_total = m.used, m.total
+	if m.total > 0 {history_push(&sysmon.vram, f32(f64(m.used) / f64(m.total) * 100))}
 	sysmon.gpu_temp = f32(temp)
 	sysmon.gpu_power = f32(power) / 1000
 	return true
@@ -168,6 +177,7 @@ drm_sample :: proc() -> bool {
 	sysmon.gpu_now = f32(busy)
 	history_push(&sysmon.gpu, f32(busy))
 	sysmon.vram_used, sysmon.vram_total = used, total
+	if total > 0 {history_push(&sysmon.vram, f32(f64(used) / f64(total) * 100))}
 	return true
 }
 
@@ -230,7 +240,7 @@ cpu_sample :: proc() {
 		temp = f32(v / 1000)
 	}
 
-	mem_total, mem_avail: u64
+	mem_total, mem_avail, cached, sreclaim, swap_total, swap_free: u64
 	if mi, merr := os.read_entire_file("/proc/meminfo", context.temp_allocator); merr == nil {
 		mt := string(mi)
 		for line in strings.split_lines_iterator(&mt) {
@@ -240,8 +250,22 @@ cpu_sample :: proc() {
 			switch f[0] {
 			case "MemTotal:":     mem_total = v * 1024
 			case "MemAvailable:": mem_avail = v * 1024
+			case "Cached:":       cached = v * 1024
+			case "SReclaimable:": sreclaim = v * 1024
+			case "SwapTotal:":    swap_total = v * 1024
+			case "SwapFree:":     swap_free = v * 1024
 			}
 		}
+	}
+	load: [3]f32
+	if la, lerr := os.read_entire_file("/proc/loadavg", context.temp_allocator); lerr == nil {
+		for f, i in strings.fields(string(la), context.temp_allocator) {
+			if i < 3 {load[i] = f32(strconv.parse_f64(f) or_else 0)}
+		}
+	}
+	uptime: f64
+	if up, uerr := os.read_entire_file("/proc/uptime", context.temp_allocator); uerr == nil {
+		if f := strings.fields(string(up), context.temp_allocator); len(f) > 0 {uptime = strconv.parse_f64(f[0]) or_else 0}
 	}
 
 	sync.guard(&sysmon.mu)
@@ -254,6 +278,13 @@ cpu_sample :: proc() {
 	sysmon.cpu_temp = temp
 	sysmon.mem_total = mem_total
 	sysmon.mem_used = mem_total - mem_avail
+	sysmon.mem_cached = cached + sreclaim
+	sysmon.swap_total = swap_total
+	sysmon.swap_used = swap_total - swap_free
+	sysmon.load = load
+	sysmon.uptime = uptime
+	if mem_total > 0 {history_push(&sysmon.mem, f32(f64(sysmon.mem_used) / f64(mem_total) * 100))}
+	if swap_total > 0 {history_push(&sysmon.swap, f32(f64(sysmon.swap_used) / f64(swap_total) * 100))}
 }
 
 @(private = "file")

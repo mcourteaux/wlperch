@@ -13,13 +13,16 @@ import "core:sys/linux"
 import "core:sys/posix"
 
 @(private = "file")
-STATE_MAGIC :: u32(0x57_4c_57_31) // "WLW1"
+STATE_MAGIC :: u32(0x57_4c_57_32) // "WLW2" (bump when Saved_State changes)
 
 @(private = "file")
 Saved_State :: struct {
 	magic: u32,
 	cpu:   History,
 	gpu:   History,
+	mem:   History,
+	swap:  History,
+	vram:  History,
 }
 
 @(private = "file")
@@ -37,6 +40,9 @@ reexec_self :: proc(show_after := false) {
 		defer sysmon_unlock()
 		state.cpu = sysmon.cpu
 		state.gpu = sysmon.gpu
+		state.mem = sysmon.mem
+		state.swap = sysmon.swap
+		state.vram = sysmon.vram
 	}
 
 	mfd, err := linux.memfd_create("wlwidgets-state", {})
@@ -82,6 +88,7 @@ reexec_self :: proc(show_after := false) {
 		strings.clone_to_cstring(int_to_string(int(app.ipc_fd)), context.temp_allocator),
 		strings.clone_to_cstring(int_to_string(int(mfd)), context.temp_allocator),
 		show_after ? "show" : "hidden",
+		strings.clone_to_cstring(len(panels) > 0 ? cur_panel().name : "", context.temp_allocator),
 		nil,
 	}
 	log.debugf("re-executing %s", exe)
@@ -91,10 +98,13 @@ reexec_self :: proc(show_after := false) {
 	linux.close(mfd)
 }
 
+resume_panel: string // panel that was open before a restart
+
 // Called early in main() when started with `daemon --resume <ipc fd> <state fd>`.
 resume_from_args :: proc() -> (ipc_fd: posix.FD, ok: bool, show: bool) {
 	if len(os.args) < 5 || os.args[2] != "--resume" {return -1, false, false}
 	show = len(os.args) > 5 && os.args[5] == "show"
+	if len(os.args) > 6 {resume_panel = os.args[6]}
 	ifd, ok1 := strconv.parse_int(os.args[3])
 	sfd, ok2 := strconv.parse_int(os.args[4])
 	if !ok1 || !ok2 {return -1, false, false}
@@ -113,6 +123,9 @@ resume_from_args :: proc() -> (ipc_fd: posix.FD, ok: bool, show: bool) {
 	if off == len(buf) && state.magic == STATE_MAGIC {
 		sysmon.cpu = state.cpu
 		sysmon.gpu = state.gpu
+		sysmon.mem = state.mem
+		sysmon.swap = state.swap
+		sysmon.vram = state.vram
 	}
 	reap_children()
 	return posix.FD(ifd), true, show

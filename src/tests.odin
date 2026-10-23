@@ -1,6 +1,7 @@
 // Unit tests: `./build.sh test` (or `odin test src -collection:third_party=third_party`).
 package main
 
+import "core:encoding/ini"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -130,4 +131,36 @@ test_bluetooth_absent :: proc(t: ^testing.T) {
 
 	bluetooth_refresh_now()
 	testing.expect(t, !bluetooth.ok || !bluetooth.adapter, "card guard must hide the Bluetooth section")
+}
+
+PANELS_SAMPLE :: `
+[panel.main]
+header = true
+columns = audio system | weather clocks
+
+[panel.perf]
+title = "Performance"
+width = 700
+columns = cpu memory | processes bogus
+`
+
+@(test)
+test_panels_load :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	m, _ := ini.load_map_from_string(PANELS_SAMPLE, context.allocator)
+	clear(&panels)
+	defer clear(&panels)
+	panels_load(PANELS_SAMPLE, m)
+	testing.expect_value(t, len(panels), 2)
+	if len(panels) != 2 {return}
+	testing.expect_value(t, panels[0].name, "main")
+	testing.expect(t, panels[0].header)
+	testing.expect_value(t, len(panels[0].columns), 2)
+	testing.expect_value(t, panels[1].title, "Performance")
+	testing.expect_value(t, panels[1].width, 700)
+	// Unknown modules are dropped, known ones kept in order.
+	testing.expect_value(t, len(panels[1].columns[1]), 1)
+	testing.expect_value(t, panels[1].columns[1][0], "processes")
+	testing.expect_value(t, panel_find("perf"), 1)
+	testing.expect_value(t, panel_find("nope"), -1)
 }
