@@ -286,11 +286,12 @@ history_graph :: proc(h: ^History, n: int, accent: u32, size: Vec2) {
 	defer im.DrawList_PopClipRect(d)
 
 	pad: f32 = 2
+	right_inset: f32 = 7 // keep the "now" marker fully inside the frame
 	pts := make([]Vec2, count, context.temp_allocator)
-	step := size.x / f32(n - 1)
+	step := (size.x - right_inset) / f32(n - 1)
 	for i in 0 ..< count {
 		v := clamp(history_get(h, count, i), 0, 100)
-		x := x1 - f32(count - 1 - i) * step
+		x := x1 - right_inset - f32(count - 1 - i) * step
 		y := y1 - pad - (size.y - pad * 2) * v / 100
 		pts[i] = {x, y}
 	}
