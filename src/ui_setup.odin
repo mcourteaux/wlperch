@@ -27,6 +27,7 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	case .Rapl:     return {ICON_LIGHTNING, "CPU power reading", "A udev rule that makes the CPU energy counter readable, so the Temperatures & power module can show CPU watts. Needs your password (root).", C_ORANGE, RAPL_RULE}
 	case .Notifications: return {ICON_BELL, "Notifications", "Shows app notifications as popups in the corner, with a history in the Notifications panel and do not disturb. Switches off dunst/mako (masks their service) so they don't take over again.", C_PURPLE, ""}
 	case .Lock:     return {ICON_LOCK, "Lock screen", "wlperch lock instead of swaylock: clock, notification count, media and battery. Switches swayidle and your lock key over (with backups).", C_BLUE, LOCK_CONF}
+	case .Menu:     return {ICON_APPS, "Launcher", "wlperch's app launcher instead of rofi/wofi/fuzzel: apps, a calculator and the panels as you type, \"> command\" runs one. Switches your launcher keys over (with backups).", C_GREEN, MENU_CONF}
 	case .Launcher: return {ICON_HOME, "App launcher entry", "Adds \"wlperch setup\" to your application launcher (rofi, wofi, fuzzel…).", C_YELLOW, ""}
 	}
 	return {}
@@ -159,6 +160,14 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 	case .Launcher:
 		if s == .Missing {append(&out, Action{"Add", true, proc() {setup_install_launcher(true)}, false})}
 		else {append(&out, Action{"Remove", false, proc() {setup_install_launcher(false)}, false})}
+	case .Menu:
+		switch s {
+		case .Missing:   append(&out, Action{"Use wlperch's launcher", true, setup_install_menu, false})
+		case .Outdated:  append(&out, Action{"Switch the rest", true, setup_install_menu, false})
+		case .Installed, .Custom, .Running, .Stopped, .Unavailable, .Partial:
+		}
+		append(&out, Action{"Try it", false, setup_open_menu, false})
+		if s == .Installed || s == .Outdated {append(&out, Action{"Switch back", false, setup_remove_menu, true})}
 	case .Lock:
 		switch s {
 		case .Missing:   append(&out, Action{"Use wlperch lock", true, setup_install_lock, false})
@@ -177,8 +186,8 @@ COLUMNS := [3]struct {
 	title: string,
 	ids:   []Comp_Id,
 } {
-	{"Basics", {.Program, .Service, .Config}},
-	{"Desktop", {.Sway, .Waybar, .Launcher}},
+	{"Basics", {.Program, .Service, .Config, .Launcher}},
+	{"Desktop", {.Sway, .Waybar, .Menu}},
 	{"Extras", {.Notifications, .Lock, .Rapl}},
 }
 

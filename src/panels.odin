@@ -34,6 +34,7 @@ MODULES := [?]Module {
 	{"notifications", draw_notifications},
 	{"media", draw_media},
 	{"calculator", draw_calculator},
+	{"launcher", draw_launcher},
 	{"cpu", draw_cpu_card},
 	{"gpu", draw_gpu_card},
 	{"memory", draw_memory_card},
@@ -86,6 +87,7 @@ panel_icon :: proc(p: Panel) -> string {
 	case "audio":                                                    return ICON_SPEAKER
 	case "notifications":                                            return ICON_BELL
 	case "calculator":                                               return ICON_CALC
+	case "launcher":                                                 return ICON_APPS
 	case "github":                                                   return ICON_GITHUB
 	}
 	return ICON_TUNE
@@ -131,6 +133,19 @@ panels_load :: proc(src: string, m: ini.Map) {
 			continue
 		}
 		p.width = clamp(p.width, 360, 2400)
+		append(&panels, p)
+	}
+}
+
+// The launcher's key bindings ("toggle launch", "toggle run") work with any
+// panel set: add the built-in panels when the config doesn't define them.
+panels_ensure_launcher :: proc() {
+	for name in ([]string{"launch", "run"}) {
+		if panel_find(name) >= 0 {continue}
+		p := Panel{name = strings.clone(name), width = 680, tab = false}
+		col: [dynamic]string
+		append(&col, strings.clone("launcher"))
+		append(&p.columns, col)
 		append(&panels, p)
 	}
 }

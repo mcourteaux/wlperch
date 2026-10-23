@@ -878,3 +878,122 @@ test_lock_setup_round_trip :: proc(t: ^testing.T) {
 	delete(setup.comps[.Lock].message)
 	setup.comps[.Lock].message = ""
 }
+
+@(test)
+test_desktop_entry :: proc(t: ^testing.T) {
+	// Exec quoting and field codes.
+	argv := desktop_exec_argv(`env GDK_BACKEND=wayland "/opt/My App/app" --name=%c %U -x "a \"b\"" 100%%`, "My App", "myapp", "")
+	want := []string{"env", "GDK_BACKEND=wayland", "/opt/My App/app", "--name=My App", "-x", `a "b"`, "100%"}
+	testing.expect_value(t, len(argv), len(want))
+	for w, i in want {
+		if i < len(argv) {testing.expect_value(t, argv[i], w)}
+	}
+	argv = desktop_exec_argv("gimp %i %f", "", "gimp", "")
+	testing.expect_value(t, strings.join(argv, "|", context.temp_allocator), "gimp|--icon|gimp")
+	testing.expect_value(t, desktop_unescape(`a\sb\\c`), `a b\c`)
+
+	// Localized keys: the closest locale wins, whatever the order.
+	ENTRY :: "[Desktop Entry]\nName[nl]=Bestanden\nName=Files\nName[nl_BE]=Bestanden (BE)\nName[de]=Dateien\nActions=new;\n\n[Desktop Action new]\nName=New Window\nExec=files --new\n"
+	g := desktop_parse(ENTRY, {"nl_BE", "nl"})
+	testing.expect_value(t, g["Desktop Entry"]["Name"], "Bestanden (BE)")
+	g = desktop_parse(ENTRY, {"nl"})
+	testing.expect_value(t, g["Desktop Entry"]["Name"], "Bestanden")
+	g = desktop_parse(ENTRY, nil)
+	testing.expect_value(t, g["Desktop Entry"]["Name"], "Files")
+	testing.expect_value(t, g["Desktop Action new"]["Exec"], "files --new")
+}
+
+@(test)
+test_launcher_matching :: proc(t: ^testing.T) {
+	testing.expect(t, fuzzy_score("ff", "firefox") > 0)
+	testing.expect(t, fuzzy_score("xz", "firefox") < 0)
+	// Prefix > word start > inside a word > scattered letters.
+	testing.expect(t, fuzzy_score("term", "terminal") > fuzzy_score("term", "gnome terminal"))
+	testing.expect(t, fuzzy_score("term", "gnome terminal") > fuzzy_score("term", "xterminal"))
+	testing.expect(t, fuzzy_score("term", "xterminal") > fuzzy_score("term", "the remote"))
+	testing.expect(t, fuzzy_score("gc", "gnome calculator") > fuzzy_score("gc", "logic"))
+
+	mk :: proc(name, generic, bin: string) -> App_Entry {
+		return {name = name, name_lc = strings.to_lower(name, context.temp_allocator), generic_lc = strings.to_lower(generic, context.temp_allocator), bin_lc = bin}
+	}
+	firefox := mk("Firefox", "Web Browser", "firefox")
+	files := mk("Files", "File Manager", "nautilus")
+	fonts_app := mk("Fonts", "Font Viewer", "gnome-font-viewer")
+	// Matches on the program and the generic name too; every word must match.
+	testing.expect(t, launcher_score(&files, {"nautilus"}) > 0)
+	testing.expect(t, launcher_score(&firefox, {"browser"}) > 0)
+	testing.expect(t, launcher_score(&firefox, {"web", "browser"}) > 0)
+	testing.expect(t, launcher_score(&firefox, {"web", "files"}) < 0)
+	testing.expect(t, launcher_score(&files, {"fi"}) > launcher_score(&fonts_app, {"fi"}))
+}
+
+@(test)
+test_menu_rewrite :: proc(t: ^testing.T) {
+	cases := [][2]string{
+		{"set $menu wofi --show drun\n", "set $menu wlperch toggle launch --center\n"},
+		{"set $menuterm wofi --show run\n", "set $menuterm wlperch toggle run --center\n"},
+		{"bindsym $mod+d exec rofi -show drun -theme-str 'window {width: 40%;}'\n", "bindsym $mod+d exec wlperch toggle launch --center\n"},
+		{"bindsym $mod+c exec rofi -show calc -modi calc -no-show-match\n", "bindsym $mod+c exec wlperch toggle calc --center\n"},
+		{"bindsym $mod+d exec pkill fuzzel || fuzzel\n", "bindsym $mod+d exec pkill fuzzel || wlperch toggle launch --center\n"},
+		{"bindsym $mod+d exec /usr/bin/tofi-drun --drun-launch=true\n", "bindsym $mod+d exec wlperch toggle launch --center\n"},
+		{"bindsym $mod+r exec 'dmenu_run -i'\n", "bindsym $mod+r exec 'wlperch toggle run --center'\n"},
+		// Left alone: comments, dmenu-style pickers, window switchers, other words.
+		{"# set $menu wofi --show drun\n", "# set $menu wofi --show drun\n"},
+		{"bindsym $mod+v exec cliphist list | wofi --dmenu | cliphist decode | wl-copy\n", "bindsym $mod+v exec cliphist list | wofi --dmenu | cliphist decode | wl-copy\n"},
+		{"bindsym $mod+Tab exec rofi -show window\n", "bindsym $mod+Tab exec rofi -show window\n"},
+		{"set $emoji ~/.config/wofi-emoji/wofi-emoji\n", "set $emoji ~/.config/wofi-emoji/wofi-emoji\n"},
+		{"for_window [app_id=\"wofi\"] floating enable\n", "for_window [app_id=\"wofi\"] floating enable\n"},
+	}
+	for c in cases {
+		got, _ := menu_rewrite(c[0])
+		testing.expect_value(t, got, c[1])
+	}
+}
+
+@(test)
+test_menu_setup_round_trip :: proc(t: ^testing.T) {
+	root := fmt.tprintf("/tmp/wlperch-test-menu-%d", posix.getpid())
+	defer os.remove_all(root)
+	old_cfg := strings.clone(os.get_env("XDG_CONFIG_HOME", context.temp_allocator), context.temp_allocator)
+	old_data := strings.clone(os.get_env("XDG_DATA_HOME", context.temp_allocator), context.temp_allocator)
+	defer {
+		os.set_env("XDG_CONFIG_HOME", old_cfg)
+		os.set_env("XDG_DATA_HOME", old_data)
+	}
+	os.set_env("XDG_CONFIG_HOME", fmt.tprintf("%s/config", root))
+	os.set_env("XDG_DATA_HOME", fmt.tprintf("%s/data", root))
+	sway := fmt.tprintf("%s/config/sway", root)
+	dots := fmt.tprintf("%s/dotfiles", root)
+	testing.expect(t, os.make_directory_all(fmt.tprintf("%s/config.d", sway)) == nil && os.make_directory_all(dots) == nil)
+	read :: proc(p: string) -> string {
+		data, _ := os.read_entire_file(p, context.temp_allocator)
+		return string(data)
+	}
+	MAIN :: "set $mod Mod4\nset $menu wofi --show drun\nset $menuterm wofi --show run\nbindsym $mod+d exec $menu\n"
+	main_dots := fmt.tprintf("%s/config", dots)
+	main_p := fmt.tprintf("%s/config", sway)
+	testing.expect(t, os.write_entire_file(main_dots, MAIN) == nil)
+	testing.expect(t, posix.symlink(strings.clone_to_cstring(main_dots, context.temp_allocator), strings.clone_to_cstring(main_p, context.temp_allocator)) == .OK)
+
+	c: Component
+	menu_setup_check(&c, proc(c: ^Component, line: string) {})
+	testing.expect_value(t, c.state, Comp_State.Missing)
+	menu_switch(apply = false)
+	testing.expect_value(t, read(main_dots), "set $mod Mod4\nset $menu wlperch toggle launch --center\nset $menuterm wlperch toggle run --center\nbindsym $mod+d exec $menu\n")
+	menu_setup_check(&c, proc(c: ^Component, line: string) {})
+	testing.expect_value(t, c.state, Comp_State.Installed)
+	menu_switch_back(apply = false)
+	testing.expect_value(t, read(main_dots), MAIN)
+	st: posix.stat_t
+	testing.expect(t, posix.lstat(strings.clone_to_cstring(main_p, context.temp_allocator), &st) == .OK && posix.S_ISLNK(st.st_mode))
+
+	// No launcher bound: our own file comes and goes.
+	testing.expect(t, os.write_entire_file(main_dots, "set $mod Mod4\n") == nil)
+	menu_switch(apply = false)
+	ours := fmt.tprintf("%s/config.d/%s", sway, MENU_CONF_NAME)
+	testing.expect_value(t, read(ours), MENU_CONF)
+	menu_switch_back(apply = false)
+	testing.expect(t, !os.exists(ours))
+	delete(setup.comps[.Menu].message)
+	setup.comps[.Menu].message = ""
+}

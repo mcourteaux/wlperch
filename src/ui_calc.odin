@@ -83,6 +83,18 @@ calc_input_cb :: proc "c" (data: ^im.InputTextCallbackData) -> i32 {
 	return 0
 }
 
+// Open the calculator panel with `expr` in its field (from the launcher).
+calc_open_with :: proc(expr: string) -> bool {
+	i := panel_find("calc")
+	if i < 0 {return false}
+	calc_set_text(expr)
+	switch_panel(i)
+	return true
+}
+
+// The calculator's angle unit, for the launcher's results.
+calc_degrees :: proc() -> bool {return calc.degrees}
+
 @(private = "file")
 calc_commit :: proc(expr, result: string, v: Calc_Value) {
 	calc.ans, calc.has_ans = v, true

@@ -83,9 +83,10 @@ switches in place. The first panel in the config is the default.
 | `notifications` | notifications |
 | `time` | time |
 | `calc` | calculator (no tab: `tab = false`; open it with a key binding) |
+| `launch`, `run` | launcher (no tab; added even when your config defines its own panels) |
 | `github` | github \| github-repo · github-inbox (only when `[github] enabled = true`) |
 
-Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time notifications media calculator github github-repo github-inbox`.
+Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time notifications media calculator launcher github github-repo github-inbox`.
 
 The system panel's graphs keep the last hour. Scroll over any of them to zoom
 (they zoom together); zooming out from the live view stays live. Dragging or
@@ -352,6 +353,57 @@ setup over:
 To wire it up by hand, see the commented lines in
 [`contrib/sway/wlperch.conf`](contrib/sway/wlperch.conf).
 
+### Launcher
+
+`wlperch toggle launch --center` is an app launcher in place of rofi, wofi or
+fuzzel; `wlperch toggle run --center` runs commands, like their run mode.
+
+- **Apps:** the desktop entries in `~/.local/share/applications` and the
+  `applications` folder of every `$XDG_DATA_DIRS` entry (Flatpak's too), with
+  their theme icons. Hidden entries and entries for other desktops
+  (`OnlyShowIn`/`NotShowIn`, `TryExec`) are left out, and names follow your
+  locale.
+- **Matching:** every typed word has to match the name, the program, the
+  generic name, the keywords, the description or the categories. A match at
+  the start of the name or of a word counts most; scattered letters count
+  too (`ff` finds Firefox). Desktop actions, such as "Firefox: New Private
+  Window", show up while searching.
+- **Ranking:** apps you start often and recently come first, also in the list
+  you see before typing. The counts are in `~/.local/share/wlperch/launcher.tsv`.
+- **Calculator:** a sum (`sqrt(2)*0x10`, `floor(7/2)+1`, `=pi/4`) shows its
+  result as the first row, with hex, binary, f64 bits and hex float chips
+  (click one to copy it). Enter copies the result; Tab or Ctrl+Enter opens it
+  in the calculator panel. A lone number such as `0xff` shows its conversions
+  after any app that matches.
+- **Panels:** wlperch's panels are in the list too (type `sys` for System).
+- **Commands:** start with `>` (the run panel starts with it). The programs on
+  your `$PATH` are listed; Enter runs the selected one with what you typed
+  after it, or the typed line through `sh`; Shift+Enter runs it in a terminal;
+  Tab completes the program name. With nothing matching an app search, Enter
+  runs the text as a command.
+- **Keys:** Up/Down (or Ctrl+N/P, Ctrl+J/K), Page Up/Down, Enter, Escape.
+- **Terminal:** apps with `Terminal=true` and Shift+Enter use `[launcher]
+  terminal`, else `$TERMINAL`, sway's `$term`, or the first of foot, kitty,
+  alacritty, wezterm, ghostty, gnome-terminal, konsole and xterm installed.
+- **Starting:** apps run detached from wlperch, in their `Path` folder.
+
+**Setup → Launcher → Use wlperch's launcher** switches your existing launcher
+keys over:
+- **What changes:** in your sway config and `config.d/*`, launcher commands
+  become wlperch's: `rofi -show drun|combi`, `wofi --show drun`, `fuzzel`,
+  `tofi-drun` and `j4-dmenu-desktop` open `launch`; `rofi -show run`,
+  `wofi --show run`, `tofi-run`, `bemenu-run`, `dmenu_run` and `wmenu-run`
+  open `run`; `rofi -show calc` opens the calculator. So
+  `set $menu wofi --show drun` becomes `set $menu wlperch toggle launch --center`.
+- **What stays:** dmenu-style uses (`cliphist list | wofi --dmenu`), window
+  switchers (`rofi -show window`), emoji pickers and comments.
+- **Backups:** each file is copied to `~/.local/share/wlperch/launcher-backup/`
+  first. Symlinked dotfiles are edited through the link.
+- **Without a launcher:** setup adds `config.d/wlperch-launcher.conf` with
+  `$mod+d` and `$mod+Shift+d`.
+- **Applying it:** setup reloads sway. **Try it** opens the launcher;
+  **Switch back** restores the copies.
+
 ## Installing
 
 wlperch installs itself. Run the binary from wherever you downloaded or built
@@ -433,6 +485,8 @@ wlperch track lock on   # group-lock monitors into/out of project workspaces
 wlperch track keep on   # placeholder windows keep empty project workspaces
 wlperch media play-pause # also play, pause, next, previous [player]
 wlperch toggle calc     # the calculator popup (bind it to a key)
+wlperch toggle launch --center  # the app launcher (apps, sums, panels)
+wlperch toggle run --center     # the launcher's command mode
 wlperch calc '0x1f * 3' # print a result as decimal, hex, octal, binary, f64/f32 bits, hex float
 wlperch notify dnd [on|off]  # do not disturb (no argument: toggle)
 wlperch notify clear    # empty the notification history
@@ -552,6 +606,9 @@ dim = 0.35                    # darken the picture (0..1)
 show_notifications = true     # unread count + app names (never the text)
 show_media = true             # the playing track
 
+[launcher]
+terminal =                    # for Terminal=true apps, e.g. "alacritty -e"; empty: $TERMINAL, sway's $term, …
+
 # Panels: the first is the default. columns: modules per column, separated by |
 [panel.main]
 header = true                 # big clock and date
@@ -577,6 +634,11 @@ title = Calculator
 width = 560
 tab = false                   # no tab in the tab strip
 columns = calculator
+
+[panel.launch]                # wlperch toggle launch (the run panel is alike)
+width = 680
+tab = false
+columns = launcher
 
 [panel.time]
 title = Time
@@ -639,6 +701,10 @@ src/softtext.odin        stb_truetype text into pixel buffers (placeholders, pop
 src/lock.odin            `wlperch lock`: ext-session-lock-v1 lock screen (own process, shm rendering)
 src/pam.odin             minimal PAM bindings for the lock screen
 src/setup_lock.odin      setup component: switch swayidle / the lock key from swaylock and back
+src/launcher.odin        launcher data: desktop entries, $PATH, matching, usage counts, starting apps
+src/ui_launcher.odin     the launcher module (search field, rows, calculator row, keys)
+src/setup_menu.odin      setup component: switch rofi/wofi/fuzzel/… key bindings to the launcher and back
+src/config_switch.odin   rewriting sway files with backups and restoring them (lock screen, launcher)
 ```
 
 ## Licenses

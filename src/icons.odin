@@ -111,3 +111,7 @@ ICON_INBOX :: "\U000F0687" // md-inbox
 ICON_EYE :: "\U000F0208" // md-eye
 ICON_COMMENT :: "\U000F0182" // md-comment_outline
 ICON_CIRCLE_MEDIUM :: "\U000F09DE" // md-circle_medium
+ICON_APPS :: "\U000F003B" // md-apps
+ICON_MAGNIFY :: "\U000F0349" // md-magnify
+ICON_CONSOLE :: "\U000F018D" // md-console
+ICON_RETURN :: "\U000F0311" // md-keyboard_return

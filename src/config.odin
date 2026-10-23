@@ -65,6 +65,9 @@ Config :: struct {
 	lock_dim:           f32,
 	lock_notifications: bool,
 	lock_media:         bool,
+
+	// [launcher]
+	launcher_terminal:  string, // prefix for Terminal=true apps; "" = detect
 }
 
 config: Config
@@ -164,6 +167,15 @@ dim = 0.35
 show_notifications = true
 show_media = true
 
+[launcher]
+# The app launcher: "wlperch toggle launch --center" (apps, calculator,
+# panels) and "wlperch toggle run --center" (commands); bind them in sway
+# or let "wlperch setup" switch rofi/wofi over.
+# Terminal for apps that need one, with the option that runs a command
+# (e.g. "alacritty -e"). Empty = $TERMINAL, sway's $term or the first known
+# terminal installed.
+terminal =
+
 [timetracker]
 # Minutes without input after which counting pauses (the idle time is not counted).
 idle_minutes = 5
@@ -198,7 +210,7 @@ bar_room =
 # columns: module names per column, columns separated by "|".
 # Modules: quick audio network weather clocks displays bluetooth storage
 #          cpu gpu memory processes thermals sensors time notifications media
-#          calculator
+#          calculator launcher
 #          github github-repo github-inbox (need [github] enabled = true)
 # quick = night light, do not disturb, Bluetooth, project toggles, keyboard
 #         layouts and buttons that open the other panels.
@@ -235,6 +247,16 @@ title = Calculator
 width = 560
 tab = false
 columns = calculator
+
+[panel.launch]
+width = 680
+tab = false
+columns = launcher
+
+[panel.run]
+width = 680
+tab = false
+columns = launcher
 
 [panel.github]
 title = GitHub
@@ -399,6 +421,8 @@ config_load :: proc() {
 	c.lock_notifications = parse_bool(get(m, defaults, "lock", "show_notifications"), true)
 	c.lock_media = parse_bool(get(m, defaults, "lock", "show_media"), true)
 
+	c.launcher_terminal = strings.clone(get(m, defaults, "launcher", "terminal"))
+
 	c.sensors_dir = expand_home(get(m, defaults, "sensors", "dir"))
 	c.sensors_watch = strings.clone(get(m, defaults, "sensors", "watch"))
 	c.sensors_bar_room = strings.clone(get(m, defaults, "sensors", "bar_room"))
@@ -411,6 +435,7 @@ config_load :: proc() {
 	src, _ := os.read_entire_file(path, context.temp_allocator)
 	panels_load(string(src), m)
 	if len(panels) == 0 {panels_load(DEFAULT_CONFIG, defaults)}
+	panels_ensure_launcher()
 	// No sensors defined: drop the module (and a panel left empty, like the built-in "sensors").
 	if !sensors_configured() {panels_drop_module("sensors")}
 	if !c.github {
