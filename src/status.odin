@@ -127,7 +127,7 @@ status_timer_loop :: proc() {
 					}
 					day := local_day_start(now)
 					for e in entries {
-						if e.project == project && e.end > day {total += e.end - max(e.start, day)}
+						if e.project == project && !e.idle && e.end > day {total += e.end - max(e.start, day)}
 					}
 					text = fmt.tprintf("%s %s %s", ICON_CLOCK, project, fmt_duration(total))
 					class = "running"

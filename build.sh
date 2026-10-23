@@ -73,7 +73,8 @@ FLAGS=(-collection:third_party=third_party -define:DEFAULT_TEMP_ALLOCATOR_BACKIN
 case $MODE in
 	debug|run) FLAGS+=(-debug -o:none) ;;
 	test)
-		odin test src -out:build/wlwidgets-test "${FLAGS[@]}" -debug
+		# Single-threaded: several tests swap out global state (tracker, panels).
+		odin test src -out:build/wlwidgets-test "${FLAGS[@]}" -debug -define:ODIN_TEST_THREADS=1
 		exit $?
 		;;
 	*)         FLAGS+=(-o:speed) ;;

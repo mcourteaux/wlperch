@@ -3,7 +3,9 @@
 // the user isn't idle; numbered workspaces are not counted.
 //
 // Log: <data>/timelog.tsv, one finished segment per line:
-//   2026-10-23T11:05:00Z<TAB>2026-10-23T12:40:10Z<TAB>Project<TAB>Client
+//   2026-10-23T11:05:00Z<TAB>2026-10-23T12:40:10Z<TAB>Project<TAB>Client[<TAB>idle]
+// Breaks (no input for idle_minutes) are logged too, marked "idle", and
+// attributed to the project whose workspace was focused when you walked away.
 // The open segment is kept in <data>/timetracker.current (start, last heartbeat,
 // project) so a crash loses at most one heartbeat interval.
 package main
@@ -29,8 +31,11 @@ Project :: struct {
 
 Time_Entry :: struct {
 	start, end: i64, // unix seconds
-	project:    string,
+	project:    string, // NO_PROJECT for breaks taken outside project workspaces
+	idle:       bool,   // a break (away from keyboard), not work
 }
+
+NO_PROJECT :: "(no project)"
 
 Tracker :: struct {
 	projects:   [dynamic]Project,
@@ -39,6 +44,14 @@ Tracker :: struct {
 	seg_start:  i64,
 	last_beat:  time.Tick,
 	paused_idle: bool,
+
+	// The break in progress (away from keyboard).
+	away:         bool,
+	away_start:   i64,
+	away_project: string,
+	away_client:  string,
+	away_beat:    time.Tick,
+	away_path:    string,
 	log_path:   string,
 	cur_path:   string,
 	idle:       time.Duration,
@@ -141,7 +154,7 @@ fmt_duration :: proc(secs: i64, with_seconds := false) -> string {
 
 @(private = "file")
 append_entry :: proc(e: Time_Entry, client: string) {
-	line := fmt.tprintf("%s\t%s\t%s\t%s\n", iso_utc(e.start), iso_utc(e.end), e.project, client)
+	line := fmt.tprintf("%s\t%s\t%s\t%s%s\n", iso_utc(e.start), iso_utc(e.end), e.project, client, e.idle ? "\tidle" : "")
 	f, err := os.open(tracker.log_path, {.Write, .Create, .Append}, os.Permissions_Default_File)
 	if err != nil {
 		log.errorf("time log %s: %v", tracker.log_path, err)
@@ -149,7 +162,7 @@ append_entry :: proc(e: Time_Entry, client: string) {
 	}
 	defer os.close(f)
 	os.write_string(f, line)
-	append(&tracker.entries, Time_Entry{e.start, e.end, strings.clone(e.project)})
+	append(&tracker.entries, Time_Entry{e.start, e.end, strings.clone(e.project), e.idle})
 }
 
 timelog_parse :: proc(data: string, out: ^[dynamic]Time_Entry) {
@@ -160,7 +173,7 @@ timelog_parse :: proc(data: string, out: ^[dynamic]Time_Entry) {
 		s, ok1 := parse_iso_utc(f[0])
 		e, ok2 := parse_iso_utc(f[1])
 		if !ok1 || !ok2 || e <= s {continue}
-		append(out, Time_Entry{s, e, strings.clone(f[2])})
+		append(out, Time_Entry{s, e, strings.clone(f[2]), len(f) > 4 && f[4] == "idle"})
 	}
 }
 
@@ -175,7 +188,7 @@ close_segment :: proc(end: i64) {
 	if tracker.running < 0 {return}
 	p := tracker.projects[tracker.running]
 	if end - tracker.seg_start >= MIN_SEGMENT {
-		append_entry({tracker.seg_start, end, p.name}, p.client)
+		append_entry({tracker.seg_start, end, p.name, false}, p.client)
 	}
 	os.remove(tracker.cur_path)
 	tracker.running = -1
@@ -188,6 +201,7 @@ tracker_init :: proc() {
 	tracker.log_path = strings.concatenate({dir, "/timelog.tsv"})
 	tracker.cur_path = strings.concatenate({dir, "/timetracker.current"})
 	tracker.lock_path = strings.concatenate({dir, "/timetracker.lock"})
+	tracker.away_path = strings.concatenate({dir, "/timetracker.away"})
 	tracker.lock = os.exists(tracker.lock_path)
 	if data, err := os.read_entire_file(tracker.log_path, context.temp_allocator); err == nil {
 		timelog_parse(string(data), &tracker.entries)
@@ -198,9 +212,19 @@ tracker_init :: proc() {
 			s, _ := strconv.parse_i64(f[0])
 			e, _ := strconv.parse_i64(f[1])
 			client := len(f) > 3 ? f[3] : ""
-			if e - s >= MIN_SEGMENT {append_entry({s, e, f[2]}, client)}
+			if e - s >= MIN_SEGMENT {append_entry({s, e, f[2], false}, client)}
 		}
 		os.remove(tracker.cur_path)
+	}
+	// A break that was in progress when we stopped: keep it up to the last heartbeat.
+	if data, err := os.read_entire_file(tracker.away_path, context.temp_allocator); err == nil {
+		f := strings.split(strings.trim_space(string(data)), "\t", context.temp_allocator)
+		if len(f) >= 3 {
+			s, _ := strconv.parse_i64(f[0])
+			e, _ := strconv.parse_i64(f[1])
+			if e > s {append_entry({s, e, f[2], true}, len(f) > 3 ? f[3] : "")}
+		}
+		os.remove(tracker.away_path)
 	}
 	if len(tracker.projects) > 0 && !platform_watch_idle(tracker.idle) {
 		log.warn("compositor lacks ext-idle-notify-v1: idle time will be counted")
@@ -218,6 +242,7 @@ tracker_tick :: proc() {
 	}
 	want := plat.idle ? -1 : project_for_workspace(ws)
 	now := time.to_unix_seconds(time.now())
+	track_away(ws, now)
 	if want != tracker.running {
 		if tracker.running >= 0 {
 			end := now
@@ -239,14 +264,61 @@ tracker_tick :: proc() {
 	if !plat.idle {tracker.paused_idle = false}
 }
 
+// Breaks: start when the compositor reports idle, end on the next input.
+@(private = "file")
+track_away :: proc(ws: string, now: i64) {
+	if plat.idle && !tracker.away {
+		tracker.away = true
+		tracker.away_start = time.to_unix_seconds(plat.idle_since)
+		delete(tracker.away_project)
+		delete(tracker.away_client)
+		if p := project_for_workspace(ws); p >= 0 {
+			tracker.away_project = strings.clone(tracker.projects[p].name)
+			tracker.away_client = strings.clone(tracker.projects[p].client)
+		} else {
+			tracker.away_project = strings.clone(NO_PROJECT)
+			tracker.away_client = ""
+		}
+		write_away(now)
+	} else if !plat.idle && tracker.away {
+		close_away(now)
+	} else if tracker.away && time.tick_since(tracker.away_beat) >= HEARTBEAT {
+		write_away(now)
+	}
+}
+
+@(private = "file")
+write_away :: proc(now: i64) {
+	tracker.away_beat = time.tick_now()
+	_ = os.write_entire_file(tracker.away_path, fmt.tprintf("%d\t%d\t%s\t%s\n", tracker.away_start, now, tracker.away_project, tracker.away_client))
+}
+
+@(private = "file")
+close_away :: proc(end: i64) {
+	if !tracker.away {return}
+	tracker.away = false
+	if end > tracker.away_start {
+		append_entry({tracker.away_start, end, tracker.away_project, true}, tracker.away_client)
+	}
+	os.remove(tracker.away_path)
+	request_redraw()
+}
+
 // How long the main loop may sleep before the next heartbeat is due.
 tracker_timeout :: proc() -> time.Duration {
-	if tracker.running < 0 {return -1}
-	return max(HEARTBEAT - time.tick_since(tracker.last_beat), 0)
+	t: time.Duration = -1
+	if tracker.running >= 0 {t = max(HEARTBEAT - time.tick_since(tracker.last_beat), 0)}
+	if tracker.away {
+		a := max(HEARTBEAT - time.tick_since(tracker.away_beat), 0)
+		t = t < 0 ? a : min(t, a)
+	}
+	return t
 }
 
 tracker_shutdown :: proc() {
-	close_segment(time.to_unix_seconds(time.now()))
+	now := time.to_unix_seconds(time.now())
+	close_segment(now)
+	close_away(now)
 }
 
 // Active outputs, left to right; a project's workspace "<name> N" lives on the N-th.
@@ -422,9 +494,34 @@ tracker_totals :: proc(from, to: i64) -> map[string]i64 {
 		b := min(e, to)
 		if b > a {out[project] = out[project] + (b - a)}
 	}
-	for e in tracker.entries {add(&out, e.project, e.start, e.end, from, to)}
+	for e in tracker.entries {
+		if !e.idle {add(&out, e.project, e.start, e.end, from, to)}
+	}
 	if tracker.running >= 0 {
 		add(&out, tracker.projects[tracker.running].name, tracker.seg_start, time.to_unix_seconds(time.now()), from, to)
 	}
+	return out
+}
+
+Break_Stats :: struct {
+	count: int, // breaks that started in the range
+	secs:  i64, // time away within the range
+}
+
+// Breaks per project (NO_PROJECT for breaks outside project workspaces),
+// including the one in progress.
+tracker_breaks :: proc(from, to: i64) -> map[string]Break_Stats {
+	out := make(map[string]Break_Stats, 16, context.temp_allocator)
+	add :: proc(out: ^map[string]Break_Stats, project: string, s, e, from, to: i64) {
+		b := out[project]
+		if s >= from && s < to {b.count += 1}
+		lo, hi := max(s, from), min(e, to)
+		if hi > lo {b.secs += hi - lo}
+		if b.count > 0 || b.secs > 0 {out[project] = b}
+	}
+	for e in tracker.entries {
+		if e.idle {add(&out, e.project, e.start, e.end, from, to)}
+	}
+	if tracker.away {add(&out, tracker.away_project, tracker.away_start, time.to_unix_seconds(time.now()), from, to)}
 	return out
 }

@@ -110,7 +110,14 @@ workspaces are not counted. Counting pauses after `idle_minutes` without input
 video count as activity), and the idle time itself is not counted.
 
 Finished segments are appended to `~/.local/share/wlwidgets/timelog.tsv`, one
-per line: start and end (UTC, ISO 8601), project, client. The open segment is
+per line: start and end (UTC, ISO 8601), project, client.
+
+**Breaks are tracked too.** Every walk-away (no input for `idle_minutes`) is
+logged as its own line with a fifth column `idle`. It runs from the moment
+input stopped to your return, and is attributed to the project whose workspace
+was focused when you left (or `(no project)`). The panel's "Away from keyboard"
+section shows, per project, the breaks today and this week, the total time away,
+and how long you work on average before walking away ("every 42m"). The open segment is
 written to `timetracker.current` every 30 s, so a crash loses at most that.
 Segments shorter than 5 s are dropped.
 

@@ -252,3 +252,32 @@ test_group_lock_plan :: proc(t: ^testing.T) {
 	// Within the same project (NeonRAW 1 -> NeonRAW 2 on one monitor): nothing.
 	testing.expect_value(t, len(plan_sync("NeonRAW 1", "NeonRAW 2", "DP-1", outs, vis, &ret)), 0)
 }
+
+@(test)
+test_breaks :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	saved := tracker
+	defer tracker = saved
+	tracker = Tracker{running = -1}
+	append(&tracker.projects, Project{key = "neon", name = "NeonRAW"})
+	LOG :: "2026-10-23T08:00:00Z\t2026-10-23T10:00:00Z\tNeonRAW\tZec\n" +
+		"2026-10-23T10:00:00Z\t2026-10-23T10:15:00Z\tNeonRAW\tZec\tidle\n" +
+		"2026-10-23T10:15:00Z\t2026-10-23T11:00:00Z\tNeonRAW\tZec\n" +
+		"2026-10-23T11:00:00Z\t2026-10-23T11:05:00Z\tNeonRAW\tZec\tidle\n" +
+		"2026-10-23T12:00:00Z\t2026-10-23T12:30:00Z\t(no project)\t\tidle\n"
+	timelog_parse(LOG, &tracker.entries)
+	testing.expect_value(t, len(tracker.entries), 5)
+	testing.expect(t, tracker.entries[1].idle)
+	testing.expect(t, !tracker.entries[0].idle)
+
+	day, _ := time.datetime_to_time(2026, 10, 23, 0, 0, 0)
+	from := time.to_unix_seconds(day)
+	// Breaks don't count as work.
+	work := tracker_totals(from, from + 86400)
+	testing.expect_value(t, work["NeonRAW"], 2 * 3600 + 45 * 60)
+	b := tracker_breaks(from, from + 86400)
+	testing.expect_value(t, b["NeonRAW"].count, 2)
+	testing.expect_value(t, b["NeonRAW"].secs, 20 * 60)
+	testing.expect_value(t, b[NO_PROJECT].count, 1)
+	testing.expect_value(t, b[NO_PROJECT].secs, 30 * 60)
+}

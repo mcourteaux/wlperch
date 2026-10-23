@@ -138,6 +138,47 @@ draw_time :: proc(w: f32) {
 	im.Dummy({inner, bh})
 	label(fonts.ui, SZ_SMALL, col32(C_FAINT), "bar = 8 hour workday")
 
+	// ---- Breaks (away from keyboard) ------------------------------------
+	{
+		breaks_today := tracker_breaks(today, now + 1)
+		breaks_week := tracker_breaks(week_from, now + 1)
+		n_today, n_week: int
+		for _, b in breaks_today {n_today += b.count}
+		for _, b in breaks_week {n_week += b.count}
+		sub_heading(fmt.tprintf("Away from keyboard   ·   today %d×   ·   7 days %d×", n_today, n_week))
+		if n_week == 0 && !tracker.away {
+			label(fonts.ui, SZ_SMALL, col32(C_FAINT), fmt.tprintf("No breaks yet (a break = no input for %d min)", int(time.duration_minutes(tracker.idle))))
+		}
+		row :: proc(name, client: string, color: u32, bt, bw: Break_Stats, work_week: i64, inner: f32) {
+			rp := im.GetCursorScreenPos()
+			h: f32 = 30
+			im.DrawList_AddCircleFilled(dl(), {rp.x + 6, rp.y + h / 2}, 4, col32(color, 0.8))
+			draw_text(fonts.ui, SZ_BODY, {rp.x + 18, rp.y + 6}, col32(C_TEXT), name)
+			counts := fmt.tprintf("%d× today  ·  %d× this week", bt.count, bw.count)
+			nsz := measure(fonts.ui, SZ_BODY, name)
+			draw_text(fonts.ui, SZ_SMALL, {rp.x + 26 + nsz.x, rp.y + 8}, col32(C_FAINT), counts)
+			right := fmt.tprintf("away %s", fmt_duration(bw.secs))
+			// How long you work, on average, before walking away.
+			if work_week > 0 && bw.count > 0 {
+				right = fmt.tprintf("every %dm  ·  %s", int(work_week / i64(bw.count) / 60), right)
+			}
+			rsz := measure(fonts.mono, SZ_SMALL + 1, right)
+			draw_text(fonts.mono, SZ_SMALL + 1, {rp.x + inner - rsz.x, rp.y + 7}, col32(C_MUTED), right)
+			im.Dummy({inner, h})
+		}
+		for pr in tracker.projects {
+			bw, has := breaks_week[pr.name]
+			if !has {continue}
+			row(pr.name, pr.client, pr.color, breaks_today[pr.name], bw, week[pr.name], inner)
+		}
+		if bw, has := breaks_week[NO_PROJECT]; has {
+			row("No project", "", C_FAINT, breaks_today[NO_PROJECT], bw, 0, inner)
+		}
+		if tracker.away {
+			label(fonts.ui, SZ_SMALL, col32(C_ORANGE), fmt.tprintf("Away right now since %s", fmt_duration(now - tracker.away_start)))
+		}
+	}
+
 	// ---- Week -----------------------------------------------------------
 	sub_heading("Last 7 days")
 	gp := im.GetCursorScreenPos()
