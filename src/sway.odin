@@ -18,6 +18,7 @@ IPC_GET_OUTPUTS :: 3
 IPC_GET_INPUTS :: 100
 IPC_GET_WORKSPACES :: 1
 IPC_GET_TREE :: 4
+IPC_GET_CONFIG :: 9
 EVENT_WORKSPACE :: 0x80000000
 EVENT_WINDOW :: 0x80000003
 
@@ -141,6 +142,32 @@ sway_command :: proc(cmd: string) -> bool {
 	if !ok {return false}
 	log.debugf("sway: %s -> %s", cmd, reply)
 	return strings.contains(reply, `"success": true`) || strings.contains(reply, `"success":true`)
+}
+
+// The user's mouse_warping setting (last one in the main config; sway's
+// default is "output"). sway can't report the live value, and get_config
+// only returns the main file.
+@(private = "file")
+configured_mouse_warping :: proc() -> string {
+	reply, ok := sway_request(IPC_GET_CONFIG, "")
+	if !ok {return "output"}
+	v, _ := jparse(reply)
+	text := jstr(jobj(v, "config"))
+	mode := "output"
+	for line in strings.split_lines_iterator(&text) {
+		f := strings.fields(line, context.temp_allocator)
+		if len(f) == 2 && f[0] == "mouse_warping" {mode = f[1]}
+	}
+	return mode
+}
+
+// Run a chain that hops focus across outputs without dragging the cursor
+// along: sway warps it on every output change otherwise.
+sway_command_no_warp :: proc(cmd: string) -> bool {
+	restore := fmt.tprintf("mouse_warping %s", configured_mouse_warping())
+	ok := sway_command(fmt.tprintf("mouse_warping none; %s; %s", cmd, restore))
+	if !ok {sway_command(restore)} // a failing command stops the chain
+	return ok
 }
 
 sway_refresh_workspaces :: proc() {

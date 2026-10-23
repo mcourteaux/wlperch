@@ -383,7 +383,7 @@ tracker_start :: proc(index: int) {
 	}
 	strings.write_string(&b, last)
 	tracker.sync_at = time.tick_now()
-	sway_command(strings.to_string(b))
+	sway_command_no_warp(strings.to_string(b))
 }
 
 tracker_set_lock :: proc(on: bool) {
@@ -490,7 +490,7 @@ tracker_sync :: proc() {
 	}
 	fmt.sbprintf(&b, "focus output %s", focused_out)
 	tracker.sync_at = time.tick_now()
-	sway_command(strings.to_string(b))
+	sway_command_no_warp(strings.to_string(b))
 }
 
 // ---- Aggregation ---------------------------------------------------------
