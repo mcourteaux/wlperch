@@ -228,6 +228,11 @@ loop_iteration :: proc() {
 			hide_popup()
 			return
 		}
+		if hide_requested {
+			hide_requested = false
+			hide_popup()
+			return
+		}
 		if (plat.focus_lost || plat.outside_click) && config.hide_on_focus_loss {
 			hide_popup()
 			return

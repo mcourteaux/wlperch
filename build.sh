@@ -23,7 +23,7 @@ if [[ ! -f $IMGUI_DIR/temp/imgui.cpp ]]; then
 	sed -i 's/^wanted_backends = \[.*/wanted_backends = ["opengl3"]/; /^\t\t\t\t   "dx11", "dx12"/d' "$IMGUI_DIR/build.py"
 	(cd "$IMGUI_DIR" && python3 build.py)
 fi
-IMGUI_STAMP=$IMGUI_DIR/.freetype-build
+IMGUI_STAMP=$IMGUI_DIR/.freetype-wchar32-build
 if [[ ! -f $IMGUI_STAMP ]]; then
 	echo ">> compiling imgui with FreeType"
 	T=$IMGUI_DIR/temp
@@ -34,7 +34,7 @@ if [[ ! -f $IMGUI_STAMP ]]; then
 	pids=()
 	for s in "${srcs[@]}"; do
 		clang++ -c -O2 -fPIC -fno-exceptions -fno-rtti -fno-threadsafe-statics -std=c++17 \
-			-DIMGUI_DISABLE_OBSOLETE_FUNCTIONS '-DIMGUI_IMPL_API=extern "C"' -DIMGUI_ENABLE_FREETYPE \
+			-DIMGUI_DISABLE_OBSOLETE_FUNCTIONS '-DIMGUI_IMPL_API=extern "C"' -DIMGUI_ENABLE_FREETYPE -DIMGUI_USE_WCHAR32 \
 			$(pkg-config --cflags freetype2) -I"$T" -I"$IMGUI_DIR/imgui" "$T/$s" -o "$T/${s%.cpp}.o" &
 		pids+=($!)
 	done
@@ -45,6 +45,8 @@ if [[ ! -f $IMGUI_STAMP ]]; then
 fi
 # Fedora & co ship libstdc++, not libc++.
 sed -i 's/"system:c++"/"system:stdc++"/' "$IMGUI_DIR/imgui.odin"
+# Icons live above U+FFFF, so ImWchar must be 32-bit (matches -DIMGUI_USE_WCHAR32).
+sed -i 's/^Wchar   :: Wchar16$/Wchar   :: Wchar32/' "$IMGUI_DIR/imgui.odin"
 
 # ---- Wayland bindings -----------------------------------------------------
 P=/usr/share/wayland-protocols
