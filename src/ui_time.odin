@@ -76,13 +76,16 @@ draw_time :: proc(w: f32) {
 		d := dl()
 		active := i == tracker.running
 		if active {
-			im.DrawList_AddRectFilled(d, {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h}, col32(pr.color, 0.12), 8)
+			im.DrawList_AddRectFilled(d, {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h}, col32(pr.color, hovered ? 0.2 : 0.12), 8)
 		} else if hovered {
-			im.SetMouseCursor(.Hand)
 			im.DrawList_AddRectFilled(d, {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h}, col32(0xffffff, 0.05), 8)
-			tip(fmt.tprintf("Open %s's workspaces", pr.name))
 		}
-		if clicked && !active {start = i}
+		if hovered {
+			im.SetMouseCursor(.Hand)
+			tip(active ? fmt.tprintf("Bring all monitors back to %s", pr.name) : fmt.tprintf("Open %s's workspaces on all monitors", pr.name))
+		}
+		// Also for the active project: re-syncs every monitor (e.g. one wandered off).
+		if clicked {start = i}
 		im.DrawList_AddCircleFilled(d, {rp.x + 6, rp.y + h / 2}, 5, col32(pr.color, active ? 1 : 0.7))
 		draw_text(active ? fonts.bold : fonts.ui, SZ_BODY, {rp.x + 20, rp.y + 8}, col32(C_TEXT), pr.name)
 		if pr.client != "" {
@@ -91,11 +94,9 @@ draw_time :: proc(w: f32) {
 		}
 		tt := fmt_duration(totals_today[pr.name])
 		tsz := measure(fonts.mono, SZ_BODY, tt)
-		right: f32 = active ? 0 : 26
-		draw_text(fonts.mono, SZ_BODY, {rp.x + inner - tsz.x - right, rp.y + 8}, col32(totals_today[pr.name] > 0 ? C_TEXT : C_FAINT), tt)
-		if !active {
-			draw_text(fonts.ui, 15, {rp.x + inner - 16, rp.y + 8}, col32(hovered ? pr.color : C_FAINT), ICON_PLAY)
-		}
+		draw_text(fonts.mono, SZ_BODY, {rp.x + inner - tsz.x - 26, rp.y + 8}, col32(totals_today[pr.name] > 0 ? C_TEXT : C_FAINT), tt)
+		icon := active ? ICON_MONITORS : ICON_PLAY
+		draw_text(fonts.ui, 15, {rp.x + inner - 16, rp.y + 8}, col32(hovered || active ? pr.color : C_FAINT, active && !hovered ? 0.6 : 1), icon)
 	}
 	if start >= 0 {
 		tracker_start(start)
