@@ -77,14 +77,34 @@ card_end :: proc() {
 card_title :: proc(icon: string, title: string, accent: u32, right_text := "") {
 	p := im.GetCursorScreenPos()
 	w := im.GetContentRegionAvail().x
-	draw_text(fonts.ui, 19, {p.x - 1, p.y - 1}, col32(accent), icon)
-	draw_text(fonts.bold, SZ_TITLE, {p.x + 25, p.y}, col32(accent), title)
+	// Icon glyphs sit at arbitrary heights in the symbol font, so center each
+	// one's actual ink box on the title's cap height.
+	ty := p.y + 1
+	cap0, cap1 := glyph_ink_y(fonts.bold, SZ_TITLE, 'H')
+	ic0, ic1 := glyph_ink_y(fonts.ui, 19, first_rune(icon))
+	iy := ty + (cap0 + cap1) / 2 - (ic0 + ic1) / 2
+	draw_text(fonts.ui, 19, {p.x - 1, iy}, col32(accent), icon)
+	draw_text(fonts.bold, SZ_TITLE, {p.x + 25, ty}, col32(accent), title)
 	if right_text != "" {
 		sz := measure(fonts.ui, SZ_SMALL, right_text)
 		draw_text(fonts.ui, SZ_SMALL, {p.x + w - sz.x, p.y + 4}, col32(C_MUTED), right_text)
 	}
 	im.Dummy({w, 21})
 	im.Dummy({w, 2})
+}
+
+first_rune :: proc(s: string) -> rune {
+	for r in s {return r}
+	return 0
+}
+
+// Vertical extent of a glyph's ink, relative to the text draw position.
+glyph_ink_y :: proc(font: ^im.Font, size: f32, r: rune) -> (y0, y1: f32) {
+	baked := im.Font_GetFontBaked(font, size)
+	if baked == nil {return 0, size}
+	g := im.FontBaked_FindGlyph(baked, im.Wchar(r))
+	if g == nil {return 0, size}
+	return g.Y0, g.Y1
 }
 
 sub_heading :: proc(s: string) {
