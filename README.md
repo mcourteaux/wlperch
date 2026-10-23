@@ -290,6 +290,7 @@ file before it's written:
 | Settings file | creates `~/.config/wlperch/config.ini`, or opens it |
 | Sway integration | writes `~/.config/sway/config.d/wlperch.conf` (daemon, bindings, placeholder style); recognises a hand-made setup; reloads sway |
 | Waybar buttons | installs `wlperch.jsonc/.css` and adds the include, the button and the `@import` to your bar config, keeping `*.before-wlperch` backups |
+| Waybar: replace whole bar | swaps your waybar `config.jsonc` (or `config`) and `style.css` for wlperch's complete bar ([`contrib/waybar/full/`](contrib/waybar/full)); see below |
 | CPU power reading | installs the RAPL udev rule through `pkexec` (your polkit password prompt) |
 | App launcher entry | `~/.local/share/applications/wlperch-setup.desktop` |
 
@@ -300,6 +301,14 @@ edits: the include line in your sway config, and the include, our modules and
 the `@import` in your waybar config (with `*.before-wlperch` backups). A removed
 settings file is kept as `config.ini.before-wlperch`. Destructive actions ask
 for a second click.
+
+"Replace whole bar" is the aggressive option: your config and `style.css` are
+renamed to `*.before-wlperch-full` (with a timestamp when that name is taken;
+existing backups are never overwritten, and symlinks into a dotfiles folder
+are moved as links, so their targets stay untouched). The first line of each
+file it writes names that backup. "Restore my bar" renames them back; if you
+edited wlperch's files in the meantime, your edits are kept as
+`*.wlperch-full-edited`.
 
 ## Building
 

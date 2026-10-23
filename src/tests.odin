@@ -3,6 +3,7 @@
 package main
 
 import "core:encoding/hex"
+import "core:fmt"
 import "core:encoding/ini"
 import "core:encoding/json"
 import "core:os"
@@ -575,6 +576,86 @@ test_sensor_decoding :: proc(t: ^testing.T) {
 	testing.expect_value(t, sensor_decode(&defs[0], "23", st["dev1"]["23"]).text, "on")
 	p, _ := sensor_parse_dp("ch2o_value 3 mg/m³")
 	testing.expect(t, p.code == "ch2o_value" && p.scale == 3 && p.unit == "mg/m³")
+}
+
+// "Replace whole bar" and "Restore my bar": the user's files (one a symlink
+// into a dotfiles folder) come back byte for byte; existing backups stay.
+@(test)
+test_waybar_full_round_trip :: proc(t: ^testing.T) {
+	root := fmt.tprintf("/tmp/wlperch-test-waybar-%d", posix.getpid())
+	defer os.remove_all(root)
+	dir := fmt.tprintf("%s/waybar", root)
+	dots := fmt.tprintf("%s/dotfiles", root)
+	testing.expect(t, os.make_directory_all(dir) == nil && os.make_directory_all(dots) == nil)
+	path :: proc(dir, name: string) -> string {return fmt.tprintf("%s/%s", dir, name)}
+	cpath :: proc(dir, name: string) -> cstring {return strings.clone_to_cstring(path(dir, name), context.temp_allocator)}
+	read :: proc(dir, name: string) -> string {
+		data, _ := os.read_entire_file(path(dir, name), context.temp_allocator)
+		return string(data)
+	}
+	is_link :: proc(dir, name: string) -> bool {
+		st: posix.stat_t
+		return posix.lstat(cpath(dir, name), &st) == .OK && posix.S_ISLNK(st.st_mode)
+	}
+	MY_CFG :: "{\n    \"modules-right\": [\"clock\"] // mine\n}\n"
+	MY_CSS :: "* { font-size: 13px; }\n"
+	OLD_BACKUP :: "an older backup\n"
+	testing.expect(t, os.write_entire_file(path(dots, "config.jsonc"), MY_CFG) == nil)
+	testing.expect(t, posix.symlink(cpath(dots, "config.jsonc"), cpath(dir, "config.jsonc")) == .OK)
+	testing.expect(t, os.write_entire_file(path(dir, "style.css"), MY_CSS) == nil)
+	testing.expect(t, os.write_entire_file(path(dir, "config.jsonc.before-wlperch-full"), OLD_BACKUP) == nil)
+
+	_, ok := waybar_full_install(dir)
+	testing.expect(t, ok)
+	active, current, backups := waybar_full_status(dir)
+	testing.expect(t, active && current)
+	testing.expect_value(t, len(backups), 2)
+	// The taken name got a timestamp; the link itself was moved, not its target.
+	testing.expect_value(t, read(dir, "config.jsonc.before-wlperch-full"), OLD_BACKUP)
+	testing.expect(t, len(backups) == 2 && strings.has_prefix(backups[0], "config.jsonc.before-wlperch-full-") && is_link(dir, backups[0]))
+	testing.expect_value(t, read(dir, "style.css.before-wlperch-full"), MY_CSS)
+	testing.expect(t, !is_link(dir, "config.jsonc"))
+	testing.expect(t, strings.has_suffix(read(dir, "config.jsonc"), WAYBAR_FULL_JSONC))
+	testing.expect_value(t, read(dots, "config.jsonc"), MY_CFG)
+	testing.expect(t, os.exists(path(dir, "wlperch.jsonc")))
+
+	// Installing again (an update) makes no new backups.
+	_, ok = waybar_full_install(dir)
+	testing.expect(t, ok)
+	_, _, again := waybar_full_status(dir)
+	testing.expect(t, len(again) == 2 && again[0] == backups[0])
+
+	_, ok = waybar_full_restore(dir)
+	testing.expect(t, ok)
+	testing.expect(t, is_link(dir, "config.jsonc"))
+	target, _ := os.read_link(path(dir, "config.jsonc"), context.temp_allocator)
+	testing.expect_value(t, target, path(dots, "config.jsonc"))
+	testing.expect_value(t, read(dir, "config.jsonc"), MY_CFG)
+	testing.expect_value(t, read(dir, "style.css"), MY_CSS)
+	testing.expect_value(t, read(dir, "config.jsonc.before-wlperch-full"), OLD_BACKUP)
+	testing.expect(t, !os.exists(path(dir, "style.css.before-wlperch-full")))
+	testing.expect(t, !os.exists(path(dir, "wlperch.jsonc"))) // the restored bar doesn't use it
+	active, _, _ = waybar_full_status(dir)
+	testing.expect(t, !active)
+
+	// Hand edits to our layout are kept aside on restore.
+	_, ok = waybar_full_install(dir)
+	testing.expect(t, ok)
+	testing.expect(t, os.write_entire_file(path(dir, "style.css"), strings.concatenate({read(dir, "style.css"), "#clock { color: red; }\n"}, context.temp_allocator)) == nil)
+	_, ok = waybar_full_restore(dir)
+	testing.expect(t, ok)
+	testing.expect_value(t, read(dir, "style.css"), MY_CSS)
+	testing.expect(t, strings.has_suffix(read(dir, "style.css.wlperch-full-edited"), "#clock { color: red; }\n"))
+	testing.expect_value(t, read(dir, "config.jsonc"), MY_CFG)
+
+	// No bar config at all: nothing to back up, and restore removes ours.
+	empty := fmt.tprintf("%s/empty", root)
+	_, ok = waybar_full_install(empty)
+	testing.expect(t, ok)
+	_, ok = waybar_full_restore(empty)
+	testing.expect(t, ok)
+	entries, _ := os.read_all_directory_by_path(empty, context.temp_allocator)
+	testing.expect_value(t, len(entries), 0)
 }
 
 @(test)

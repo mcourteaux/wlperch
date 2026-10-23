@@ -1,0 +1,240 @@
+/* The complete wlperch bar for sway (see config.jsonc next to it). Your own
+ * style.css is kept as style.css.before-wlperch-full while this is installed.
+ * Colors match the wlperch popup. */
+@import "wlperch.css";
+* {
+    font-family: monospace;
+    font-size: 14px;
+}
+
+window#waybar {
+    background-color: transparent;
+    color: #e4e7ee;
+    transition-property: background-color;
+    transition-duration: .5s;
+}
+
+window#waybar.hidden {
+    opacity: 0.2;
+}
+
+button {
+    /* Use box-shadow instead of border so the text isn't offset */
+    box-shadow: inset 0 -9px white;
+    /* Avoid rounded borders under each button name */
+    border: none;
+    border-radius: 0;
+}
+
+/* https://github.com/Alexays/Waybar/wiki/FAQ#the-workspace-buttons-have-a-strange-hover-effect */
+button:hover {
+    background: inherit;
+}
+
+/* ---- Left side: workspaces + window title in a matching dark block ---- */
+.modules-left {
+    background-color: rgba(17, 19, 24, 0.96);   /* #111318 */
+    border-radius: 0 0 14px 0;
+    padding: 0 6px 0 4px;
+    border-right: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.modules-left * {
+    font-family: "Noto Sans", "RobotoMono Nerd Font Propo", sans-serif;
+}
+
+#workspaces {
+    padding: 0 2px;
+}
+
+#workspaces button {
+    padding: 0 9px;
+    min-width: 12px;
+    margin: 4px 2px;
+    color: #8a92a3;
+    background: transparent;
+    border-radius: 8px;
+    box-shadow: none;
+    border: none;
+}
+
+#workspaces button:hover {
+    background-color: rgba(255, 255, 255, 0.07);
+    color: #e4e7ee;
+}
+
+#workspaces button.focused,
+#workspaces button.active {
+    background-color: #7aa2f7;
+    color: #111318;
+    font-weight: bold;
+}
+
+#workspaces button.visible:not(.focused) {
+    color: #e4e7ee;
+    box-shadow: inset 0 -2px rgba(122, 162, 247, 0.6);
+}
+
+#workspaces button.urgent {
+    background-color: rgba(247, 118, 142, 0.85);
+    color: #111318;
+}
+
+#mode {
+    background-color: rgba(247, 118, 142, 0.9);
+    color: #111318;
+    font-weight: bold;
+    padding: 0 10px;
+    border-radius: 8px;
+    margin: 4px 4px;
+}
+
+#scratchpad {
+    color: #8a92a3;
+    padding: 0 8px;
+}
+
+#scratchpad.empty {
+    background-color: transparent;
+}
+
+#window {
+    color: #c8ccd6;
+    margin: 0 10px 0 8px;
+}
+
+/* ---- Right side: one dark block, styled like the wlperch popup ---- */
+.modules-right {
+    background-color: rgba(17, 19, 24, 0.96);   /* #111318 */
+    border-radius: 0 0 0 14px;
+    margin: 0;
+    padding: 0 4px 0 10px;
+    border-left: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.modules-right * {
+    font-family: "Noto Sans", "RobotoMono Nerd Font Propo", sans-serif;
+}
+
+#clock,
+#battery,
+#backlight,
+#memory,
+#idle_inhibitor,
+#power-profiles-daemon {
+    color: #e4e7ee;
+    background: transparent;
+    padding: 0 10px;
+    margin: 3px 1px;
+    border-radius: 8px;
+    border: none;
+}
+
+#clock:hover,
+#memory:hover,
+#battery:hover,
+#backlight:hover,
+#idle_inhibitor:hover,
+#power-profiles-daemon:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+#clock {
+    color: #c8ccd6;
+}
+
+#idle_inhibitor {
+    color: #8a92a3;
+}
+#idle_inhibitor.activated {
+    background-color: rgba(224, 175, 104, 0.18);
+    color: #e0af68;
+}
+
+#power-profiles-daemon.performance { color: #f7768e; }
+#power-profiles-daemon.balanced    { color: #7aa2f7; }
+#power-profiles-daemon.power-saver { color: #9ece6a; }
+
+#backlight { color: #e0af68; }
+
+#memory { color: #7dcfff; }
+
+#battery { color: #9ece6a; }
+#battery.warning:not(.charging) { color: #ff9e64; }
+#battery.critical:not(.charging) {
+    color: #f7768e;
+    animation-name: blink;
+    animation-duration: 0.5s;
+    animation-timing-function: steps(12);
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+}
+
+@keyframes blink {
+    to { background-color: rgba(247, 118, 142, 0.25); }
+}
+
+#tray {
+    background: transparent;
+    padding: 0 8px;
+    margin: 0 2px;
+}
+#tray > .passive {
+    -gtk-icon-effect: dim;
+}
+#tray > .needs-attention {
+    -gtk-icon-effect: highlight;
+    background-color: rgba(247, 118, 142, 0.35);
+    border-radius: 6px;
+}
+
+/* If workspaces is the leftmost module, omit left margin */
+.modules-left > widget:first-child > #workspaces {
+    margin-left: 0;
+}
+
+/* If workspaces is the rightmost module, omit right margin */
+.modules-right > widget:last-child > #workspaces {
+    margin-right: 0;
+}
+
+#keyboard-state {
+    background: #97e1ad;
+    color: #000000;
+    padding: 0 0px;
+    margin: 0 5px;
+    min-width: 16px;
+}
+
+#keyboard-state > label {
+    padding: 0 5px;
+}
+
+#keyboard-state > label.locked {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+
+#privacy {
+    padding: 0;
+    color: white;
+}
+
+#privacy-item {
+    padding: 0 5px;
+    color: white;
+}
+
+#privacy-item.screenshare {
+    background-color: #cf5700;
+}
+
+#privacy-item.audio-in {
+    background-color: #1ca000;
+}
+
+#privacy-item.audio-out {
+    background-color: #0069d4;
+}

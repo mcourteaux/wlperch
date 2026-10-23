@@ -17,6 +17,8 @@ import "wl"
 SWAY_FILE :: #load("../contrib/sway/wlperch.conf", string)
 WAYBAR_JSONC :: #load("../contrib/waybar/wlperch.jsonc", string)
 WAYBAR_CSS :: #load("../contrib/waybar/wlperch.css", string)
+WAYBAR_FULL_JSONC :: #load("../contrib/waybar/full/config.jsonc", string)
+WAYBAR_FULL_CSS :: #load("../contrib/waybar/full/style.css", string)
 
 RAPL_RULE :: `SUBSYSTEM=="powercap", ACTION=="add", RUN+="/bin/chmod 0444 /sys%p/energy_uj"`
 RAPL_RULE_PATH :: "/etc/udev/rules.d/90-wlperch-rapl.rules"
@@ -58,6 +60,7 @@ Setup :: struct {
 	checked:   time.Tick,
 	self_path: string, // the running binary
 	bin_path:  string, // ~/.local/bin/wlperch
+	waybar_full: bool, // "Replace whole bar" is active
 	strs:      [dynamic]string,
 }
 setup: Setup
@@ -97,9 +100,11 @@ launcher_file :: proc() -> string {
 }
 
 // The user's waybar config file (config.jsonc or config).
-waybar_config :: proc() -> string {
+waybar_config :: proc() -> string {return waybar_config_in(waybar_dir())}
+
+waybar_config_in :: proc(dir: string) -> string {
 	for name in ([]string{"config.jsonc", "config"}) {
-		p := strings.concatenate({waybar_dir(), "/", name}, context.temp_allocator)
+		p := strings.concatenate({dir, "/", name}, context.temp_allocator)
 		if os.exists(p) {return p}
 	}
 	return ""
@@ -213,8 +218,17 @@ setup_check :: proc() {
 			case !hooked:                                p.state = .Partial
 			case:                                        p.state = .Installed
 			}
+			full, full_current, backups := waybar_full_status(dir)
+			setup.waybar_full = full
+			if full && p.state == .Installed && !full_current {p.state = .Outdated}
 			detail(p, fmt.tprintf("%s/wlperch.{{jsonc,css}}", dir))
-			if cfg != "" {detail(p, hooked ? fmt.tprintf("hooked into %s", cfg) : fmt.tprintf("not yet in %s", cfg))}
+			switch {
+			case full:
+				detail(p, full_current ? "the whole bar is wlperch's layout" : "the whole bar is wlperch's layout (changed since, or from an older wlperch)")
+				for b in backups {detail(p, fmt.tprintf("your own file: %s/%s", dir, b))}
+			case cfg != "":
+				detail(p, hooked ? fmt.tprintf("hooked into %s", cfg) : fmt.tprintf("not yet in %s", cfg))
+			}
 		}
 	}
 	// RAPL udev rule
@@ -753,6 +767,181 @@ jsonc_remove_empty_member :: proc(text, key: string) -> string {
 	for b > 0 && (text[b - 1] == ' ' || text[b - 1] == '\t') {b -= 1}
 	if b > 0 && text[b - 1] == '\n' {b -= 1}
 	return strings.concatenate({text[:b], text[j:]}, context.temp_allocator)
+}
+
+// ---- Waybar: whole bar ------------------------------------------------------
+
+// "Replace whole bar" moves the user's config and style.css aside (renamed,
+// so symlinks stay symlinks) and writes wlperch's own layout. The first line
+// of each file it writes names that backup ("-" when there was none), so
+// "Restore my bar" knows what to put back.
+WAYBAR_FULL_MARK :: "wlperch full bar, backup: "
+
+@(private = "file")
+Full_File :: struct {
+	name, body: string,
+	css:        bool,
+}
+
+@(private = "file")
+full_files :: proc(dir: string) -> [2]Full_File {
+	cfg := waybar_config_in(dir)
+	// Waybar reads config.jsonc before config: replace whichever it uses.
+	name := cfg == "" ? "config.jsonc" : cfg[strings.last_index_byte(cfg, '/') + 1:]
+	return {{name, WAYBAR_FULL_JSONC, false}, {"style.css", WAYBAR_FULL_CSS, true}}
+}
+
+@(private = "file")
+full_header :: proc(f: Full_File, backup: string) -> string {
+	if f.css {return fmt.tprintf("/* %s%s */\n", WAYBAR_FULL_MARK, backup)}
+	return fmt.tprintf("// %s%s\n", WAYBAR_FULL_MARK, backup)
+}
+
+// The backup name and the rest of a file we wrote (ok = false: not ours).
+waybar_full_parse :: proc(text: string) -> (backup, body: string, ok: bool) {
+	nl := strings.index_byte(text, '\n')
+	if nl < 0 {return}
+	line := strings.trim_space(text[:nl])
+	line = strings.trim_prefix(line, "// ")
+	line = strings.trim_prefix(line, "/* ")
+	if !strings.has_prefix(line, WAYBAR_FULL_MARK) {return}
+	backup = strings.trim_space(strings.trim_suffix(line[len(WAYBAR_FULL_MARK):], "*/"))
+	if backup == "" || strings.contains_any(backup, "/\x00") {return}
+	return backup, text[nl + 1:], true
+}
+
+// Exists as a file, directory or (possibly dangling) symlink.
+@(private = "file")
+lexists :: proc(path: string) -> bool {
+	st: posix.stat_t
+	return posix.lstat(strings.clone_to_cstring(path, context.temp_allocator), &st) == .OK
+}
+
+// `base`, or base-<UTC time>[-n] when that name is taken: never overwrite.
+@(private = "file")
+unused_name :: proc(base: string) -> string {
+	if !lexists(base) {return base}
+	now := time.now()
+	y, mo, d := time.date(now)
+	h, mi, sec := time.clock(now)
+	stamped := fmt.tprintf("%s-%04d%02d%02d-%02d%02d%02d", base, y, int(mo), d, h, mi, sec)
+	name := stamped
+	for n := 2; lexists(name); n += 1 {name = fmt.tprintf("%s-%d", stamped, n)}
+	return name
+}
+
+@(private = "file")
+rename_path :: proc(from, to: string) -> bool {
+	return posix.rename(strings.clone_to_cstring(from, context.temp_allocator), strings.clone_to_cstring(to, context.temp_allocator)) == 0
+}
+
+// Is the whole-bar layout installed, is it the current one, and which
+// backups does it point at.
+waybar_full_status :: proc(dir: string) -> (active, current: bool, backups: []string) {
+	list: [dynamic]string
+	list.allocator = context.temp_allocator
+	current = true
+	for f in full_files(dir) {
+		text, _ := read_text(strings.concatenate({dir, "/", f.name}, context.temp_allocator))
+		bak, body, ok := waybar_full_parse(text)
+		if !ok {continue}
+		active = true
+		if body != f.body {current = false}
+		if bak != "-" {append(&list, bak)}
+	}
+	return active, current, list[:]
+}
+
+waybar_full_install :: proc(dir: string) -> (msg: string, ok: bool) {
+	if !write_file(strings.concatenate({dir, "/wlperch.jsonc"}, context.temp_allocator), WAYBAR_JSONC) ||
+	   !write_file(strings.concatenate({dir, "/wlperch.css"}, context.temp_allocator), WAYBAR_CSS) {
+		return "couldn't write the waybar files", false
+	}
+	kept := 0
+	for f in full_files(dir) {
+		path := strings.concatenate({dir, "/", f.name}, context.temp_allocator)
+		text, _ := read_text(path)
+		bak, body, ours := waybar_full_parse(text)
+		if ours {
+			// Already ours (an update): keep hand edits next to it.
+			if body != f.body {
+				edited := unused_name(strings.concatenate({path, ".wlperch-full-edited"}, context.temp_allocator))
+				if !rename_path(path, edited) {return fmt.tprintf("couldn't move %s aside", f.name), false}
+				kept += 1
+			}
+		} else {
+			bak = "-"
+			if lexists(path) {
+				moved := unused_name(strings.concatenate({path, ".before-wlperch-full"}, context.temp_allocator))
+				if !rename_path(path, moved) {return fmt.tprintf("couldn't move your %s aside", f.name), false}
+				bak = moved[len(dir) + 1:]
+				kept += 1
+			}
+		}
+		if !write_file(path, strings.concatenate({full_header(f, bak), f.body}, context.temp_allocator)) {
+			if bak != "-" && !ours {rename_path(strings.concatenate({dir, "/", bak}, context.temp_allocator), path)}
+			return fmt.tprintf("couldn't write %s", f.name), false
+		}
+	}
+	if kept == 0 {return "the whole bar is now wlperch's", true}
+	return "the whole bar is now wlperch's; your files were moved aside", true
+}
+
+// Put the user's own files back. Our files go away, or are kept as
+// *.wlperch-full-edited when they were changed after installing.
+waybar_full_restore :: proc(dir: string) -> (msg: string, ok: bool) {
+	notes: [dynamic]string
+	notes.allocator = context.temp_allocator
+	ok = true
+	for name in ([]string{"config.jsonc", "config", "style.css"}) {
+		path := strings.concatenate({dir, "/", name}, context.temp_allocator)
+		text, _ := read_text(path)
+		bak, body, ours := waybar_full_parse(text)
+		if !ours {continue}
+		pristine := body == (name == "style.css" ? WAYBAR_FULL_CSS : WAYBAR_FULL_JSONC)
+		if pristine {
+			if os.remove(path) != nil {
+				append(&notes, fmt.tprintf("couldn't remove %s", name))
+				ok = false
+				continue
+			}
+		} else {
+			edited := unused_name(strings.concatenate({path, ".wlperch-full-edited"}, context.temp_allocator))
+			if !rename_path(path, edited) {
+				append(&notes, fmt.tprintf("couldn't move %s aside", name))
+				ok = false
+				continue
+			}
+			append(&notes, fmt.tprintf("your edits: %s", edited[len(dir) + 1:]))
+		}
+		if bak == "-" {continue}
+		from := strings.concatenate({dir, "/", bak}, context.temp_allocator)
+		if !lexists(from) || !rename_path(from, path) {
+			append(&notes, fmt.tprintf("%s is gone; restore %s by hand", bak, name))
+			ok = false
+		}
+	}
+	// The module files stay when the restored bar uses them (an earlier
+	// "Add to my bar").
+	cfg_text, _ := read_text(waybar_config_in(dir))
+	style_text, _ := read_text(strings.concatenate({dir, "/style.css"}, context.temp_allocator))
+	if !strings.contains(cfg_text, "wlperch.jsonc") && !strings.contains(style_text, "wlperch.css") {
+		for f in ([]string{"wlperch.jsonc", "wlperch.css"}) {os.remove(strings.concatenate({dir, "/", f}, context.temp_allocator))}
+	}
+	if len(notes) == 0 {return "your own bar is back", ok}
+	return fmt.tprintf("%s%s", ok ? "your own bar is back; " : "", strings.join(notes[:], "; ", context.temp_allocator)), ok
+}
+
+setup_install_waybar_full :: proc() {
+	msg, ok := waybar_full_install(waybar_dir())
+	if ok {posix.system("pkill -SIGUSR2 -x waybar")}
+	done(.Waybar, ok, msg)
+}
+
+setup_restore_waybar :: proc() {
+	msg, ok := waybar_full_restore(waybar_dir())
+	posix.system("pkill -SIGUSR2 -x waybar")
+	done(.Waybar, ok, msg)
 }
 
 // Hand notifications back: unmask the other daemon, switch ours off in the
