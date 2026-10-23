@@ -335,6 +335,7 @@ graph_view_input :: proc(v: ^Graph_View, id: string, size: Vec2, right_inset: f3
 	p := im.GetCursorScreenPos()
 	im.InvisibleButton(cstr(id), size)
 	im.SetItemKeyOwner(.MouseWheelY) // the wheel zooms instead of scrolling the panel
+	im.SetItemKeyOwner(.MouseWheelX) // the horizontal wheel pans
 	w := size.x - right_inset
 	span, back := view_span(v), view_back(v)
 	if im.IsItemHovered() {
@@ -343,11 +344,14 @@ graph_view_input :: proc(v: ^Graph_View, id: string, size: Vec2, right_inset: f3
 			anchor := back + frac * span
 			ns := clamp(span * (wheel > 0 ? 0.8 : 1.25), GRAPH_MIN_SPAN, HISTORY_MAX)
 			view_set(v, ns, anchor - frac * ns)
+		} else if wh := im.GetIO().MouseWheelH; wh != 0 {
+			// A notch pans a tenth of the view (>0 = left, into the past).
+			view_set(v, span, back + f64(wh) * 0.1 * span)
 		}
 		if im.IsMouseDoubleClicked(.Left) {v^ = {}}
 		im.SetMouseCursor(.ResizeEW)
 		if !im.IsItemActive() && im.IsItemHovered(im.HoveredFlags_DelayNormal) {
-			tip("Scroll to zoom · drag to look back · double-click: live")
+			tip("Scroll to zoom · drag or scroll sideways to look back · double-click: live")
 		}
 	}
 	if im.IsItemActive() && im.IsMouseDragging(.Left, 1) {

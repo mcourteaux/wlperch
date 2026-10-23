@@ -303,6 +303,7 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 	im.InvisibleButton("##timeline", {inner, bh + 14})
 	tl_hovered := im.IsItemHovered()
 	im.SetItemKeyOwner(.MouseWheelY) // the wheel zooms instead of scrolling the panel
+	im.SetItemKeyOwner(.MouseWheelX) // the horizontal wheel pans
 	if tl_hovered {
 		wheel := im.GetIO().MouseWheel
 		if wheel != 0 {
@@ -310,6 +311,10 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 			anchor := tl.start + frac * tl.span
 			tl.span = clamp(tl.span * (wheel > 0 ? 0.8 : 1.25), TL_MIN_SPAN, 86400)
 			tl.start = anchor - frac * tl.span
+			tl_clamp_view()
+		} else if wh := im.GetIO().MouseWheelH; wh != 0 {
+			// A notch pans a tenth of the view (>0 = left, earlier).
+			tl.start -= f64(wh) * 0.1 * tl.span
 			tl_clamp_view()
 		}
 		if im.IsMouseDoubleClicked(.Left) {tl.start, tl.span = 0, 86400}
