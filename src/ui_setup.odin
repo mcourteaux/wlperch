@@ -28,6 +28,7 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	case .Notifications: return {ICON_BELL, "Notifications", "Shows app notifications as popups in the corner, with a history in the Notifications panel and do not disturb. Switches off dunst/mako (masks their service) so they don't take over again.", C_PURPLE, ""}
 	case .Lock:     return {ICON_LOCK, "Lock screen", "wlperch lock instead of swaylock: clock, notification count, media and battery. Switches swayidle and your lock key over (with backups).", C_BLUE, LOCK_CONF}
 	case .Menu:     return {ICON_APPS, "Launcher", "wlperch's app launcher instead of rofi/wofi/fuzzel: apps, a calculator and the panels as you type, \"> command\" runs one. Switches your launcher keys over (with backups).", C_GREEN, MENU_CONF}
+	case .Bar:      return {ICON_MONITORS, "Bar", "wlperch's own bar instead of waybar: workspaces (project workspaces in their colour), tray, media, timer, sensors, notifications, clock. Switches sway's bar over (with backups).", C_TEAL, BAR_CONF}
 	case .Launcher: return {ICON_HOME, "App launcher entry", "Adds \"wlperch setup\" to your application launcher (rofi, wofi, fuzzel…).", C_YELLOW, ""}
 	}
 	return {}
@@ -168,6 +169,13 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 		}
 		append(&out, Action{"Try it", false, setup_open_menu, false})
 		if s == .Installed || s == .Outdated {append(&out, Action{"Switch back", false, setup_remove_menu, true})}
+	case .Bar:
+		switch s {
+		case .Missing:   append(&out, Action{"Use wlperch bar", true, setup_install_bar, false})
+		case .Outdated:  append(&out, Action{"Switch the rest", true, setup_install_bar, false})
+		case .Installed, .Custom, .Running, .Stopped, .Unavailable, .Partial:
+		}
+		if s == .Installed || s == .Outdated {append(&out, Action{"Switch back", false, setup_remove_bar, true})}
 	case .Lock:
 		switch s {
 		case .Missing:   append(&out, Action{"Use wlperch lock", true, setup_install_lock, false})
@@ -187,7 +195,7 @@ COLUMNS := [3]struct {
 	ids:   []Comp_Id,
 } {
 	{"Basics", {.Program, .Service, .Config, .Launcher}},
-	{"Desktop", {.Sway, .Waybar, .Menu}},
+	{"Desktop", {.Sway, .Waybar, .Bar, .Menu}},
 	{"Extras", {.Notifications, .Lock, .Rapl}},
 }
 

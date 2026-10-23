@@ -62,6 +62,7 @@ PROTOCOLS=(
 	$P/staging/single-pixel-buffer/single-pixel-buffer-v1.xml
 	$P/staging/ext-idle-notify/ext-idle-notify-v1.xml
 	$P/staging/ext-session-lock/ext-session-lock-v1.xml
+	$P/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml
 	$WLR/wlr-layer-shell-unstable-v1.xml
 	$WLR/wlr-virtual-pointer-unstable-v1.xml # only used by tools/vptr (UI tests)
 )

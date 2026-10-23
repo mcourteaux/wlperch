@@ -46,6 +46,7 @@ Comp_Id :: enum {
 	Launcher,
 	Lock,
 	Menu,
+	Bar,
 }
 
 Component :: struct {
@@ -278,6 +279,8 @@ setup_check :: proc() {
 	lock_setup_check(&c[.Lock], detail)
 	// Launcher key bindings
 	menu_setup_check(&c[.Menu], detail)
+	// wlperch's bar instead of waybar
+	bar_setup_check(&c[.Bar], detail)
 	// Launcher entry
 	{
 		p := &c[.Launcher]

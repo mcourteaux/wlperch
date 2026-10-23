@@ -997,3 +997,128 @@ test_menu_setup_round_trip :: proc(t: ^testing.T) {
 	delete(setup.comps[.Menu].message)
 	setup.comps[.Menu].message = ""
 }
+
+@(test)
+test_bar_rewrite :: proc(t: ^testing.T) {
+	cases := [][2]string{
+		{"bar {\n    swaybar_command waybar\n}\n", "bar {\n    swaybar_command wlperch bar\n}\n"},
+		{"exec_always waybar -c ~/.config/waybar/top.jsonc\n", "exec_always wlperch bar\n"},
+		{"exec /usr/bin/waybar\n", "exec wlperch bar\n"},
+		{"    bindsym $mod+Shift+c exec killall waybar && swaymsg reload\n", "    bindsym $mod+Shift+c exec swaymsg reload\n"},
+		// swaybar (no program named): ours goes into the block.
+		{"bar {\n    position top\n    colors {\n        statusline #ffffff\n    }\n}\n", "bar {\n    swaybar_command wlperch bar\n    position top\n    colors {\n        statusline #ffffff\n    }\n}\n"},
+		// Left alone: comments, rules, a block already running something else.
+		{"# exec waybar\n", "# exec waybar\n"},
+		{"for_window [app_id=\"waybar\"] floating enable\n", "for_window [app_id=\"waybar\"] floating enable\n"},
+		{"bar {\n    swaybar_command wlperch bar\n}\n", "bar {\n    swaybar_command wlperch bar\n}\n"},
+	}
+	for c in cases {
+		got, _ := bar_rewrite(c[0])
+		testing.expect_value(t, got, c[1])
+	}
+	// One line of a block (as switch_uses sees it) is not a block without a command.
+	_, n := bar_rewrite("bar {\n")
+	testing.expect_value(t, n, 0)
+}
+
+@(test)
+test_bar_setup_round_trip :: proc(t: ^testing.T) {
+	root := fmt.tprintf("/tmp/wlperch-test-bar-%d", posix.getpid())
+	defer os.remove_all(root)
+	old_cfg := strings.clone(os.get_env("XDG_CONFIG_HOME", context.temp_allocator), context.temp_allocator)
+	old_data := strings.clone(os.get_env("XDG_DATA_HOME", context.temp_allocator), context.temp_allocator)
+	defer {
+		os.set_env("XDG_CONFIG_HOME", old_cfg)
+		os.set_env("XDG_DATA_HOME", old_data)
+	}
+	os.set_env("XDG_CONFIG_HOME", fmt.tprintf("%s/config", root))
+	os.set_env("XDG_DATA_HOME", fmt.tprintf("%s/data", root))
+	sway := fmt.tprintf("%s/config/sway", root)
+	dots := fmt.tprintf("%s/dotfiles", root)
+	testing.expect(t, os.make_directory_all(fmt.tprintf("%s/config.d", sway)) == nil && os.make_directory_all(dots) == nil)
+	read :: proc(p: string) -> string {
+		data, _ := os.read_entire_file(p, context.temp_allocator)
+		return string(data)
+	}
+	MAIN :: "set $mod Mod4\nbindsym $mod+Shift+c exec killall waybar && swaymsg reload\ninclude config.d/*\n"
+	BAR :: "# Status Bar: waybar\nbar {\n    swaybar_command waybar\n}\n"
+	main_dots := fmt.tprintf("%s/config", dots)
+	bar_dots := fmt.tprintf("%s/90-bar.conf", dots)
+	main_p := fmt.tprintf("%s/config", sway)
+	bar_p := fmt.tprintf("%s/config.d/90-bar.conf", sway)
+	testing.expect(t, os.write_entire_file(main_dots, MAIN) == nil && os.write_entire_file(bar_dots, BAR) == nil)
+	for pair in ([][2]string{{main_dots, main_p}, {bar_dots, bar_p}}) {
+		testing.expect(t, posix.symlink(strings.clone_to_cstring(pair[0], context.temp_allocator), strings.clone_to_cstring(pair[1], context.temp_allocator)) == .OK)
+	}
+
+	c: Component
+	bar_setup_check(&c, proc(c: ^Component, line: string) {})
+	testing.expect_value(t, c.state, Comp_State.Missing)
+	bar_switch(apply = false)
+	testing.expect_value(t, read(main_dots), "set $mod Mod4\nbindsym $mod+Shift+c exec swaymsg reload\ninclude config.d/*\n")
+	testing.expect_value(t, read(bar_dots), "# Status Bar: waybar\nbar {\n    swaybar_command wlperch bar\n}\n")
+	bar_setup_check(&c, proc(c: ^Component, line: string) {})
+	testing.expect_value(t, c.state, Comp_State.Installed)
+	bar_switch_back(apply = false)
+	testing.expect_value(t, read(main_dots), MAIN)
+	testing.expect_value(t, read(bar_dots), BAR)
+	st: posix.stat_t
+	for p in ([]string{main_p, bar_p}) {
+		testing.expect(t, posix.lstat(strings.clone_to_cstring(p, context.temp_allocator), &st) == .OK && posix.S_ISLNK(st.st_mode))
+	}
+
+	// No bar at all: our own file comes and goes.
+	testing.expect(t, os.remove(bar_p) == nil)
+	testing.expect(t, os.write_entire_file(main_dots, "set $mod Mod4\n") == nil)
+	bar_switch(apply = false)
+	ours := fmt.tprintf("%s/config.d/%s", sway, BAR_CONF_NAME)
+	testing.expect_value(t, read(ours), BAR_CONF)
+	bar_switch_back(apply = false)
+	testing.expect(t, !os.exists(ours))
+	delete(setup.comps[.Bar].message)
+	setup.comps[.Bar].message = ""
+}
+
+@(test)
+test_bar_clock_and_workspaces :: proc(t: ^testing.T) {
+	tm, _ := time.datetime_to_time(2026, 10, 24, 9, 5, 7)
+	dt, _ := time.time_to_datetime(tm)
+	runs := bar_clock_text("%a %d %b  <b>%H:%M</b>%%", dt)
+	testing.expect_value(t, len(runs), 3)
+	if len(runs) == 3 {
+		testing.expect_value(t, runs[0][0], "Sat 24 Oct  ")
+		testing.expect_value(t, runs[1], [2]string{"09:05", "b"})
+		testing.expect_value(t, runs[2][0], "%")
+	}
+	cal, line, col := bar_calendar(dt)
+	testing.expect_value(t, cal[0], "October 2026")
+	testing.expect_value(t, cal[2], "          1  2  3  4") // the 1st is a Thursday
+	testing.expect_value(t, cal[line][col * 3:col * 3 + 2], "24")
+
+	// Numbered first, then each project's workspaces (config order), then the rest.
+	saved_projects := tracker.projects
+	saved_ws := bsway.workspaces
+	defer {
+		delete(tracker.projects)
+		delete(bsway.workspaces)
+		tracker.projects = saved_projects
+		bsway.workspaces = saved_ws
+	}
+	tracker.projects = {}
+	append(&tracker.projects, Project{key = "a", name = "Alpha", color = 0xff0000}, Project{key = "b", name = "Beta", color = 0x00ff00})
+	bsway.workspaces = {}
+	for n in ([]string{"Beta 1", "music", "3", "Alpha 2", "1", "Alpha 1"}) {
+		num := -1
+		if v, ok := strconv.parse_int(n); ok {num = v}
+		append(&bsway.workspaces, Bar_Ws{name = n, num = num, output = "DP-1"})
+	}
+	append(&bsway.workspaces, Bar_Ws{name = "2", num = 2, output = "DP-2"})
+	groups := bar_ws_groups("DP-1")
+	names: [dynamic]string
+	names.allocator = context.temp_allocator
+	for g in groups {
+		for w in g.ws {append(&names, fmt.tprintf("%d:%s", g.project, w.name))}
+	}
+	testing.expect_value(t, strings.join(names[:], ",", context.temp_allocator), "-1:1,-1:3,0:Alpha 1,0:Alpha 2,1:Beta 1,-1:music")
+	testing.expect_value(t, len(groups), 5)
+}

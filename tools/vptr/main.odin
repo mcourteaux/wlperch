@@ -1,6 +1,6 @@
 // vptr: drive a virtual pointer for UI testing on wlroots compositors.
 //
-// usage: vptr <x> <y> <layout_w> <layout_h> [move|click|right|scroll:<n>] [hold_ms]
+// usage: vptr <x> <y> <layout_w> <layout_h> [move|click|right|middle|scroll:<n>] [hold_ms]
 //
 // Coordinates are absolute in the compositor's layout space. The pointer device
 // exists only while this tool runs, so `hold_ms` keeps it alive (e.g. to take a
@@ -36,7 +36,7 @@ now_ms :: proc() -> u32 {
 
 main :: proc() {
 	if len(os.args) < 5 {
-		fmt.eprintln("usage: vptr <x> <y> <layout_w> <layout_h> [move|click|right|scroll:<n>] [hold_ms]")
+		fmt.eprintln("usage: vptr <x> <y> <layout_w> <layout_h> [move|click|right|middle|scroll:<n>] [hold_ms]")
 		os.exit(2)
 	}
 	x := u32(strconv.parse_int(os.args[1]) or_else 0)
@@ -74,6 +74,7 @@ main :: proc() {
 
 	BTN_LEFT :: 0x110
 	BTN_RIGHT :: 0x111
+	BTN_MIDDLE :: 0x112
 	press :: proc(display: ^wl.Display, ptr: ^wl.Zwlr_Virtual_Pointer_V1, button: u32) {
 		wl.zwlr_virtual_pointer_v1_button(ptr, now_ms(), button, wl.POINTER_BUTTON_STATE_PRESSED)
 		wl.zwlr_virtual_pointer_v1_frame(ptr)
@@ -89,6 +90,8 @@ main :: proc() {
 		press(display, ptr, BTN_LEFT)
 	case action == "right":
 		press(display, ptr, BTN_RIGHT)
+	case action == "middle":
+		press(display, ptr, BTN_MIDDLE)
 	case strings.has_prefix(action, "scroll:"):
 		n := strconv.parse_int(action[7:]) or_else 1
 		wl.zwlr_virtual_pointer_v1_axis_source(ptr, wl.POINTER_AXIS_SOURCE_WHEEL)
