@@ -35,6 +35,8 @@ Platform :: struct {
 	frac_scale_mgr:   ^wl.Wp_Fractional_Scale_Manager_V1,
 	idle_notifier:    ^wl.Ext_Idle_Notifier_V1,
 	xdg_wm_base:      ^wl.Xdg_Wm_Base, // for placeholder windows
+	shm:              ^wl.Shm,
+	subcompositor:    ^wl.Subcompositor,
 	idle_note:        ^wl.Ext_Idle_Notification_V1,
 	idle:             bool,      // no user input for the configured time
 	idle_since:       time.Time, // when input actually stopped
@@ -117,6 +119,10 @@ registry_listener := wl.Registry_Listener {
 			plat.viewporter = cast(^wl.Wp_Viewporter)wl.registry_bind(registry, name, &wl.wp_viewporter_interface, 1)
 		case "wp_fractional_scale_manager_v1":
 			plat.frac_scale_mgr = cast(^wl.Wp_Fractional_Scale_Manager_V1)wl.registry_bind(registry, name, &wl.wp_fractional_scale_manager_v1_interface, 1)
+		case "wl_shm":
+			plat.shm = cast(^wl.Shm)wl.registry_bind(registry, name, &wl.shm_interface, 1)
+		case "wl_subcompositor":
+			plat.subcompositor = cast(^wl.Subcompositor)wl.registry_bind(registry, name, &wl.subcompositor_interface, 1)
 		case "xdg_wm_base":
 			plat.xdg_wm_base = cast(^wl.Xdg_Wm_Base)wl.registry_bind(registry, name, &wl.xdg_wm_base_interface, 1)
 			wl.xdg_wm_base_add_listener(plat.xdg_wm_base, &wm_base_listener, nil)

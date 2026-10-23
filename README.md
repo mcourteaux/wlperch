@@ -95,8 +95,11 @@ setting is remembered.
 
 **Keep empty workspaces** (a toggle in the Time panel, or `wlwidgets track keep
 [on|off]`) stops sway from removing a project workspace once it's empty and you
-look away. Every empty project workspace gets a content-less placeholder window
-(app_id `wlwidgets-placeholder`, titled "ACME 2 · placeholder"). It goes there
+look away. Every empty project workspace gets a placeholder window (app_id
+`wlwidgets-placeholder`, titled "ACME 2 · placeholder"). It's a translucent tile
+with no border, and a centered card shows the project name in its color, the
+workspace number and a hint. The label is software-rendered (stb_truetype into
+shared memory) on a subsurface, so placeholders never need the GPU. It goes there
 through a sway `for_window` rule, so it never flashes elsewhere or takes focus,
 and it closes as soon as a real window arrives. If you close a placeholder
 yourself, that workspace is left alone until it disappears.
