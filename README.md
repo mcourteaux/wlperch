@@ -165,6 +165,32 @@ keys) and `state.json` from `[sensors] dir`, and reloads whenever
 so the daemon keeps `[sensors] watch` (the tool's `--watch` mode) running and
 restarts it if it exits. Leave `watch` empty if you run the watcher yourself.
 
+## Installing
+
+wlwidgets installs itself. Run the binary from wherever you downloaded or built
+it:
+
+```sh
+./wlwidgets          # not installed yet and nothing running -> opens setup
+wlwidgets setup      # later: the same window (or the ⚙ button in a panel)
+```
+
+The setup window lists each component with its status (installed, update
+available, not installed, set up elsewhere) and actions. You can preview each
+file before it's written:
+
+| Component | What it does |
+|---|---|
+| Program | copies the running binary to `~/.local/bin/wlwidgets` (or updates it) |
+| Background service | starts or restarts the daemon |
+| Settings file | creates `~/.config/wlwidgets/config.ini`, or opens it |
+| Sway integration | writes `~/.config/sway/config.d/wlwidgets.conf` (daemon, bindings, placeholder style); recognises a hand-made setup; reloads sway |
+| Waybar buttons | installs `wlwidgets.jsonc/.css` and adds the include, the button and the `@import` to your bar config, keeping `*.before-wlwidgets` backups |
+| CPU power reading | installs the RAPL udev rule through `pkexec` (your polkit password prompt) |
+| App launcher entry | `~/.local/share/applications/wlwidgets-setup.desktop` |
+
+"Install recommended" does everything except the root-owned udev rule.
+
 ## Building
 
 Requirements: `odin` (tested with dev-2026-10), `clang`, `python3`, `git`,
@@ -175,7 +201,7 @@ xkbcommon and freetype2. You also need `wayland-protocols` and `wlr-protocols`.
 ./build.sh          # release build -> build/wlwidgets (+ build/vptr test tool)
 ./build.sh debug    # debug build
 ./build.sh test     # unit tests
-./build.sh install  # copy to ~/.local/bin
+./build.sh install  # copy to ~/.local/bin (or just run build/wlwidgets: setup)
 ```
 
 On the first build, `build.sh` clones [odin-imgui](https://gitlab.com/L-4/odin-imgui)

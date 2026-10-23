@@ -51,6 +51,8 @@ Platform :: struct {
 	// Popup surface (only exists while shown)
 	surface:          ^wl.Surface,
 	layer_surface:    ^wl.Zwlr_Layer_Surface_V1,
+	win_xdg:          ^wl.Xdg_Surface,  // window mode (setup) instead of a layer surface
+	win_toplevel:     ^wl.Xdg_Toplevel,
 	egl_window:       ^wl.Egl_Window,
 	egl_surface:      egl.Surface,
 	configured:       bool,
@@ -786,6 +788,12 @@ platform_show :: proc(placement: Popup_Placement, width, height: i32) -> bool {
 		return false
 	}
 
+	return attach_gl()
+}
+
+// Create the EGL window surface for plat.surface and make the context current.
+@(private = "file")
+attach_gl :: proc() -> bool {
 	if !gl_up() {
 		platform_hide()
 		return false
@@ -828,15 +836,75 @@ platform_hide :: proc() {
 	if plat.frac_scale != nil {wl.wp_fractional_scale_v1_destroy(plat.frac_scale)}
 	if plat.viewport != nil {wl.wp_viewport_destroy(plat.viewport)}
 	plat.frac_scale, plat.viewport = nil, nil
-	wl.zwlr_layer_surface_v1_destroy(plat.layer_surface)
+	if plat.layer_surface != nil {wl.zwlr_layer_surface_v1_destroy(plat.layer_surface)}
+	if plat.win_toplevel != nil {wl.xdg_toplevel_destroy(plat.win_toplevel)}
+	if plat.win_xdg != nil {wl.xdg_surface_destroy(plat.win_xdg)}
 	wl.surface_destroy(plat.surface)
 	catcher_destroy()
 	plat.layer_surface, plat.surface = nil, nil
+	plat.win_xdg, plat.win_toplevel = nil, nil
 	plat.frame_pending = false
 	plat.pointer_inside = false
 	plat.keyboard_focus = false
 	plat.repeat_key = 0
 	wl.display_flush(plat.display)
+}
+
+@(private = "file")
+win_toplevel_listener := wl.Xdg_Toplevel_Listener {
+	configure = proc "c" (data: rawptr, self: ^wl.Xdg_Toplevel, width, height: i32, states: ^wl.Array) {
+		if width > 0 && height > 0 {
+			plat.width, plat.height = width, height
+		}
+	},
+	close = proc "c" (data: rawptr, self: ^wl.Xdg_Toplevel) {
+		plat.closed = true
+	},
+	configure_bounds = proc "c" (data: rawptr, self: ^wl.Xdg_Toplevel, width, height: i32) {},
+	wm_capabilities = proc "c" (data: rawptr, self: ^wl.Xdg_Toplevel, capabilities: ^wl.Array) {},
+}
+
+@(private = "file")
+win_xdg_listener := wl.Xdg_Surface_Listener {
+	configure = proc "c" (data: rawptr, self: ^wl.Xdg_Surface, serial: u32) {
+		context = g_ctx
+		wl.xdg_surface_ack_configure(self, serial)
+		plat.configured = true
+		resize_buffers()
+		request_redraw()
+	},
+}
+
+// A regular application window (used by `wlwidgets setup`), rendered with the
+// same EGL/ImGui path as the popup.
+platform_open_window :: proc(title, app_id: string, width, height: i32) -> bool {
+	if plat.surface != nil || plat.xdg_wm_base == nil {return false}
+	plat.configured = false
+	plat.closed = false
+	plat.width, plat.height = width, height
+	plat.surface = wl.compositor_create_surface(plat.compositor)
+	wl.surface_add_listener(plat.surface, &surface_listener, nil)
+	if plat.frac_scale_mgr != nil && plat.viewporter != nil {
+		plat.frac_scale = wl.wp_fractional_scale_manager_v1_get_fractional_scale(plat.frac_scale_mgr, plat.surface)
+		wl.wp_fractional_scale_v1_add_listener(plat.frac_scale, &frac_listener, nil)
+		plat.viewport = wl.wp_viewporter_get_viewport(plat.viewporter, plat.surface)
+	}
+	plat.win_xdg = wl.xdg_wm_base_get_xdg_surface(plat.xdg_wm_base, plat.surface)
+	wl.xdg_surface_add_listener(plat.win_xdg, &win_xdg_listener, nil)
+	plat.win_toplevel = wl.xdg_surface_get_toplevel(plat.win_xdg)
+	wl.xdg_toplevel_add_listener(plat.win_toplevel, &win_toplevel_listener, nil)
+	wl.xdg_toplevel_set_title(plat.win_toplevel, strings.clone_to_cstring(title, context.temp_allocator))
+	wl.xdg_toplevel_set_app_id(plat.win_toplevel, strings.clone_to_cstring(app_id, context.temp_allocator))
+	wl.xdg_toplevel_set_min_size(plat.win_toplevel, 560, 420)
+	wl.surface_commit(plat.surface)
+	for !plat.configured && !plat.closed {
+		if wl.display_dispatch(plat.display) < 0 {return false}
+	}
+	if plat.closed {
+		platform_hide()
+		return false
+	}
+	return attach_gl()
 }
 
 platform_visible :: proc() -> bool {

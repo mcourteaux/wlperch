@@ -281,3 +281,19 @@ test_breaks :: proc(t: ^testing.T) {
 	testing.expect_value(t, b[NO_PROJECT].count, 1)
 	testing.expect_value(t, b[NO_PROJECT].secs, 30 * 60)
 }
+
+@(test)
+test_jsonc_array_end :: proc(t: ^testing.T) {
+	check :: proc(t: ^testing.T, text: string, want_last: string) {
+		open := strings.index_byte(text, '[')
+		_, last, ok := jsonc_array_end(text, open)
+		testing.expect(t, ok)
+		got := last < 0 ? "<empty>" : text[:last]
+		testing.expect_value(t, got, want_last)
+	}
+	check(t, `["a", "b"]`, `["a", "b"`)
+	check(t, "[\n  \"a\",\n  \"clock\" // the time\n]", "[\n  \"a\",\n  \"clock\"")
+	check(t, "[\"a\" /* x ] */ ]", "[\"a\"")
+	check(t, "[ // only a comment ]\n]", "<empty>")
+	check(t, `["a]b"]`, `["a]b"`)
+}

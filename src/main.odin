@@ -24,6 +24,7 @@ commands:
   hide     hide the popup
   daemon   start the background daemon without showing the popup
   quit     stop the running daemon
+  setup    install / configure components (program, sway, waybar, udev rule…)
   restart  restart the daemon (new binary, re-read config); keeps graph history
   audio refresh    fix stuck audio: switch the output's card profile and back
   audio restart    restart PipeWire, WirePlumber and pipewire-pulse
@@ -203,6 +204,9 @@ main :: proc() {
 	case "-h", "--help", "help":
 		fmt.print(USAGE)
 		return
+	case "setup":
+		run_setup()
+		return
 	case "toggle", "show", "hide", "quit", "daemon", "restart", "track", "audio":
 	case "status":
 		config_load()
@@ -226,7 +230,13 @@ main :: proc() {
 		resume_show = show
 	} else {
 		if ipc_send(full) {return}
-		if cmd == "quit" || cmd == "hide" {return} // nothing running
+		if cmd == "quit" || cmd == "hide" || cmd == "restart" {return} // nothing running
+		// Started from a download (not the installed copy, nothing running):
+		// the first thing to show is setup.
+		if len(os.args) == 1 && !is_installed_binary() {
+			run_setup()
+			return
+		}
 
 		// We are the daemon.
 		app.ipc_fd = ipc_listen()
@@ -255,13 +265,7 @@ main :: proc() {
 	if !platform_init() {os.exit(1)}
 	log.debugf("platform_init took %v, rss %d kB", time.tick_since(t0), rss_kb())
 
-	im.CHECKVERSION()
-	im.CreateContext()
-	io := im.GetIO()
-	io.IniFilename = nil
-	io.ConfigFlags += {.NavEnableKeyboard}
-	io.BackendFlags += {.HasMouseCursors}
-	theme_init()
+	im_init()
 
 	t0 = time.tick_now()
 	services_start()
@@ -310,6 +314,36 @@ rss_kb :: proc() -> int {
 	if len(f) < 2 {return 0}
 	pages, _ := strconv.parse_int(f[1])
 	return pages * 4
+}
+
+im_init :: proc() {
+	im.CHECKVERSION()
+	im.CreateContext()
+	io := im.GetIO()
+	io.IniFilename = nil
+	io.ConfigFlags += {.NavEnableKeyboard}
+	io.BackendFlags += {.HasMouseCursors}
+	theme_init()
+}
+
+// The setup window: same pipeline, its own UI, no auto-sizing.
+render_setup_frame :: proc() {
+	if !imgl_ready {
+		imgl.Init("#version 330 core")
+		imgl_ready = true
+	}
+	platform_begin_frame()
+	imgl.NewFrame()
+	im.NewFrame()
+	draw_setup()
+	im.Render()
+	platform_set_cursor(im.GetMouseCursor())
+	bw, bh := platform_buffer_size()
+	gl.Viewport(0, 0, bw, bh)
+	gl.ClearColor(0, 0, 0, 0)
+	gl.Clear(gl.COLOR_BUFFER_BIT)
+	imgl.RenderDrawData(im.GetDrawData())
+	platform_end_frame()
 }
 
 render_frame :: proc() {

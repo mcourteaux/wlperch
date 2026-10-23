@@ -100,6 +100,12 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [ ] Time tracker: optional window-rule assignment on numbered workspaces (e.g. by app/title)
 - [ ] Sensor history graphs (record readings over time)
 
+## Setup window (self-install)
+- [x] `wlwidgets setup` (and auto-open when run from a download): xdg_toplevel window with the same renderer
+- [x] Components with live status + actions: program, service, config, sway file, waybar files + hook (comment-aware JSONC patch, backups), RAPL udev rule (pkexec), launcher entry
+- [x] File previews; "Install recommended"; ⚙ button in panels
+- [x] Tested end-to-end in a headless nested sway with a fake HOME
+
 ## Integration & docs
 - [x] Waybar custom module snippet + sway keybinding snippet in README
 - [x] Integrated into the user's waybar: button rightmost, redundant modules removed (memory kept), bar restyled to match

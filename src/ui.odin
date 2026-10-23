@@ -219,6 +219,11 @@ draw_header :: proc(width: f32) {
 		if icon_button("##restart", ICON_REFRESH, C_MUTED, 28, tooltip = "Restart wlwidgets (new build, config)") {
 			restart_requested = true
 		}
+		im.SetCursorScreenPos({sw_x - lsz.x - 34 - 76, y - 3})
+		if icon_button("##setup", ICON_COG, C_MUTED, 28, tooltip = "Setup: install / configure components") {
+			setup_launch()
+			hide_requested = true
+		}
 	}
 
 	// Keyboard layouts
@@ -256,6 +261,11 @@ draw_title_row :: proc(title: string, width: f32) {
 		im.SetCursorScreenPos({p.x + width - tsz.x - 40, p.y + 1})
 		if icon_button("##restart", ICON_REFRESH, C_MUTED, 28, tooltip = "Restart wlwidgets (new build, config)") {
 			restart_requested = true
+		}
+		im.SetCursorScreenPos({p.x + width - tsz.x - 72, p.y + 1})
+		if icon_button("##setup", ICON_COG, C_MUTED, 28, tooltip = "Setup: install / configure components") {
+			setup_launch()
+			hide_requested = true
 		}
 	}
 	im.SetCursorScreenPos(p)
