@@ -112,6 +112,7 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Integrated into the user's waybar: button rightmost, redundant modules removed (memory kept), bar restyled to match
 - [x] README with build/run/config instructions
 - [x] Tested under sway with grim + vptr: layout switch, outside click, Escape, IPC toggle, HDMI output switch (both ways), volume wheel, mute, night light, copy IP, preset dropdown, scrolling, fractional 1.5x, re-exec/state hand-over
+- [x] Panel tabs at the top of every popup (labels, or icons only when narrow)
 - [x] Performance panel renamed to "system" (`toggle perf` still works); storage card lives there
 - [x] Main panel is quick settings + misc: toggle tiles (night light, do not disturb, Bluetooth, group lock, keep workspaces), keyboard layouts, links to the other panels; system graphs moved out (perf panel)
 - [x] Perf graphs zoomable (scroll; 1 h of history), live until you look back; double-click or reopen returns to live

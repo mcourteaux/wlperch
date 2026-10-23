@@ -67,6 +67,19 @@ panel_find :: proc(name: string) -> int {
 	return -1
 }
 
+// Icon for a panel tab, from its first module.
+panel_icon :: proc(p: Panel) -> string {
+	if len(p.columns) == 0 || len(p.columns[0]) == 0 {return ICON_TUNE}
+	switch p.columns[0][0] {
+	case "cpu", "gpu", "memory", "processes", "thermals", "storage": return ICON_CHIP
+	case "sensors":                                                  return ICON_THERMOMETER
+	case "time":                                                     return ICON_CLOCK
+	case "weather":                                                  return ICON_W_PARTLY
+	case "audio":                                                    return ICON_SPEAKER
+	}
+	return ICON_TUNE
+}
+
 cur_panel :: proc() -> ^Panel {
 	return &panels[current_panel]
 }

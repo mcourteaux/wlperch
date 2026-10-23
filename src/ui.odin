@@ -223,8 +223,67 @@ draw_header :: proc(width: f32) {
 		hide_requested = true
 	}
 
+	// Panel tabs under the buttons, clear of the date.
+	date_w: f32 = ok ? measure(fonts.ui, SZ_BODY, "Wednesday, 30 September 2026").x + 24 : 0
+	panel_tabs(right, p.y + 32, width - date_w)
+
 	im.SetCursorScreenPos(p)
 	im.Dummy({width, 66})
+}
+
+// Tabs for every panel, right-aligned at `right`; icons only when the
+// labels don't fit in `max_w`. Hidden when there's a single panel.
+panel_tabs :: proc(right, y, max_w: f32) {
+	if len(panels) < 2 {return}
+	h: f32 = 28
+	names := make([]string, len(panels), context.temp_allocator)
+	widths := make([]f32, len(panels), context.temp_allocator)
+	full: f32 = 4
+	for p, i in panels {
+		names[i] = p.title
+		if names[i] == "" && p.name != "" {names[i] = strings.concatenate({strings.to_upper(p.name[:1], context.temp_allocator), p.name[1:]}, context.temp_allocator)}
+		widths[i] = measure(fonts.ui, SZ_SMALL + 1, names[i]).x + 44
+		full += widths[i]
+	}
+	labels := full <= max_w
+	total: f32 = 4
+	for &w in widths {
+		if !labels {w = 34}
+		total += w
+	}
+	if total > max_w {return}
+	d := dl()
+	x0 := right - total
+	im.DrawList_AddRectFilled(d, {x0, y}, {right, y + h + 4}, col32(C_CARD_HI), 10)
+	target := -1
+	x := x0 + 2
+	for p, i in panels {
+		w := widths[i]
+		im.SetCursorScreenPos({x, y + 2})
+		if im.InvisibleButton(cstr(fmt.tprintf("##tab:%s", p.name)), {w, h}) && i != current_panel {target = i}
+		hovered := im.IsItemHovered()
+		active := i == current_panel
+		if hovered && !active {
+			im.SetMouseCursor(.Hand)
+			if !labels {tip(names[i])}
+		}
+		if active {
+			im.DrawList_AddRectFilled(d, {x, y + 2}, {x + w, y + 2 + h}, col32(C_BLUE, 0.9), 8)
+		} else if hovered {
+			im.DrawList_AddRectFilled(d, {x, y + 2}, {x + w, y + 2 + h}, col32(0xffffff, 0.06), 8)
+		}
+		fg := active ? col32(0x11131a) : col32(hovered ? C_TEXT : C_MUTED)
+		icon := panel_icon(p)
+		if labels {
+			draw_text(fonts.ui, 15, {x + 12, y + 7}, fg, icon)
+			draw_text(fonts.ui, SZ_SMALL + 1, {x + 32, y + 8}, active ? fg : col32(C_TEXT, hovered ? 1 : 0.85), names[i])
+		} else {
+			isz := measure(fonts.ui, 15, icon)
+			draw_text(fonts.ui, 15, {x + (w - isz.x) / 2, y + 7}, fg, icon)
+		}
+		x += w
+	}
+	if target >= 0 {switch_panel(target)}
 }
 
 // Compact header for panels without the big clock: title, time, restart.
@@ -245,6 +304,8 @@ draw_title_row :: proc(title: string, width: f32) {
 			setup_launch()
 			hide_requested = true
 		}
+		title_w := measure(fonts.bold, 22, title).x + 16
+		panel_tabs(p.x + width - tsz.x - 80, p.y - 1, width - tsz.x - 80 - title_w)
 	}
 	im.SetCursorScreenPos(p)
 	im.Dummy({width, 34})

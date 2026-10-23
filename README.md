@@ -14,8 +14,8 @@ pressing <kbd>Esc</kbd>, closes it.
 
 | Section | What it shows / does |
 |---|---|
-| **Header** | Big clock and date · setup and restart buttons |
-| **Quick settings** | Toggle tiles: night light (wlsunset), do not disturb (dunst, when running), Bluetooth power, and with projects configured group lock and keep-workspaces · keyboard layout switcher (sway xkb layouts) · buttons that open the other panels |
+| **Header** | Big clock and date · tabs for every panel (so the bar needs only one button) · setup and restart buttons. Panels without the big header get the tabs in their title row. |
+| **Quick settings** | Toggle tiles: night light (wlsunset), do not disturb (dunst, when running), Bluetooth power, and with projects configured group lock and keep-workspaces · keyboard layout switcher (sway xkb layouts) |
 | **Audio** | Two fix buttons: **refresh** switches the default output's card to another profile and back (cures PipeWire's occasional silent sink) and restores the default output; **restart** restarts PipeWire, WirePlumber and pipewire-pulse (`wlwidgets audio refresh/restart` from a shell or keybinding). Output and input devices (click to make default) · volume sliders (drag or scroll, up to 150 %) · mute. For HDMI/DP audio on a GPU, every plugged monitor is listed by its **name and sway connector** (`LG ULTRAWIDE · HDMI 2 · DP-3`). Picking one switches the card profile and the default sink. The full profile list is in a dropdown. |
 | **Displays** | Your current screen layout, drawn to scale · a dropdown of preset scripts (`desk.sh` & co) with a mini preview of each layout. Selecting one runs it, and the active preset is detected and ticked. |
 | **Weather** | Today's forecast from open-meteo.com (no API key): current conditions, high/low, rain, wind, humidity, sunrise/sunset, and the next 24 h |
