@@ -445,12 +445,20 @@ draw_system :: proc(w: f32) {
 	if sysmon.mem_total > 0 {
 		p := im.GetCursorScreenPos()
 		frac := f32(f64(sysmon.mem_used) / f64(sysmon.mem_total))
-		draw_text(fonts.bold, SZ_BODY, p, col32(C_TEXT), "Memory")
-		txt := fmt.tprintf("%.1f / %.1f GiB", f64(sysmon.mem_used) / (1 << 30), f64(sysmon.mem_total) / (1 << 30))
+		warn := memory_warning(sysmon.mem_used, sysmon.mem_total)
+		draw_text(fonts.bold, SZ_BODY, p, col32(warn ? C_RED : C_TEXT), "Memory")
+		if warn {
+			tag := "running low"
+			tw := measure(fonts.bold, 11, tag).x
+			nx := p.x + measure(fonts.bold, SZ_BODY, "Memory").x + 8
+			im.DrawList_AddRectFilled(dl(), {nx, p.y + 1}, {nx + tw + 12, p.y + 18}, col32(C_RED, 0.18), 8)
+			draw_text(fonts.bold, 11, {nx + 6, p.y + 2}, col32(C_RED), tag)
+		}
+		txt := fmt.tprintf("%.1f / %.1f GiB · %d%%", f64(sysmon.mem_used) / (1 << 30), f64(sysmon.mem_total) / (1 << 30), int(frac * 100 + 0.5))
 		tsz := measure(fonts.ui, SZ_SMALL, txt)
-		draw_text(fonts.ui, SZ_SMALL, {p.x + inner - tsz.x, p.y + 2}, col32(C_MUTED), txt)
+		draw_text(fonts.ui, SZ_SMALL, {p.x + inner - tsz.x, p.y + 2}, col32(warn ? C_RED : C_MUTED), txt)
 		im.Dummy({inner, 18})
-		usage_bar(frac, col32(C_CYAN), {inner, 6})
+		usage_bar(frac, col32(warn ? C_RED : C_CYAN), {inner, 6})
 	}
 }
 

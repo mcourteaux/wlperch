@@ -52,6 +52,7 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] CPU % history graph (/proc/stat), current %, per-core strip, temperature
 - [x] GPU % history graph (NVML via dlopen; AMD sysfs `gpu_busy_percent` fallback), VRAM, temperature, power
 - [x] Memory usage bar
+- [x] Memory warning at configurable % (`memory_warn_percent`): red row in popup + red, pulsing waybar button via `wlwidgets status`
 - [x] Keep history sampling while popup is hidden
 
 ### Keyboard
@@ -85,6 +86,7 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 
 ## Integration & docs
 - [x] Waybar custom module snippet + sway keybinding snippet in README
+- [x] Integrated into the user's waybar: button rightmost, redundant modules removed (memory kept), bar restyled to match
 - [x] README with build/run/config instructions
 - [x] Tested under sway with grim + vptr: layout switch, outside click, Escape, IPC toggle, HDMI output switch (both ways), volume wheel, mute, night light, copy IP, preset dropdown, scrolling, fractional 1.5x, re-exec/state hand-over
 - [ ] Applying a preset live (not run: desk.sh switches audio to the currently unavailable hdmi-stereo-extra2)

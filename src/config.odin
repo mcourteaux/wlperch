@@ -46,6 +46,7 @@ Config :: struct {
 
 	// [system]
 	history_seconds:    int,
+	memory_warn_pct:    int, // memory use (%) at which we draw attention
 }
 
 config: Config
@@ -58,7 +59,7 @@ width = 860
 # Any combination of: top bottom left right
 anchor = top right
 # Gap between the popup and the screen edges (top right bottom left).
-margin = 4 8 0 0
+margin = 4 0 0 0
 # Connector to show on (e.g. DP-1). Empty = the focused output.
 output =
 close_on_click_outside = true
@@ -97,6 +98,8 @@ preset_glob = *.sh
 [system]
 # Length of the CPU/GPU history graphs.
 history_seconds = 120
+# Memory use (%) at which the popup and the waybar button ("wlwidgets status") turn red.
+memory_warn_percent = 90
 `
 
 config_path :: proc() -> string {
@@ -207,6 +210,7 @@ config_load :: proc() {
 	c.preset_glob = strings.clone(get(m, defaults, "displays", "preset_glob"))
 
 	c.history_seconds = clamp(strconv.parse_int(get(m, defaults, "system", "history_seconds")) or_else 120, 30, 600)
+	c.memory_warn_pct = clamp(strconv.parse_int(get(m, defaults, "system", "memory_warn_percent")) or_else 90, 1, 100)
 }
 
 popup_size :: proc() -> (w, h: i32) {

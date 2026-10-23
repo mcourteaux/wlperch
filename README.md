@@ -74,6 +74,7 @@ loaded at runtime); AMD GPUs use sysfs.
 wlwidgets            # = toggle: show, or hide if shown (starts the daemon if needed)
 wlwidgets show | hide | quit
 wlwidgets daemon     # start in the background without showing
+wlwidgets status     # waybar JSON for the bar button (see below)
 ```
 
 The first invocation becomes the daemon, and later ones just send a command over
@@ -91,17 +92,26 @@ bindsym $mod+w exec wlwidgets toggle
 ### Waybar
 
 ```jsonc
-// in "modules-right": [..., "custom/wlwidgets", ...]
+// in "modules-right": [..., "custom/wlwidgets"]   (rightmost: the popup opens under it)
 "custom/wlwidgets": {
-    "format": "󰕮",
-    "tooltip": false,
+    "exec": "wlwidgets status",
+    "return-type": "json",
+    "format": "{}",
     "on-click": "wlwidgets toggle"
 }
 ```
 
+`wlwidgets status` is a tiny loop (no GUI) that prints the button's state every
+2 s. When memory use reaches `memory_warn_percent`, the text becomes
+`󰕮 92%` and the module gets the CSS class `memory-warning`:
+
 ```css
-#custom-wlwidgets { padding: 0 10px; }
+#custom-wlwidgets { color: #7aa2f7; background-color: rgba(122,162,247,.16);
+                    border-radius: 8px; padding: 0 11px; margin: 3px 2px; font-size: 17px; }
+#custom-wlwidgets.memory-warning { color: #111318; background-color: #f7768e; font-weight: bold; }
 ```
+
+The popup's Memory row turns red ("running low") at the same threshold.
 
 ## Configuration
 
@@ -112,7 +122,7 @@ defaults on the first run:
 [popup]
 width = 860
 anchor = top right            # any of: top bottom left right
-margin = 4 8 0 0              # top right bottom left
+margin = 4 0 0 0              # top right bottom left
 output =                      # connector (e.g. DP-1); empty = focused output
 close_on_click_outside = true
 max_height = 0                # 0 = up to the output height; scrolls when needed
@@ -139,6 +149,7 @@ preset_glob = *.sh
 
 [system]
 history_seconds = 120
+memory_warn_percent = 90      # popup + bar button turn red at this memory use
 ```
 
 Restart the daemon (`wlwidgets quit`) to apply changes.

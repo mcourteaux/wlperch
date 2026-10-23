@@ -24,6 +24,7 @@ commands:
   hide     hide the popup
   daemon   start the background daemon without showing the popup
   quit     stop the running daemon
+  status   print waybar JSON (icon; memory warning) every 2 s, for a custom module
 `
 
 App :: struct {
@@ -91,6 +92,10 @@ main :: proc() {
 		fmt.print(USAGE)
 		return
 	case "toggle", "show", "hide", "quit", "daemon":
+	case "status":
+		config_load()
+		status_loop()
+		return
 	case:
 		fmt.eprint(USAGE)
 		os.exit(2)
