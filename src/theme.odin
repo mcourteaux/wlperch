@@ -18,7 +18,7 @@ fonts: Fonts
 // Font sizes (logical pixels).
 SZ_SMALL :: 12.0
 SZ_BODY :: 14.0
-SZ_TITLE :: 13.0
+SZ_TITLE :: 15.5
 SZ_BIG :: 26.0
 SZ_HUGE :: 36.0
 

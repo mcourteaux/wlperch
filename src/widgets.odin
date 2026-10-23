@@ -77,13 +77,13 @@ card_end :: proc() {
 card_title :: proc(icon: string, title: string, accent: u32, right_text := "") {
 	p := im.GetCursorScreenPos()
 	w := im.GetContentRegionAvail().x
-	draw_text(fonts.ui, 16, {p.x, p.y - 1}, col32(accent), icon)
-	draw_text(fonts.bold, SZ_TITLE, {p.x + 22, p.y + 1}, col32(accent), title)
+	draw_text(fonts.ui, 19, {p.x - 1, p.y - 1}, col32(accent), icon)
+	draw_text(fonts.bold, SZ_TITLE, {p.x + 25, p.y}, col32(accent), title)
 	if right_text != "" {
 		sz := measure(fonts.ui, SZ_SMALL, right_text)
-		draw_text(fonts.ui, SZ_SMALL, {p.x + w - sz.x, p.y + 2}, col32(C_MUTED), right_text)
+		draw_text(fonts.ui, SZ_SMALL, {p.x + w - sz.x, p.y + 4}, col32(C_MUTED), right_text)
 	}
-	im.Dummy({w, 18})
+	im.Dummy({w, 21})
 	im.Dummy({w, 2})
 }
 
