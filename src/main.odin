@@ -191,7 +191,8 @@ render_frame :: proc() {
 	im.Render()
 	platform_set_cursor(im.GetMouseCursor())
 
-	gl.Viewport(0, 0, plat.width * plat.scale, plat.height * plat.scale)
+	bw, bh := platform_buffer_size()
+	gl.Viewport(0, 0, bw, bh)
 	gl.ClearColor(0, 0, 0, 0)
 	gl.Clear(gl.COLOR_BUFFER_BIT)
 	imgl.RenderDrawData(im.GetDrawData())
@@ -201,7 +202,7 @@ render_frame :: proc() {
 	}
 	platform_end_frame()
 	app.frame_count += 1
-	log.debugf("frame %d %dx%d@%d content_h=%.1f", app.frame_count, plat.width, plat.height, plat.scale, content_h)
+	log.debugf("frame %d %dx%d@%.2f content_h=%.1f", app.frame_count, plat.width, plat.height, platform_scale(), content_h)
 
 	if content_h > 0 {
 		h := i32(content_h + 0.5)

@@ -121,7 +121,8 @@ draw_ui :: proc() -> f32 {
 	{
 		sync.guard(&sway.mu)
 		for o in sway.outputs {
-			if o.focused {max_h = f32(o.h) - 40}
+			on_it := plat.on_output != "" ? o.name == plat.on_output : o.focused
+			if on_it {max_h = f32(o.h) - 40}
 		}
 	}
 	if config.max_height > 0 {max_h = min(max_h, f32(config.max_height))}

@@ -32,6 +32,7 @@ Platform :: struct {
 	layer_shell:      ^wl.Zwlr_Layer_Shell_V1,
 	cursor_shape_mgr: ^wl.Wp_Cursor_Shape_Manager_V1,
 	viewporter:       ^wl.Wp_Viewporter,
+	frac_scale_mgr:   ^wl.Wp_Fractional_Scale_Manager_V1,
 	single_pixel:     ^wl.Wp_Single_Pixel_Buffer_Manager_V1,
 	seat:             ^wl.Seat,
 	pointer:          ^wl.Pointer,
@@ -50,6 +51,10 @@ Platform :: struct {
 	want_height:      i32,
 	scale:            i32,
 	preferred_scale:  bool, // compositor sends preferred_buffer_scale
+	frac_scale:       ^wl.Wp_Fractional_Scale_V1,
+	viewport:         ^wl.Wp_Viewport,
+	frac120:          u32, // fractional scale * 120; 0 = integer scaling path
+	on_output:        string, // connector of the output the popup is on
 	frame_cb:         ^wl.Callback,
 	frame_pending:    bool,
 	input_rect:       [4]i32,
@@ -106,6 +111,8 @@ registry_listener := wl.Registry_Listener {
 			plat.layer_shell = cast(^wl.Zwlr_Layer_Shell_V1)wl.registry_bind(registry, name, &wl.zwlr_layer_shell_v1_interface, min(version, 4))
 		case "wp_viewporter":
 			plat.viewporter = cast(^wl.Wp_Viewporter)wl.registry_bind(registry, name, &wl.wp_viewporter_interface, 1)
+		case "wp_fractional_scale_manager_v1":
+			plat.frac_scale_mgr = cast(^wl.Wp_Fractional_Scale_Manager_V1)wl.registry_bind(registry, name, &wl.wp_fractional_scale_manager_v1_interface, 1)
 		case "wp_single_pixel_buffer_manager_v1":
 			plat.single_pixel = cast(^wl.Wp_Single_Pixel_Buffer_Manager_V1)wl.registry_bind(registry, name, &wl.wp_single_pixel_buffer_manager_v1_interface, 1)
 		case "wp_cursor_shape_manager_v1":
@@ -433,7 +440,11 @@ platform_key_repeat :: proc() -> time.Duration {
 surface_listener := wl.Surface_Listener {
 	enter = proc "c" (data: rawptr, self: ^wl.Surface, output: ^wl.Output) {
 		context = g_ctx
-		if plat.preferred_scale {return}
+		for o in plat.outputs {
+			if o.output == output {plat.on_output = o.conn}
+		}
+		request_redraw()
+		if plat.preferred_scale || plat.frac120 != 0 {return}
 		for o in plat.outputs {
 			if o.output == output && o.scale != plat.scale {
 				plat.scale = max(o.scale, 1)
@@ -445,6 +456,7 @@ surface_listener := wl.Surface_Listener {
 	preferred_buffer_scale = proc "c" (data: rawptr, self: ^wl.Surface, factor: i32) {
 		context = g_ctx
 		plat.preferred_scale = true
+		if plat.frac120 != 0 {return}
 		if factor != plat.scale {
 			plat.scale = max(factor, 1)
 			resize_buffers()
@@ -521,11 +533,43 @@ frame_listener := wl.Callback_Listener {
 }
 
 @(private = "file")
+frac_listener := wl.Wp_Fractional_Scale_V1_Listener {
+	preferred_scale = proc "c" (data: rawptr, self: ^wl.Wp_Fractional_Scale_V1, scale: u32) {
+		context = g_ctx
+		if scale != plat.frac120 && scale > 0 {
+			plat.frac120 = scale
+			resize_buffers()
+		}
+	},
+}
+
+// Size of the GL framebuffer in pixels.
+platform_buffer_size :: proc() -> (w, h: i32) {
+	if plat.frac120 != 0 {
+		// Round half up, as the fractional-scale spec requires.
+		return i32((u32(plat.width) * plat.frac120 + 60) / 120), i32((u32(plat.height) * plat.frac120 + 60) / 120)
+	}
+	return plat.width * plat.scale, plat.height * plat.scale
+}
+
+// Logical -> pixel scale.
+platform_scale :: proc() -> f32 {
+	if plat.frac120 != 0 {return f32(plat.frac120) / 120}
+	return f32(plat.scale)
+}
+
+@(private = "file")
 resize_buffers :: proc() {
 	if plat.surface == nil {return}
-	wl.surface_set_buffer_scale(plat.surface, plat.scale)
+	if plat.viewport != nil && plat.frac120 != 0 {
+		wl.surface_set_buffer_scale(plat.surface, 1)
+		wl.wp_viewport_set_destination(plat.viewport, plat.width, plat.height)
+	} else {
+		wl.surface_set_buffer_scale(plat.surface, plat.scale)
+	}
 	if plat.egl_window != nil {
-		wl.egl_window_resize(plat.egl_window, plat.width * plat.scale, plat.height * plat.scale, 0, 0)
+		w, h := platform_buffer_size()
+		wl.egl_window_resize(plat.egl_window, w, h, 0, 0)
 	}
 	request_redraw()
 }
@@ -653,6 +697,11 @@ platform_show :: proc(placement: Popup_Placement, width, height: i32) -> bool {
 
 	plat.surface = wl.compositor_create_surface(plat.compositor)
 	wl.surface_add_listener(plat.surface, &surface_listener, nil)
+	if plat.frac_scale_mgr != nil && plat.viewporter != nil {
+		plat.frac_scale = wl.wp_fractional_scale_manager_v1_get_fractional_scale(plat.frac_scale_mgr, plat.surface)
+		wl.wp_fractional_scale_v1_add_listener(plat.frac_scale, &frac_listener, nil)
+		plat.viewport = wl.wp_viewporter_get_viewport(plat.viewporter, plat.surface)
+	}
 
 	output: ^wl.Output
 	for o in plat.outputs {
@@ -692,7 +741,9 @@ platform_show :: proc(placement: Popup_Placement, width, height: i32) -> bool {
 		platform_hide()
 		return false
 	}
-	plat.egl_window = wl.egl_window_create(plat.surface, plat.width * plat.scale, plat.height * plat.scale)
+	resize_buffers() // apply scale/viewport now that the size is known
+	bw, bh := platform_buffer_size()
+	plat.egl_window = wl.egl_window_create(plat.surface, bw, bh)
 	plat.egl_surface = egl.CreateWindowSurface(plat.egl_display, plat.egl_config, egl.NativeWindowType(plat.egl_window), nil)
 	if plat.egl_surface == nil {
 		log.error("eglCreateWindowSurface failed")
@@ -725,6 +776,9 @@ platform_hide :: proc() {
 		wl.callback_destroy(plat.frame_cb)
 		plat.frame_cb = nil
 	}
+	if plat.frac_scale != nil {wl.wp_fractional_scale_v1_destroy(plat.frac_scale)}
+	if plat.viewport != nil {wl.wp_viewport_destroy(plat.viewport)}
+	plat.frac_scale, plat.viewport = nil, nil
 	wl.zwlr_layer_surface_v1_destroy(plat.layer_surface)
 	wl.surface_destroy(plat.surface)
 	catcher_destroy()
@@ -766,7 +820,8 @@ platform_can_render :: proc() -> bool {
 platform_begin_frame :: proc() {
 	io := im.GetIO()
 	io.DisplaySize = {f32(plat.width), f32(plat.height)}
-	io.DisplayFramebufferScale = {f32(plat.scale), f32(plat.scale)}
+	s := platform_scale()
+	io.DisplayFramebufferScale = {s, s}
 }
 
 platform_end_frame :: proc() {

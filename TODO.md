@@ -16,7 +16,7 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Hide on Escape and on click outside (transparent backdrop layer; sway drops on-demand focus so keyboard is exclusive)
 - [x] Auto-size popup height to content (clamped to output height)
 - [x] HiDPI: integer buffer scale (wl_surface.preferred_buffer_scale / output scale)
-- [ ] Fractional scaling (wp_fractional_scale_v1 + viewporter)
+- [x] Fractional scaling (wp_fractional_scale_v1 + viewporter), tested at 1.5×
 - [x] Config file `~/.config/wlwidgets/config.ini` with defaults written on first run
 - [x] Background sampler threads; UI reads snapshots under mutex, actions applied after unlock
 - [x] Safe subprocess helper (posix_spawn, captured stdout, timeouts, detached launches)
@@ -30,7 +30,7 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Soft drop-shadow + rounded transparent window corners
 - [x] Custom widgets: card, device rows, slim sliders, pill toggle, segmented control, gradient area graphs, usage bars, toast
 - [x] Two-column layout that reads well at a glance
-- [ ] Open animation (fade/slide)
+- [x] Open animation (fade/slide)
 
 ## Widgets
 ### Audio
