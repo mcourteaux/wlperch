@@ -13,57 +13,63 @@ import "core:sys/posix"
 import "core:testing"
 import "core:time"
 
-@(test)
-test_shell_int :: proc(t: ^testing.T) {
-	testing.expect_value(t, shell_int("3440"), 3440)
-	testing.expect_value(t, shell_int("$((3440+1440))"), 4880)
-	testing.expect_value(t, shell_int("$((3440 + 1440 * 2))"), 6320)
-	testing.expect_value(t, shell_int("$(( (10 - 4) / 2 ))"), 3)
-	testing.expect_value(t, shell_int("-200"), -200)
-}
+PRESET_SAMPLE :: `[popup]
+width = 860
 
-PRESET_SAMPLE :: `#!/bin/bash
-if [[ "$XDG_SESSION_TYPE" = "wayland" ]]; then
-  if [[ ! -z "${SWAYSOCK}" ]]; then
-    echo "
-    output DP-3 pos 0 0 res 3440x1440
-    output DP-1 pos 3440 0 res 2560x1440 transform 90
-    output DP-2 pos $((3440+1440)) 0 res 1920x1080@60Hz scale 2
-    output HDMI-A-1 disable
-    workspace 9 output DP-2
-    " > ~/.config/sway/config.d/20-monitors.conf
-  else
-    echo "
-    monitor = DP-3, 3440x1440, 0x0      , 1
-    " > $HOME/.config/hypr/monitors.conf
-  fi
-else
-  xrandr --output DP-0 --off
-fi
+# [display.commented]
+# DP-9 = off
+
+[display.desk_and_tv]
+DP-3 = 3440x1440 pos 0 0
+DP-1 = mode 2560x1440 pos 3440 0 transform 90
+DP-2 = 1920x1080@60Hz pos 4880,0 scale 2   ; the TV
+HDMI-A-1 = off
+workspaces = DP-2: 9 10, DP-3: 1
+run = "echo hi"
+
+[display.empty]
+name = Typo
+
+[display.tv]
+name = Just the TV
+DP-2 = 1920x1080 pos 0 0
+DP-3 = disable
 `
 
 @(test)
-test_parse_preset :: proc(t: ^testing.T) {
-	dir := "/tmp/wlperch-test"
-	os.make_directory_all(dir)
-	path := "/tmp/wlperch-test/desk_and_tv.sh"
-	testing.expect(t, os.write_entire_file(path, PRESET_SAMPLE) == nil)
-	defer os.remove(path)
-
-	p, ok := parse_preset(path)
-	defer preset_destroy(&p)
-	testing.expect(t, ok)
+test_display_presets :: proc(t: ^testing.T) {
+	ps := presets_from_ini_text(PRESET_SAMPLE)
+	defer {
+		for &p in ps {preset_destroy(&p)}
+		delete(ps)
+	}
+	testing.expect_value(t, len(ps), 2) // [display.empty] has no outputs
+	if len(ps) != 2 {return}
+	p := ps[0]
+	testing.expect_value(t, p.key, "desk_and_tv")
 	testing.expect_value(t, p.label, "Desk and TV")
+	testing.expect_value(t, p.run, "echo hi")
 	testing.expect_value(t, len(p.outputs), 4)
 	if len(p.outputs) != 4 {return}
 
 	testing.expect_value(t, p.outputs[0].name, "DP-3")
 	testing.expect_value(t, p.outputs[0].w, 3440)
+	testing.expect_value(t, p.outputs[0].scale, 0) // not given: left alone
+	testing.expect_value(t, p.outputs[1].w, 2560)
 	testing.expect_value(t, p.outputs[1].transform, "90")
 	testing.expect_value(t, p.outputs[2].x, 4880)
 	testing.expect_value(t, p.outputs[2].h, 1080)
+	testing.expect_value(t, p.outputs[2].refresh, 60)
 	testing.expect_value(t, p.outputs[2].scale, 2)
 	testing.expect_value(t, p.outputs[3].enabled, false)
+	testing.expect_value(t, len(p.workspaces), 3)
+	if len(p.workspaces) == 3 {
+		testing.expect_value(t, p.workspaces[1].ws, "10")
+		testing.expect_value(t, p.workspaces[1].output, "DP-2")
+		testing.expect_value(t, p.workspaces[2].output, "DP-3")
+	}
+	testing.expect_value(t, ps[1].label, "Just the TV")
+	testing.expect_value(t, ps[1].outputs[1].enabled, false)
 
 	// Rotated output: logical size is swapped.
 	_, _, w, h := preset_output_rect(p.outputs[1])
@@ -72,6 +78,48 @@ test_parse_preset :: proc(t: ^testing.T) {
 	// Scaled output: logical size is divided by the scale.
 	_, _, w, h = preset_output_rect(p.outputs[2])
 	testing.expect_value(t, w, 960)
+}
+
+@(test)
+test_display_default_presets :: proc(t: ^testing.T) {
+	sync_outputs :: proc(outs: []Sway_Output) {
+		clear(&sway.outputs)
+		append(&sway.outputs, ..outs)
+		sway.ok = true
+	}
+	defer {
+		delete(sway.outputs)
+		sway.outputs = {}
+		sway.ok = false
+	}
+	sync_outputs({{name = "eDP-1", model = "Unknown", active = true, mode_w = 1920, mode_h = 1200, refresh = 60.001, scale = 1.25, transform = "normal"}})
+	one := displays_default_presets()
+	testing.expect(t, strings.contains(one, "[display.default]\nname = Default\neDP-1 = 1920x1200@60.001Hz pos 0 0 scale 1.25\n"), one)
+
+	sync_outputs({
+		{name = "DP-3", model = "LG ULTRAWIDE", active = true, mode_w = 3440, mode_h = 1440, refresh = 59.973, scale = 1, transform = "normal"},
+		{name = "DP-1", model = "P27q-20", active = true, x = 3440, mode_w = 2560, mode_h = 1440, scale = 1, transform = "90"},
+		{name = "HDMI-A-1", active = false, transform = "normal"},
+	})
+	many := displays_default_presets()
+	ps := presets_from_ini_text(many)
+	defer {
+		for &p in ps {preset_destroy(&p)}
+		delete(ps)
+	}
+	testing.expect_value(t, len(ps), 4) // all + one per monitor
+	if len(ps) != 4 {return}
+	testing.expect_value(t, ps[0].key, "all")
+	testing.expect_value(t, ps[0].outputs[1].transform, "90")
+	testing.expect_value(t, ps[0].outputs[1].x, 3440)
+	testing.expect_value(t, ps[0].outputs[2].enabled, false)
+	testing.expect_value(t, ps[2].key, "only-dp-1")
+	testing.expect_value(t, ps[2].label, "P27q-20 only")
+	testing.expect_value(t, ps[2].outputs[1].x, 0) // moved to the origin when alone
+	testing.expect_value(t, ps[2].outputs[0].enabled, false)
+	testing.expect_value(t, ps[3].label, "HDMI-A-1 only")
+	testing.expect_value(t, ps[3].outputs[2].enabled, true)
+	testing.expect_value(t, ps[3].outputs[2].w, 0) // never on: sway picks the mode
 }
 
 @(test)

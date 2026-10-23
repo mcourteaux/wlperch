@@ -347,6 +347,14 @@ drain_events :: proc(fd: posix.FD) -> (kinds: bit_set[Event_Kind]) {
 	}
 }
 
+// One-off read of the outputs (and keyboard layouts), for the CLI and setup.
+sway_load_outputs :: proc() -> bool {
+	if os.get_env("SWAYSOCK", context.temp_allocator) == "" {return false}
+	refresh()
+	sync.guard(&sway.mu)
+	return sway.ok
+}
+
 sway_start :: proc() {
 	if os.get_env("SWAYSOCK", context.temp_allocator) == "" {
 		log.warn("SWAYSOCK not set: display layout and keyboard layouts unavailable")

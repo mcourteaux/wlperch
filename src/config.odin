@@ -40,10 +40,6 @@ Config :: struct {
 	// [nightlight]
 	nightlight_cmd:     string,
 
-	// [displays]
-	preset_dirs:        [dynamic]string,
-	preset_glob:        string,
-
 	// [system]
 	history_seconds:    int,
 
@@ -102,11 +98,21 @@ ignore_interfaces = lo, docker, veth, br-, virbr, tailscale
 # {lat} and {lon} are replaced with the weather location's coordinates.
 command = wlsunset -l {lat} -L {lon}
 
-[displays]
-# Directories scanned for display preset scripts (colon separated).
-preset_dirs = ~/.local/bin:~/dotfiles/desktop/.local/bin
-# Only scripts whose name matches this glob are considered.
-preset_glob = *.sh
+# Display presets: one [display.<name>] section each, switched from the
+# Displays card or with "wlperch display <name>" (list / next / prev / save).
+# Every key is an output, its value sway's output settings: a mode, pos X Y,
+# scale and transform, or "off". A new config starts with the layout found
+# on the first run (and, with several monitors, each monitor on its own).
+# The active preset is also written to ~/.config/sway/config.d/wlperch-displays.conf
+# so sway starts with it.
+#
+# [display.desk]
+# name = Desk                                 ; optional label
+# DP-3 = 3440x1440 pos 0 0
+# DP-1 = 2560x1440 pos 3440 0 transform 90
+# HDMI-A-1 = off
+# workspaces = DP-1: 1 2 3, DP-3: 4 5 6       ; optional: where these workspaces live
+# run = pactl set-card-profile …              ; optional: run after switching
 
 [system]
 # Length of the CPU/GPU history graphs.
@@ -230,6 +236,15 @@ migrate_old_name :: proc() {
 	}
 }
 
+// DEFAULT_CONFIG plus display presets for the monitors connected right now.
+default_config_text :: proc() -> string {
+	sway_load_outputs()
+	// Right after the display preset notes.
+	base := DEFAULT_CONFIG
+	at := strings.index(base, "\n[system]")
+	return strings.concatenate({base[:at], displays_default_presets(), base[at:]}, context.temp_allocator)
+}
+
 config_path :: proc() -> string {
 	base := os.get_env("XDG_CONFIG_HOME", context.temp_allocator)
 	if base == "" {
@@ -269,7 +284,7 @@ config_load :: proc() {
 	if !os.exists(path) {
 		dir := path[:strings.last_index_byte(path, '/')]
 		os.make_directory_all(dir)
-		if err := os.write_entire_file(path, DEFAULT_CONFIG); err != nil {
+		if err := os.write_entire_file(path, default_config_text()); err != nil {
 			log.warnf("could not write default config to %s: %v", path, err)
 		} else {
 			log.infof("wrote default config to %s", path)
@@ -331,11 +346,6 @@ config_load :: proc() {
 	c.ignore_interfaces = split_list(get(m, defaults, "network", "ignore_interfaces"), ",")
 
 	c.nightlight_cmd = strings.clone(get(m, defaults, "nightlight", "command"))
-
-	for d in split_list(get(m, defaults, "displays", "preset_dirs"), ":") {
-		append(&c.preset_dirs, expand_home(d))
-	}
-	c.preset_glob = strings.clone(get(m, defaults, "displays", "preset_glob"))
 
 	c.history_seconds = clamp(strconv.parse_int(get(m, defaults, "system", "history_seconds")) or_else 120, 30, 600)
 	c.memory_warn_pct = clamp(strconv.parse_int(get(m, defaults, "system", "memory_warn_percent")) or_else 90, 1, 100)

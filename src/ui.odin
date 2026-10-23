@@ -537,7 +537,7 @@ draw_displays :: proc(w: f32) {
 	im.Dummy({inner, h})
 
 	if len(displays.presets) == 0 {
-		label(fonts.ui, SZ_SMALL, col32(C_FAINT), "No preset scripts found (see [displays] in config)")
+		label(fonts.ui, SZ_SMALL, col32(C_FAINT), "No presets: run \"wlperch display save <name>\" or add [display.<name>] to the config")
 		return
 	}
 	sub_heading("Preset")
@@ -570,7 +570,7 @@ draw_displays :: proc(w: f32) {
 			names: [dynamic]string
 			names.allocator = context.temp_allocator
 			for o in pr.outputs {if o.enabled {append(&names, o.name)}}
-			draw_text(fonts.ui, SZ_SMALL, {row_p.x + pw + 16, row_p.y + 20}, col32(C_MUTED), fmt.tprintf("%s · %s", pr.name, strings.join(names[:], " + ", context.temp_allocator)))
+			draw_text(fonts.ui, SZ_SMALL, {row_p.x + pw + 16, row_p.y + 20}, col32(C_MUTED), fmt.tprintf("%s · %s", pr.key, strings.join(names[:], " + ", context.temp_allocator)))
 			if i == active {
 				draw_text(fonts.ui, 16, {row_p.x + full_w - 24, row_p.y + 10}, col32(C_PURPLE), ICON_CHECK)
 			}

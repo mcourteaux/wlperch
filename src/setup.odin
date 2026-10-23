@@ -337,7 +337,7 @@ setup_create_config :: proc() {
 		done(.Config, true, "opened in your editor")
 		return
 	}
-	ok := write_file(path, DEFAULT_CONFIG)
+	ok := write_file(path, default_config_text())
 	done(.Config, ok, ok ? "default config written" : "couldn't write the config")
 }
 
@@ -977,7 +977,7 @@ setup_enable_notifications :: proc() {
 config_set_value :: proc(section, key, value: string) -> bool {
 	path := config_path()
 	text, ok := read_text(path)
-	if !ok {text = DEFAULT_CONFIG}
+	if !ok {text = default_config_text()}
 	lines := strings.split_after(text, "\n", context.temp_allocator)
 	b := strings.builder_make(context.temp_allocator)
 	cur := ""

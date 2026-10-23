@@ -18,7 +18,7 @@ pressing <kbd>Esc</kbd>, closes it.
 | **Quick settings** | Toggle tiles: night light (wlsunset), do not disturb (wlperch' own while it shows notifications, otherwise dunst's), Bluetooth power, and with projects configured group lock and keep-workspaces · keyboard layout switcher (sway xkb layouts) |
 | **Media** | The playing track from any MPRIS player (Spotify, browsers, mpv, VLC…): album art (or the app's icon), title, artist, album, a progress bar, and previous / play-pause / next. With several players, a switcher picks one. Hidden while no player runs. `wlperch media play-pause\|next\|previous` from a shell or keybinding. |
 | **Audio** | Two fix buttons: **refresh** switches the default output's card to another profile and back (cures PipeWire's occasional silent sink) and restores the default output; **restart** restarts PipeWire, WirePlumber and pipewire-pulse (`wlperch audio refresh/restart` from a shell or keybinding). Output and input devices (click to make default) · volume sliders (drag or scroll, up to 150 %) · mute. For HDMI/DP audio on a GPU, every plugged monitor is listed by its **name and sway connector** (`LG ULTRAWIDE · HDMI 2 · DP-3`). Picking one switches the card profile and the default sink. The full profile list is in a dropdown. |
-| **Displays** | Your current screen layout, drawn to scale · a dropdown of preset scripts (`desk.sh` & co) with a mini preview of each layout. Selecting one runs it, and the active preset is detected and ticked. |
+| **Displays** | Your current screen layout, drawn to scale · a dropdown of the display presets from your config, with a mini preview of each layout. Selecting one switches to it, and the active preset is detected and ticked. |
 | **Weather** | Today's forecast from open-meteo.com (no API key): current conditions, high/low, rain, wind, humidity, sunrise/sunset, and the next 24 h |
 | **World clocks** | Any IANA time zones, with UTC offset, difference to local time, and a tomorrow/yesterday badge |
 | **Network** | Public IP and per-interface addresses. Click any of them to copy it (`wl-copy`). |
@@ -37,18 +37,36 @@ connector (`DP-3`).
 
 ### Display presets
 
-Every file matching `preset_glob` in `preset_dirs` is scanned for sway `output`
-lines, the same ones your scripts echo into `~/.config/sway/config.d/`:
+Presets live in the config, one `[display.<name>]` section each. Every key is
+an output and its value sway's own output settings (a mode, `pos X Y`,
+`scale`, `transform`), or `off`:
+
+```ini
+[display.desk_and_tv]
+name = Desk and TV                         ; optional label
+DP-3 = 3440x1440 pos 0 0
+DP-1 = 2560x1440 pos 3440 0 transform 90
+DP-2 = 1920x1080@60Hz pos 4880 0
+HDMI-A-1 = off
+workspaces = DP-2: 9 10, DP-3: 1           ; optional: where these workspaces live
+run = pactl set-card-profile …             ; optional: run after switching
+```
+
+A config written from scratch starts with the layout found on the first run
+(`[display.default]`), and with several monitors also `all` plus an
+`only-<output>` preset for each monitor on its own.
 
 ```
-output DP-3 pos 0 0 res 3440x1440
-output DP-1 pos 3440 0 res 2560x1440 transform 90
-output DP-2 pos $((3440+1440)) 0 res 1920x1080
+wlperch display                  # list ("*" = the current layout)
+wlperch display desk_and_tv      # switch (section name, label or number)
+wlperch display next             # cycle (prev too): handy on a key binding
+wlperch display save couch "Couch"   # add the current layout as a preset
 ```
 
-Positions may use shell arithmetic, as shown. Scripts without such lines are
-ignored. Symlinks (e.g. `~/.local/bin/desk.sh` → dotfiles) are de-duplicated.
-Applying a preset just runs the script, detached.
+Switching talks to sway directly (enabling the new outputs before turning
+others off) and writes the layout to `~/.config/sway/config.d/wlperch-displays.conf`,
+so sway starts with it next time. Presets are re-read every time the popup
+opens; no restart needed.
 
 ## Panels
 
@@ -448,9 +466,9 @@ ignore_interfaces = lo, docker, veth, br-, virbr, tailscale
 [nightlight]
 command = wlsunset -l {lat} -L {lon}   # {lat}/{lon} come from the weather location
 
-[displays]
-preset_dirs = ~/.local/bin:~/dotfiles/desktop/.local/bin
-preset_glob = *.sh
+[display.desk]                # display presets: see "Display presets" above
+DP-3 = 3440x1440 pos 0 0
+DP-1 = 2560x1440 pos 3440 0 transform 90
 
 [system]
 history_seconds = 120         # span the system graphs show by default (zoom out to 1 h)
