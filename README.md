@@ -15,7 +15,7 @@ pressing <kbd>Esc</kbd>, closes it.
 | Section | What it shows / does |
 |---|---|
 | **Header** | Big clock and date · tabs for every panel (so the bar needs only one button) · setup and restart buttons. Panels without the big header get the tabs in their title row. |
-| **Quick settings** | Toggle tiles: night light (wlsunset), do not disturb (wlperch' own while it shows notifications, otherwise dunst's), Bluetooth power, and with projects configured group lock and keep-workspaces · keyboard layout switcher (sway xkb layouts) |
+| **Quick settings** | Toggle tiles: night light (wlsunset), dark mode (see [Dark / light](#dark--light)), do not disturb (wlperch' own while it shows notifications, otherwise dunst's), Bluetooth power, and with projects configured group lock and keep-workspaces · keyboard layout switcher (sway xkb layouts) |
 | **Media** | The playing track from any MPRIS player (Spotify, browsers, mpv, VLC…): album art (or the app's icon), title, artist, album, a progress bar, and previous / play-pause / next. With several players, a switcher picks one. Hidden while no player runs. `wlperch media play-pause\|next\|previous` from a shell or keybinding. |
 | **Audio** | Two fix buttons: **refresh** switches the default output's card to another profile and back (cures PipeWire's occasional silent sink) and restores the default output; **restart** restarts PipeWire, WirePlumber and pipewire-pulse (`wlperch audio refresh/restart` from a shell or keybinding). Output and input devices (click to make default) · volume sliders (drag or scroll, up to 150 %) · mute. For HDMI/DP audio on a GPU, every plugged monitor is listed by its **name and sway connector** (`LG ULTRAWIDE · HDMI 2 · DP-3`). Picking one switches the card profile and the default sink. The full profile list is in a dropdown. |
 | **Displays** | Your current screen layout, drawn to scale · a dropdown of the display presets from your config, with a mini preview of each layout. Selecting one switches to it, and the active preset is detected and ticked. |
@@ -403,6 +403,54 @@ keys over:
   `$mod+d` and `$mod+Shift+d`.
 - **Applying it:** setup reloads sway. **Try it** opens the launcher;
   **Switch back** restores the copies.
+
+### Dark / light
+
+`wlperch theme dark|light|toggle|status`, or the **Dark mode** tile in Quick
+settings, switches wlperch and the rest of the desktop. Without the daemon
+running, the CLI switches the desktop itself and prints what it changed.
+
+- **wlperch:** the panels, notification popups, setup window and launcher
+  switch at once. The lock screen follows the mode it is started in (a light
+  background from `[lock] background_light`, unless a picture is set).
+- **GTK, libadwaita and portal apps:** the gsettings `color-scheme`
+  (`prefer-dark` / `prefer-light`), which Firefox, Chromium, Electron and
+  libadwaita apps follow through the settings portal. With `gtk_theme =
+  auto` (the default) the GTK theme switches between Adwaita and
+  Adwaita-dark while one of those is in use. An existing
+  `gtk-3.0`/`gtk-4.0` `settings.ini` gets `gtk-application-prefer-dark-theme`
+  (and `gtk-theme-name`, when it sets one).
+- **Symlink twins:** each path in `[theme] links` that is a symlink to a file
+  with "dark" or "light" in its name is pointed at its twin, when that exists.
+  The default covers `~/.config/waybar/colors.css` and
+  `~/.config/wofi/colors.css`, and waybar reloads (SIGUSR2, only the waybars of
+  this session) when one of its files changed.
+- **Per mode** (`[theme.dark]`, `[theme.light]`; empty = leave alone):
+  `wallpaper` (sway's output background), `kitty_theme` (every kitty window,
+  through `kitty +kitten themes`), `nvim_colorscheme` (writes `set background`
+  and `colorscheme` to `[theme] nvim_file`, `~/.vimrc.color` by default, for
+  nvim to source and watch), `icon_theme`, `kvantum_theme` (with
+  `kvantummanager`), `vscode_theme` (`workbench.colorTheme` in the settings of
+  Code, Code - OSS or VSCodium, when they set one) and `command` (anything
+  else, through `sh -c`).
+- **The mode** is kept in `~/.local/share/wlperch/theme`. Before the first
+  switch, the gsettings `color-scheme` decides.
+
+**Setup → Dark / light → Use wlperch theme** switches your existing theme keys
+over:
+- **What changes:** sway bindings that run a theme script (a program with
+  "theme" in its name, such as `switch-theme.sh night`, or `darkman`) run
+  `wlperch theme dark`, `light` or `toggle` instead, from what the arguments
+  say ("dark"/"night", "light"/"day", or nothing / "toggle").
+- **Importing:** when the script is called with a theme name that has a
+  `../themes/<name>.json` next to it (`wallpaper`, `kittyTheme`, `nvimTheme`,
+  `kvantumTheme`, `vsCodeTheme`), those settings are copied into the empty
+  keys of `[theme.dark]` / `[theme.light]`, so nothing the script did is lost.
+- **Backups:** the sway files and wlperch's config are copied to
+  `~/.local/share/wlperch/theme-backup/` first; symlinked dotfiles are edited
+  through the link. **Switch back** restores them.
+- **Without a theme key:** setup adds `config.d/wlperch-theme.conf` with
+  `$mod+Shift+t` for `wlperch theme toggle`.
 
 ## Installing
 

@@ -198,7 +198,7 @@ draw_notifications :: proc(w: f32) {
 		hovered := im.IsWindowHovered(im.HoveredFlags_AllowWhenBlockedByActiveItem) && im.IsMouseHoveringRect(p, {p.x + lw, p.y + row_h})
 		d := dl()
 		if hovered {
-			im.DrawList_AddRectFilled(d, p, {p.x + lw, p.y + row_h}, col32(0xffffff, 0.045), 9)
+			im.DrawList_AddRectFilled(d, p, {p.x + lw, p.y + row_h}, col32(C_OVERLAY, 0.045), 9)
 			im.SetMouseCursor(.Hand)
 		}
 		if clicked {

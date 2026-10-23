@@ -98,7 +98,7 @@ gh_row :: proc(id: string, icon: string, icon_col: u32, title, sub: string, badg
 		if measure(fonts.ui, SZ_BODY, title).x > w - 60 {tip(title)}
 	}
 	d := dl()
-	if hovered {im.DrawList_AddRectFilled(d, p, {p.x + w, p.y + h}, col32(0xffffff, 0.05), 8)}
+	if hovered {im.DrawList_AddRectFilled(d, p, {p.x + w, p.y + h}, col32(C_OVERLAY, 0.05), 8)}
 	draw_text(fonts.ui, 18, {p.x + 10, p.y + h / 2 - 10}, col32(icon_col), icon)
 	tx := p.x + 38
 	right := p.x + w - 8

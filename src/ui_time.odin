@@ -98,7 +98,7 @@ draw_time :: proc(w: f32) {
 		if active {
 			im.DrawList_AddRectFilled(d, {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h}, col32(pr.color, hovered ? 0.2 : 0.12), 8)
 		} else if hovered {
-			im.DrawList_AddRectFilled(d, {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h}, col32(0xffffff, 0.05), 8)
+			im.DrawList_AddRectFilled(d, {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h}, col32(C_OVERLAY, 0.05), 8)
 		}
 		if hovered {
 			im.SetMouseCursor(.Hand)
@@ -201,10 +201,10 @@ draw_time :: proc(w: f32) {
 		most = max(most, tot)
 	}
 	hours := (most + 3599) / 3600
-	im.DrawList_AddRectFilled(d, gp, {gp.x + inner, gp.y + gh}, col32(0x12151b), 8)
+	im.DrawList_AddRectFilled(d, gp, {gp.x + inner, gp.y + gh}, col32(C_WELL), 8)
 	for hgrid := i64(2); hgrid < hours; hgrid += 2 {
 		y := gp.y + gh - gh * f32(hgrid) / f32(hours)
-		im.DrawList_AddLine(d, {gp.x + 4, y}, {gp.x + inner - 4, y}, col32(0xffffff, 0.04))
+		im.DrawList_AddLine(d, {gp.x + 4, y}, {gp.x + inner - 4, y}, col32(C_OVERLAY, 0.04))
 		draw_text(fonts.ui, 10, {gp.x + 6, y - 12}, col32(C_FAINT), fmt.tprintf("%dh", hgrid))
 	}
 	colw := (inner - 40) / 7
@@ -332,7 +332,7 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 	x_of :: proc(t: i64, from, span: f64, x0, w: f32) -> f32 {
 		return x0 + w * f32((f64(t) - from) / span)
 	}
-	im.DrawList_AddRectFilled(d, p, {p.x + inner, p.y + bh}, col32(0x12151b), 6)
+	im.DrawList_AddRectFilled(d, p, {p.x + inner, p.y + bh}, col32(C_WELL), 6)
 
 	// Ticks: pick a step giving roughly 6-12 labels at this zoom.
 	steps := [?]f64{300, 600, 900, 1800, 3600, 7200, 10800, 21600}
@@ -348,7 +348,7 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 	for t := math.floor(tl.start / minor) * minor; t <= tl.start + view_span; t += minor {
 		x := x_of(i64(f64(day_start) + t), view_from, view_span, p.x, inner)
 		major := math.mod(t, step) < 1
-		im.DrawList_AddLine(d, {x, p.y + 3}, {x, p.y + bh - 3}, col32(0xffffff, major ? 0.10 : 0.035))
+		im.DrawList_AddLine(d, {x, p.y + 3}, {x, p.y + bh - 3}, col32(C_OVERLAY, major ? 0.10 : 0.035))
 	}
 	hovered_seg := -1
 	mouse := im.GetMousePos()
@@ -361,7 +361,7 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 		switch {
 		case !sg.idle:     c = col32(col)
 		case is_project:   c = col32(col, 0.22) // a break during a project session
-		case:              c = col32(0x8a92a3, 0.45) // a break outside projects
+		case:              c = col32(C_MUTED, 0.45) // a break outside projects
 		}
 		im.DrawList_AddRectFilled(d, {x0, p.y + 2}, {x1, p.y + bh - 2}, c, 2)
 		if mouse.x >= x0 && mouse.x < x1 && mouse.y >= p.y && mouse.y < p.y + bh {hovered_seg = i}

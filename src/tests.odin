@@ -997,3 +997,121 @@ test_menu_setup_round_trip :: proc(t: ^testing.T) {
 	delete(setup.comps[.Menu].message)
 	setup.comps[.Menu].message = ""
 }
+
+@(test)
+test_theme_rewrite :: proc(t: ^testing.T) {
+	cases := [][2]string{
+		{"bindsym $mod+Shift+w exec ~/.config/hypr/scripts/switch-theme.sh summer-night\n", "bindsym $mod+Shift+w exec wlperch theme dark\n"},
+		{"bindsym $mod+Shift+x exec ~/.config/hypr/scripts/switch-theme.sh summer-day\n", "bindsym $mod+Shift+x exec wlperch theme light\n"},
+		{"bindsym $mod+t exec --no-startup-id toggle-theme\n", "bindsym $mod+t exec --no-startup-id wlperch theme toggle\n"},
+		{"bindsym $mod+t exec darkman toggle\n", "bindsym $mod+t exec wlperch theme toggle\n"},
+		// Not theme switches / chains / comments: kept.
+		{"bindsym $mod+d exec wofi --show drun\n", "bindsym $mod+d exec wofi --show drun\n"},
+		{"# bindsym $mod+w exec switch-theme.sh night\n", "# bindsym $mod+w exec switch-theme.sh night\n"},
+		{"bindsym $mod+w exec switch-theme.sh night; exec foo\n", "bindsym $mod+w exec switch-theme.sh night; exec foo\n"},
+	}
+	for c in cases {
+		out, _ := theme_rewrite(c[0])
+		testing.expect_value(t, out, c[1])
+	}
+}
+
+@(test)
+test_theme_targets :: proc(t: ^testing.T) {
+	root := fmt.tprintf("/tmp/wlperch-theme-test-%d", posix.getpid())
+	defer {_ = os.remove_all(root)}
+	testing.expect(t, os.make_directory_all(root) == nil)
+	read :: proc(p: string) -> string {
+		data, _ := os.read_entire_file(p, context.temp_allocator)
+		return string(data)
+	}
+	// colors.css -> waybar-dark.css swaps to its light twin (relative link), and back.
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/waybar-dark.css", root), "d") == nil)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/waybar-light.css", root), "l") == nil)
+	link := fmt.tprintf("%s/colors.css", root)
+	testing.expect(t, posix.symlink("waybar-dark.css", strings.clone_to_cstring(link, context.temp_allocator)) == .OK)
+	_, changed, ok := theme_swap_link(link, true)
+	testing.expect(t, changed && ok)
+	testing.expect_value(t, read(link), "l")
+	_, changed, ok = theme_swap_link(link, true)
+	testing.expect(t, !changed && ok)
+	_, changed, ok = theme_swap_link(link, false)
+	testing.expect(t, changed && ok)
+	testing.expect_value(t, read(link), "d")
+	// Absolute target.
+	abs := fmt.tprintf("%s/abs.css", root)
+	testing.expect(t, posix.symlink(strings.clone_to_cstring(fmt.tprintf("%s/waybar-dark.css", root), context.temp_allocator), strings.clone_to_cstring(abs, context.temp_allocator)) == .OK)
+	_, changed, ok = theme_swap_link(abs, true)
+	testing.expect(t, changed && ok)
+	testing.expect_value(t, read(abs), "l")
+	// No twin: left alone.
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/x-dark.css", root), "d") == nil)
+	lone := fmt.tprintf("%s/lone.css", root)
+	testing.expect(t, posix.symlink("x-dark.css", strings.clone_to_cstring(lone, context.temp_allocator)) == .OK)
+	_, changed, _ = theme_swap_link(lone, true)
+	testing.expect(t, !changed)
+
+	ini := fmt.tprintf("%s/settings.ini", root)
+	testing.expect(t, os.write_entire_file(ini, "[Settings]\ngtk-theme-name=Adwaita-dark\ngtk-application-prefer-dark-theme=1\n") == nil)
+	changed, ok = gtk_ini_update(ini, true, "Adwaita")
+	testing.expect(t, changed && ok)
+	testing.expect_value(t, read(ini), "[Settings]\ngtk-theme-name=Adwaita\ngtk-application-prefer-dark-theme=0\n")
+
+	vs := fmt.tprintf("%s/settings.json", root)
+	testing.expect(t, os.write_entire_file(vs, "{\n  \"workbench.colorTheme\": \"Everforest Dark\",\n  \"x\": 1\n}\n") == nil)
+	changed, ok = vscode_set_theme(vs, "Everforest Light")
+	testing.expect(t, changed && ok)
+	testing.expect_value(t, read(vs), "{\n  \"workbench.colorTheme\": \"Everforest Light\",\n  \"x\": 1\n}\n")
+}
+
+// Switching theme keys imports the script's theme JSON into the config, and
+// switching back restores sway and the config byte for byte.
+@(test)
+test_theme_switch_keys :: proc(t: ^testing.T) {
+	root := fmt.tprintf("/tmp/wlperch-theme-keys-%d", posix.getpid())
+	defer {_ = os.remove_all(root)}
+	old_cfg := strings.clone(os.get_env("XDG_CONFIG_HOME", context.temp_allocator), context.temp_allocator)
+	old_data := strings.clone(os.get_env("XDG_DATA_HOME", context.temp_allocator), context.temp_allocator)
+	defer {
+		os.set_env("XDG_CONFIG_HOME", old_cfg)
+		os.set_env("XDG_DATA_HOME", old_data)
+	}
+	os.set_env("XDG_CONFIG_HOME", fmt.tprintf("%s/config", root))
+	os.set_env("XDG_DATA_HOME", fmt.tprintf("%s/data", root))
+	read :: proc(p: string) -> string {
+		data, _ := os.read_entire_file(p, context.temp_allocator)
+		return string(data)
+	}
+	scripts := fmt.tprintf("%s/hypr/scripts", root)
+	themes := fmt.tprintf("%s/hypr/themes", root)
+	sway := fmt.tprintf("%s/config/sway", root)
+	testing.expect(t, os.make_directory_all(scripts) == nil && os.make_directory_all(themes) == nil)
+	testing.expect(t, os.make_directory_all(fmt.tprintf("%s/config.d", sway)) == nil)
+	testing.expect(t, os.make_directory_all(fmt.tprintf("%s/config/wlperch", root)) == nil)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/night.json", themes), `{"wallpaper": "castle.jpg", "kittyTheme": "Arthur", "nvimTheme": "gruvbox-material", "kvantumTheme": ""}`) == nil)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/day.json", themes), `{"wallpaper": "field.jpg", "kittyTheme": "Catppuccin-Latte"}`) == nil)
+	MAIN := fmt.tprintf("set $mod Mod4\nbindsym $mod+Shift+w exec %s/switch-theme.sh night\nbindsym $mod+Shift+x exec %s/switch-theme.sh day\n", scripts, scripts)
+	CONF :: "# wlperch configuration\n\n[popup]\nwidth = 860\n\n[theme.dark]\nkitty_theme =\nnvim_colorscheme = mine\n\n[clocks]\nuse_24h = true\n"
+	main_p := fmt.tprintf("%s/config", sway)
+	conf_p := fmt.tprintf("%s/config/wlperch/config.ini", root)
+	testing.expect(t, os.write_entire_file(main_p, MAIN) == nil)
+	testing.expect(t, os.write_entire_file(conf_p, CONF) == nil)
+
+	c: Component
+	theme_setup_check(&c, proc(c: ^Component, line: string) {})
+	testing.expect_value(t, c.state, Comp_State.Missing)
+	theme_switch_keys(apply = false)
+	testing.expect_value(t, read(main_p), "set $mod Mod4\nbindsym $mod+Shift+w exec wlperch theme dark\nbindsym $mod+Shift+x exec wlperch theme light\n")
+	// Empty keys filled, set ones kept, missing ones added; a missing section appended.
+	testing.expect_value(t, read(conf_p), "# wlperch configuration\n\n[popup]\nwidth = 860\n\n[theme.dark]\nkitty_theme = Arthur\nnvim_colorscheme = mine\nwallpaper = ~/Pictures/wallpapers/castle.jpg\n\n[clocks]\nuse_24h = true\n\n# Imported by wlperch setup from your theme script.\n[theme.light]\nwallpaper = ~/Pictures/wallpapers/field.jpg\nkitty_theme = Catppuccin-Latte\n")
+	theme_setup_check(&c, proc(c: ^Component, line: string) {})
+	testing.expect_value(t, c.state, Comp_State.Installed)
+	theme_switch_keys_back(apply = false)
+	testing.expect_value(t, read(main_p), MAIN)
+	testing.expect_value(t, read(conf_p), CONF)
+	testing.expect(t, !os.exists(fmt.tprintf("%s/data/wlperch/theme-backup/manifest", root)))
+	edited, _ := os.read_all_directory_by_path(fmt.tprintf("%s/data/wlperch/theme-backup", root), context.temp_allocator)
+	testing.expect_value(t, len(edited), 0)
+	delete(setup.comps[.Theme].message)
+	setup.comps[.Theme].message = ""
+}

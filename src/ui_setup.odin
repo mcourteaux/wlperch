@@ -28,6 +28,7 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	case .Notifications: return {ICON_BELL, "Notifications", "Shows app notifications as popups in the corner, with a history in the Notifications panel and do not disturb. Switches off dunst/mako (masks their service) so they don't take over again.", C_PURPLE, ""}
 	case .Lock:     return {ICON_LOCK, "Lock screen", "wlperch lock instead of swaylock: clock, notification count, media and battery. Switches swayidle and your lock key over (with backups).", C_BLUE, LOCK_CONF}
 	case .Menu:     return {ICON_APPS, "Launcher", "wlperch's app launcher instead of rofi/wofi/fuzzel: apps, a calculator and the panels as you type, \"> command\" runs one. Switches your launcher keys over (with backups).", C_GREEN, MENU_CONF}
+	case .Theme:    return {ICON_THEME, "Dark / light", "wlperch theme switches wlperch, GTK apps, waybar, kitty, nvim and the wallpaper between dark and light (see [theme] in the settings). Switches your theme keys over (with backups), copying your theme script's settings.", C_YELLOW, THEME_CONF}
 	case .Launcher: return {ICON_HOME, "App launcher entry", "Adds \"wlperch setup\" to your application launcher (rofi, wofi, fuzzel…).", C_YELLOW, ""}
 	}
 	return {}
@@ -168,6 +169,14 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 		}
 		append(&out, Action{"Try it", false, setup_open_menu, false})
 		if s == .Installed || s == .Outdated {append(&out, Action{"Switch back", false, setup_remove_menu, true})}
+	case .Theme:
+		switch s {
+		case .Missing:   append(&out, Action{"Use wlperch theme", true, setup_install_theme, false})
+		case .Outdated:  append(&out, Action{"Switch the rest", true, setup_install_theme, false})
+		case .Installed, .Custom, .Running, .Stopped, .Unavailable, .Partial:
+		}
+		append(&out, Action{"Toggle now", false, setup_toggle_theme, false})
+		if s == .Installed || s == .Outdated {append(&out, Action{"Switch back", false, setup_remove_theme, true})}
 	case .Lock:
 		switch s {
 		case .Missing:   append(&out, Action{"Use wlperch lock", true, setup_install_lock, false})
@@ -188,7 +197,7 @@ COLUMNS := [3]struct {
 } {
 	{"Basics", {.Program, .Service, .Config, .Launcher}},
 	{"Desktop", {.Sway, .Waybar, .Menu}},
-	{"Extras", {.Notifications, .Lock, .Rapl}},
+	{"Extras", {.Notifications, .Lock, .Theme, .Rapl}},
 }
 
 @(private = "file")
@@ -259,7 +268,7 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 	}
 	if inf.preview != "" && show_preview[id] {
 		text := strings.trim_space(inf.preview)
-		im.PushStyleColorImVec4(.ChildBg, rgba(0x12151b))
+		im.PushStyleColorImVec4(.ChildBg, rgba(C_WELL))
 		im.PushStyleVarImVec2(.WindowPadding, {12, 10})
 		im.BeginChild(cstr(fmt.tprintf("##code:%v", id)), {inner, 0}, {.AutoResizeY, .AlwaysUseWindowPadding}, {})
 		wrapped(fonts.mono, SZ_SMALL, C_TEXT, text, inner - 24)

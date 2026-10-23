@@ -263,7 +263,7 @@ draw_calculator :: proc(w: f32) {
 			hovered := im.IsItemHovered()
 			if hovered {
 				im.SetMouseCursor(.Hand)
-				im.DrawList_AddRectFilled(dl(), {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + row_h}, col32(0xffffff, 0.05), 6)
+				im.DrawList_AddRectFilled(dl(), {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + row_h}, col32(C_OVERLAY, 0.05), 6)
 			}
 			res := strings.concatenate({"= ", e.result}, context.temp_allocator)
 			rw := min(measure(fonts.mono, SZ_BODY, res).x, inner * 0.55)

@@ -58,7 +58,7 @@ chip :: proc(pos: Vec2, lbl, value: string, col: u32) -> f32 {
 	lw := measure(fonts.ui, SZ_SMALL, lbl).x
 	vw := measure(fonts.bold, SZ_SMALL + 1, value).x
 	w := lw + vw + 22
-	im.DrawList_AddRectFilled(dl(), pos, {pos.x + w, pos.y + 22}, col32(0x12151b), 7)
+	im.DrawList_AddRectFilled(dl(), pos, {pos.x + w, pos.y + 22}, col32(C_WELL), 7)
 	draw_text(fonts.ui, SZ_SMALL, {pos.x + 8, pos.y + 4}, col32(C_MUTED), lbl)
 	draw_text(fonts.bold, SZ_SMALL + 1, {pos.x + 14 + lw, pos.y + 3}, col32(col), value)
 	return w
@@ -79,7 +79,7 @@ draw_rooms :: proc(w: f32) {
 		h: f32 = 44
 		im.InvisibleButton(cstr(fmt.tprintf("room:%s", d.id)), {inner, h})
 		if im.IsItemHovered() {
-			im.DrawList_AddRectFilled(dl(), {p.x - 6, p.y}, {p.x + inner + 6, p.y + h}, col32(0xffffff, 0.04), 8)
+			im.DrawList_AddRectFilled(dl(), {p.x - 6, p.y}, {p.x + inner + 6, p.y + h}, col32(C_OVERLAY, 0.04), 8)
 			history_tip(&d, d.name, {
 				{"va_temperature", "Temperature", "°", C_ORANGE, 1},
 				{"temp_current", "Temperature", "°", C_ORANGE, 0},

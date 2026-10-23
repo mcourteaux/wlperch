@@ -66,8 +66,15 @@ Config :: struct {
 	lock_notifications: bool,
 	lock_media:         bool,
 
+	lock_background_light: u32, // used instead with the light theme (no image)
+
 	// [launcher]
 	launcher_terminal:  string, // prefix for Terminal=true apps; "" = detect
+
+	// [theme], [theme.dark], [theme.light]
+	theme_links:        [dynamic]string,
+	theme_nvim_file:    string,
+	theme_targets:      [Theme_Mode]Theme_Targets,
 }
 
 config: Config
@@ -159,6 +166,8 @@ pam_service =
 # Background colour, and optionally a picture (PNG/JPEG) drawn over it,
 # blurred by this much (0 = sharp) and darkened by dim (0..1).
 background = #14161b
+# Background with the light theme (when no picture is set).
+background_light = #e9ebf0
 image =
 blur = 0
 dim = 0.35
@@ -175,6 +184,44 @@ show_media = true
 # (e.g. "alacritty -e"). Empty = $TERMINAL, sway's $term or the first known
 # terminal installed.
 terminal =
+
+[theme]
+# Dark / light: "wlperch theme dark|light|toggle" or the quick settings tile.
+# Switches wlperch itself and the rest of the desktop as far as set up here.
+# GTK / libadwaita / portal apps follow the gsettings color-scheme, which is
+# always switched (plus gtk-application-prefer-dark-theme in an existing
+# gtk-3.0/gtk-4.0 settings.ini).
+# Symlinks to swap between a "dark" and a "light" twin: colors.css ->
+# waybar-dark.css becomes waybar-light.css when that file exists. Waybar
+# reloads when one of its files changed.
+links = ~/.config/waybar/colors.css, ~/.config/wofi/colors.css
+# Written for nvim ("set background" + "colorscheme") when nvim_colorscheme is
+# set below; have nvim source it (and watch it, to switch running editors).
+nvim_file = ~/.vimrc.color
+
+# Per mode. Empty = leave alone. gtk_theme "auto" switches Adwaita <->
+# Adwaita-dark only while one of those is in use.
+# kitty_theme: a theme name from "kitty +kitten themes" (all kitty windows).
+# wallpaper: an image for sway's outputs. command: anything else (sh -c).
+[theme.dark]
+gtk_theme = auto
+icon_theme =
+kitty_theme =
+wallpaper =
+nvim_colorscheme =
+kvantum_theme =
+vscode_theme =
+command =
+
+[theme.light]
+gtk_theme = auto
+icon_theme =
+kitty_theme =
+wallpaper =
+nvim_colorscheme =
+kvantum_theme =
+vscode_theme =
+command =
 
 [timetracker]
 # Minutes without input after which counting pauses (the idle time is not counted).
@@ -421,7 +468,25 @@ config_load :: proc() {
 	c.lock_notifications = parse_bool(get(m, defaults, "lock", "show_notifications"), true)
 	c.lock_media = parse_bool(get(m, defaults, "lock", "show_media"), true)
 
+	c.lock_background_light = parse_hex_color(get(m, defaults, "lock", "background_light"), 0xe9ebf0)
+
 	c.launcher_terminal = strings.clone(get(m, defaults, "launcher", "terminal"))
+
+	clear(&c.theme_links)
+	for l in split_list(get(m, defaults, "theme", "links"), ",") {append(&c.theme_links, expand_home(l))}
+	c.theme_nvim_file = expand_home(get(m, defaults, "theme", "nvim_file"))
+	for mode in Theme_Mode {
+		sec := mode == .Dark ? "theme.dark" : "theme.light"
+		t := &c.theme_targets[mode]
+		t.gtk_theme = strings.clone(get(m, defaults, sec, "gtk_theme"))
+		t.icon_theme = strings.clone(get(m, defaults, sec, "icon_theme"))
+		t.kitty_theme = strings.clone(get(m, defaults, sec, "kitty_theme"))
+		t.wallpaper = expand_home(get(m, defaults, sec, "wallpaper"))
+		t.nvim_colorscheme = strings.clone(get(m, defaults, sec, "nvim_colorscheme"))
+		t.kvantum_theme = strings.clone(get(m, defaults, sec, "kvantum_theme"))
+		t.vscode_theme = strings.clone(get(m, defaults, sec, "vscode_theme"))
+		t.command = strings.clone(get(m, defaults, sec, "command"))
+	}
 
 	c.sensors_dir = expand_home(get(m, defaults, "sensors", "dir"))
 	c.sensors_watch = strings.clone(get(m, defaults, "sensors", "watch"))

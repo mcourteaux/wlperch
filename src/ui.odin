@@ -103,7 +103,7 @@ draw_ui :: proc() -> f32 {
 	im.SetNextWindowPos(panel_pos)
 	im.SetNextWindowSize({panel_w, panel_h})
 	im.PushStyleColorImVec4(.WindowBg, rgba(C_BG))
-	im.PushStyleColorImVec4(.Border, rgba(0xffffff, 0.07))
+	im.PushStyleColorImVec4(.Border, rgba(C_OVERLAY, 0.07))
 	im.PushStyleVar(.WindowBorderSize, 1)
 	im.PushStyleVar(.WindowRounding, 18)
 	im.PushStyleVarImVec2(.WindowPadding, {16, 16})
@@ -181,8 +181,8 @@ draw_toast :: proc(pos, size: Vec2) {
 	w := sz.x + 50
 	p := Vec2{pos.x + (size.x - w) / 2, pos.y + size.y - 56}
 	im.DrawList_AddRectFilled(d, {p.x, p.y + 3}, {p.x + w, p.y + 39}, col32(0x000000, 0.45), 18)
-	im.DrawList_AddRectFilled(d, p, {p.x + w, p.y + 36}, col32(0x2b3240), 18)
-	im.DrawList_AddRect(d, p, {p.x + w, p.y + 36}, col32(0xffffff, 0.08), 18)
+	im.DrawList_AddRectFilled(d, p, {p.x + w, p.y + 36}, col32(C_CARD_HI), 18)
+	im.DrawList_AddRect(d, p, {p.x + w, p.y + 36}, col32(C_OVERLAY, 0.08), 18)
 	b, e := str_range(ICON_CHECK)
 	im.DrawList_AddTextImFontPtr(d, fonts.ui, 16, {p.x + 16, p.y + 9}, col32(C_GREEN), b, e)
 	b, e = str_range(ui.toast)
@@ -281,7 +281,7 @@ panel_tabs :: proc(right, y, max_w: f32) {
 		if active {
 			im.DrawList_AddRectFilled(d, {x, y + 2}, {x + w, y + 2 + h}, col32(C_BLUE, 0.9), 8)
 		} else if hovered {
-			im.DrawList_AddRectFilled(d, {x, y + 2}, {x + w, y + 2 + h}, col32(0xffffff, 0.06), 8)
+			im.DrawList_AddRectFilled(d, {x, y + 2}, {x + w, y + 2 + h}, col32(C_OVERLAY, 0.06), 8)
 		}
 		fg := active ? col32(0x11131a) : col32(hovered ? C_TEXT : C_MUTED)
 		icon := panel_icon(p)
@@ -532,7 +532,7 @@ draw_displays :: proc(w: f32) {
 	inner := im.GetContentRegionAvail().x
 	p := im.GetCursorScreenPos()
 	h: f32 = 104
-	im.DrawList_AddRectFilled(dl(), p, {p.x + inner, p.y + h}, col32(0x12151b), 10)
+	im.DrawList_AddRectFilled(dl(), p, {p.x + inner, p.y + h}, col32(C_WELL), 10)
 	draw_layout(rects[:], {p.x + 10, p.y + 10}, {inner - 20, h - 20}, accent = C_PURPLE)
 	im.Dummy({inner, h})
 
@@ -564,7 +564,7 @@ draw_displays :: proc(w: f32) {
 				x, y, ow, oh := preset_output_rect(o)
 				append(&prects, Layout_Rect{name = o.name, x = x, y = y, w = ow, h = oh})
 			}
-			im.DrawList_AddRectFilled(dl(), {row_p.x + 4, row_p.y + 3}, {row_p.x + 4 + pw, row_p.y + 3 + ph}, col32(0x12151b), 5)
+			im.DrawList_AddRectFilled(dl(), {row_p.x + 4, row_p.y + 3}, {row_p.x + 4 + pw, row_p.y + 3 + ph}, col32(C_WELL), 5)
 			draw_layout(prects[:], {row_p.x + 7, row_p.y + 6}, {pw - 6, ph - 6}, compact = true, accent = C_PURPLE)
 			draw_text(i == active ? fonts.bold : fonts.ui, SZ_BODY, {row_p.x + pw + 16, row_p.y + 3}, col32(C_TEXT), pr.label)
 			names: [dynamic]string
@@ -627,7 +627,7 @@ draw_weather :: proc(w: f32) {
 	cw := inner / f32(cols)
 	sp := im.GetCursorScreenPos()
 	sh: f32 = 74
-	im.DrawList_AddRectFilled(dl(), sp, {sp.x + inner, sp.y + sh}, col32(0x12151b), 10)
+	im.DrawList_AddRectFilled(dl(), sp, {sp.x + inner, sp.y + sh}, col32(C_WELL), 10)
 	for i in 0 ..< cols {
 		idx := i * 3
 		if idx >= len(weather.hours) {break}
@@ -754,7 +754,7 @@ ip_row :: proc(id, icon, name, value: string, highlight, copyable: bool, small :
 	d := dl()
 	if hovered && copyable {
 		im.SetMouseCursor(.Hand)
-		im.DrawList_AddRectFilled(d, {p.x - 6, p.y}, {p.x + inner + 6, p.y + h}, col32(0xffffff, 0.05), 7)
+		im.DrawList_AddRectFilled(d, {p.x - 6, p.y}, {p.x + inner + 6, p.y + h}, col32(C_OVERLAY, 0.05), 7)
 	}
 	draw_text(fonts.ui, 16, {p.x, p.y + 5}, col32(highlight ? C_CYAN : C_MUTED), icon)
 	draw_text(highlight ? fonts.bold : fonts.ui, SZ_BODY, {p.x + 26, p.y + 5}, col32(C_TEXT, 0.9), name)
@@ -811,7 +811,7 @@ draw_bluetooth :: proc(w: f32) {
 		dd := dl()
 		if hovered {
 			im.SetMouseCursor(.Hand)
-			im.DrawList_AddRectFilled(dd, {p.x - 6, p.y}, {p.x + inner + 6, p.y + h}, col32(0xffffff, 0.05), 7)
+			im.DrawList_AddRectFilled(dd, {p.x - 6, p.y}, {p.x + inner + 6, p.y + h}, col32(C_OVERLAY, 0.05), 7)
 			tip(d.connected ? fmt.tprintf("Disconnect %s", d.name) : fmt.tprintf("Connect %s", d.name))
 		}
 		if clicked && !busy {

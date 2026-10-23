@@ -61,7 +61,7 @@ draw_cpu_card :: proc(w: f32) {
 		for i in 0 ..< n {
 			x := p.x + f32(i) * (cw + gap)
 			v := clamp(sysmon.cores[i], 0, 100) / 100
-			im.DrawList_AddRectFilled(d, {x, p.y}, {x + cw, p.y + ch}, col32(0x12151b), 3)
+			im.DrawList_AddRectFilled(d, {x, p.y}, {x + cw, p.y + ch}, col32(C_WELL), 3)
 			if v > 0.01 {
 				im.DrawList_AddRectFilled(d, {x, p.y + ch * (1 - v)}, {x + cw, p.y + ch}, load_color(sysmon.cores[i]), 3)
 			}
@@ -102,7 +102,7 @@ draw_memory_card :: proc(w: f32) {
 	cached := min(sysmon.mem_cached, total - used)
 	fu := f32(f64(used) / f64(total))
 	fc := f32(f64(cached) / f64(total))
-	im.DrawList_AddRectFilled(d, bp, {bp.x + inner, bp.y + bh}, col32(0x2a2f3a), bh / 2)
+	im.DrawList_AddRectFilled(d, bp, {bp.x + inner, bp.y + bh}, col32(C_TRACK), bh / 2)
 	im.DrawList_AddRectFilled(d, {bp.x + inner * fu, bp.y}, {bp.x + inner * (fu + fc), bp.y + bh}, col32(accent, 0.35), 0)
 	im.DrawList_AddRectFilled(d, bp, {bp.x + max(inner * fu, bh), bp.y + bh}, col32(accent), bh / 2)
 	im.Dummy({inner, bh})

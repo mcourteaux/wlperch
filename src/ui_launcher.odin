@@ -373,7 +373,7 @@ draw_launcher :: proc(w: f32) {
 		if selected {
 			im.DrawList_AddRectFilled(d, {list.x, y}, {list.x + w, y + ROW_H - 2}, col32(accent, 0.16), 10)
 		} else if hovered {
-			im.DrawList_AddRectFilled(d, {list.x, y}, {list.x + w, y + ROW_H - 2}, col32(0xffffff, 0.05), 10)
+			im.DrawList_AddRectFilled(d, {list.x, y}, {list.x + w, y + ROW_H - 2}, col32(C_OVERLAY, 0.05), 10)
 		}
 		if draw_row(r, {list.x + 10, y}, w - 20, selected, &loads) {
 			lui.refocus = true // a format chip was clicked

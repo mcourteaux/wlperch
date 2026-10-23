@@ -46,6 +46,7 @@ Comp_Id :: enum {
 	Launcher,
 	Lock,
 	Menu,
+	Theme,
 }
 
 Component :: struct {
@@ -278,6 +279,8 @@ setup_check :: proc() {
 	lock_setup_check(&c[.Lock], detail)
 	// Launcher key bindings
 	menu_setup_check(&c[.Menu], detail)
+	// Dark / light key bindings
+	theme_setup_check(&c[.Theme], detail)
 	// Launcher entry
 	{
 		p := &c[.Launcher]
@@ -1036,7 +1039,7 @@ run_setup :: proc() {
 	if !platform_init() {os.exit(1)}
 	im_init()
 	setup_check()
-	if !platform_open_window("wlperch setup", "wlperch-setup", 1180, 1000) {
+	if !platform_open_window("wlperch setup", "wlperch-setup", 1180, 1080) {
 		log.error("couldn't open the setup window")
 		os.exit(1)
 	}

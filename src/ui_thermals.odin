@@ -101,7 +101,7 @@ draw_thermals :: proc(w: f32) {
 				fp.y += 26
 				fx = fp.x
 			}
-			im.DrawList_AddRectFilled(dl(), {fx, fp.y}, {fx + tw, fp.y + 22}, col32(0x12151b), 7)
+			im.DrawList_AddRectFilled(dl(), {fx, fp.y}, {fx + tw, fp.y + 22}, col32(C_WELL), 7)
 			draw_text(fonts.ui, 13, {fx + 7, fp.y + 3}, col32(C_CYAN, 0.8), ICON_FAN)
 			draw_text(fonts.ui, SZ_SMALL, {fx + 22, fp.y + 4}, col32(C_MUTED), txt)
 			fx += tw + 6

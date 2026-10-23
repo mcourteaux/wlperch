@@ -74,7 +74,7 @@ tile :: proc(id, icon, name, state: string, on: bool, accent: u32, w: f32, enabl
 	clicked := im.InvisibleButton(cstr(id), {w, TILE_H}) && enabled
 	hovered := im.IsItemHovered()
 	d := dl()
-	bg := on ? col32(accent, hovered ? 0.30 : 0.22) : col32(0xffffff, hovered && enabled ? 0.07 : 0.035)
+	bg := on ? col32(accent, hovered ? 0.30 : 0.22) : col32(C_OVERLAY, hovered && enabled ? 0.07 : 0.035)
 	im.DrawList_AddRectFilled(d, p, {p.x + w, p.y + TILE_H}, bg, 10)
 	if hovered {
 		if enabled {im.SetMouseCursor(.Hand)}
@@ -83,7 +83,7 @@ tile :: proc(id, icon, name, state: string, on: bool, accent: u32, w: f32, enabl
 	alpha: f32 = enabled ? 1 : 0.45
 	// Icon in a round badge.
 	cx, cy := p.x + 26, p.y + TILE_H / 2
-	im.DrawList_AddCircleFilled(d, {cx, cy}, 16, on ? col32(accent, alpha) : col32(0xffffff, 0.06 * alpha))
+	im.DrawList_AddCircleFilled(d, {cx, cy}, 16, on ? col32(accent, alpha) : col32(C_OVERLAY, 0.06 * alpha))
 	isz := measure(fonts.ui, 17, icon)
 	draw_text(fonts.ui, 17, {cx - isz.x / 2, cy - 9}, on ? col32(0x111318, alpha) : col32(C_MUTED, alpha), icon)
 	draw_text(fonts.bold, SZ_BODY, {p.x + 50, p.y + 9}, col32(C_TEXT, alpha), name)
@@ -115,6 +115,9 @@ draw_quick :: proc(w: f32) {
 			can ? "Warm screen colors after sunset (wlsunset)" : "Waiting for location (needed for sunrise/sunset)",
 			proc(on: bool) {nightlight_set(!on); toast(on ? "Night light off" : "Night light on")}})
 	}
+	append(&tiles, Tile_Def{"##q:theme", theme_light ? ICON_SUNNY : ICON_MOON, "Dark mode", theme_light ? "Light" : "On", !theme_light, true, C_PURPLE,
+		"Switch wlperch and the desktop between dark and light (GTK apps, waybar, kitty… see [theme] in the config)",
+		proc(on: bool) {theme_switch(on ? .Light : .Dark); toast(on ? "Light theme" : "Dark theme")}})
 	{
 		sync.guard(&dnd.mu)
 		if notifs.owner {

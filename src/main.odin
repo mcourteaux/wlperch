@@ -45,6 +45,8 @@ commands:
   display [list]   display presets from the config ("*" = current layout)
   display <name>|next|prev  switch the monitors to a preset
   display save <name> [label]  add the current layout to the config as a preset
+  theme [dark|light|toggle|status]  switch wlperch and the desktop (GTK
+                   color-scheme, waybar, kitty, nvim, wallpaper… see [theme])
   calc <expression>  evaluate and print it as decimal, hex, octal, binary and
                    IEEE-754 (hex float, f64/f32 bits); "toggle calc" opens the popup
   lock [-f]        lock the screen (clock, notification count, media, battery);
@@ -236,6 +238,8 @@ handle_command :: proc(line: string) -> string {
 		}
 	case "lockinfo":
 		return lock_info_reply()
+	case "theme":
+		return theme_command(f[1:])
 	case "daemon", "ping":
 	case:
 		return "unknown command\n"
@@ -279,6 +283,8 @@ main :: proc() {
 		os.exit(lock_main(os.args[2:]))
 	case "display", "displays":
 		os.exit(displays_cli(os.args[2:]))
+	case "theme":
+		os.exit(theme_cli(os.args[2:]))
 	case "sensors":
 		config_load()
 		os.exit(sensors_cli(os.args[2:]))
@@ -407,6 +413,7 @@ im_init :: proc() {
 	io.IniFilename = nil
 	io.ConfigFlags += {.NavEnableKeyboard}
 	io.BackendFlags += {.HasMouseCursors}
+	theme_init_mode()
 	theme_init()
 }
 

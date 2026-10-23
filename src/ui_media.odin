@@ -43,7 +43,7 @@ media_button :: proc(id, icon: string, enabled, big: bool) -> bool {
 	if big {
 		im.DrawList_AddCircleFilled(d, c, size / 2, col32(C_GREEN, hovered ? 1 : 0.88))
 	} else if hovered && enabled {
-		im.DrawList_AddCircleFilled(d, c, size / 2, col32(0xffffff, 0.08))
+		im.DrawList_AddCircleFilled(d, c, size / 2, col32(C_OVERLAY, 0.08))
 	}
 	if hovered && enabled {im.SetMouseCursor(.Hand)}
 	px: f32 = big ? 22 : 19
@@ -149,7 +149,7 @@ draw_media_locked :: proc(w: f32) -> (target, member: string) {
 		bx0 := bp.x + esz.x + 10
 		bx1 := bp.x + inner - tsz.x - 10
 		by := bp.y + 7
-		im.DrawList_AddRectFilled(d, {bx0, by}, {bx1, by + 4}, col32(0xffffff, 0.08), 2)
+		im.DrawList_AddRectFilled(d, {bx0, by}, {bx1, by + 4}, col32(C_OVERLAY, 0.08), 2)
 		frac := f32(f64(pos) / f64(p.length_us))
 		if frac > 0 {im.DrawList_AddRectFilled(d, {bx0, by}, {bx0 + (bx1 - bx0) * clamp(frac, 0, 1), by + 4}, col32(C_GREEN), 2)}
 		im.Dummy({inner, 16})

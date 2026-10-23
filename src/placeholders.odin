@@ -265,7 +265,7 @@ make_label :: proc(p: ^Placeholder) {
 	if plat.shm == nil || plat.subcompositor == nil {return}
 	soft_fonts_init()
 	name := p.ws
-	color: u32 = C_TEXT
+	color: u32 = PALETTE_DARK.text
 	number := ""
 	if pi := project_for_workspace(p.ws); pi >= 0 {
 		pr := tracker.projects[pi]
@@ -313,8 +313,8 @@ make_label :: proc(p: ^Placeholder) {
 		}
 	}
 	soft_draw_text(pixels, int(lw), int(lh), &soft_bold, PX1, (f32(lw) - w1) / 2, b1, name, color)
-	soft_draw_text(pixels, int(lw), int(lh), &soft_regular, PX2, (f32(lw) - w2) / 2, b2, line2, C_TEXT, 0.85)
-	soft_draw_text(pixels, int(lw), int(lh), &soft_regular, PX3, (f32(lw) - w3) / 2, b3, line3, C_MUTED)
+	soft_draw_text(pixels, int(lw), int(lh), &soft_regular, PX2, (f32(lw) - w2) / 2, b2, line2, PALETTE_DARK.text, 0.85)
+	soft_draw_text(pixels, int(lw), int(lh), &soft_regular, PX3, (f32(lw) - w3) / 2, b3, line3, PALETTE_DARK.muted) // always on the dark card
 	posix.munmap(mem, uint(size))
 
 	pool := wl.shm_create_pool(plat.shm, i32(fd), i32(size))

@@ -682,7 +682,7 @@ build_background :: proc(o: ^Lock_Output, bw, bh: i32) {
 		}
 		return
 	}
-	c := config.lock_background
+	c := theme_light && config.lock_image == "" ? config.lock_background_light : config.lock_background
 	cr, cg, cb := f32((c >> 16) & 0xff), f32((c >> 8) & 0xff), f32(c & 0xff)
 	for y in 0 ..< H {
 		dy := (f32(y) / f32(H) - 0.45) * 1.6
@@ -720,34 +720,34 @@ draw_ui :: proc(cv: ^Cv, W, H: f32, full: bool) {
 	if full && info.weather != "" {date = fmt.tprintf("%s   ·   %s", date, info.weather)}
 
 	cy := H * 0.40
-	text_c(cv, &soft_regular, 132, W / 2, cy, clock, 0xffffff, 0.96)
-	text_c(cv, &soft_regular, 24, W / 2, cy + 50, date, 0xd6dbe6, 0.9)
+	text_c(cv, &soft_regular, 132, W / 2, cy, clock, lock_fg, 0.96)
+	text_c(cv, &soft_regular, 24, W / 2, cy + 50, date, lock_fg2, 0.9)
 	if !full {return}
 
 	// Password field.
 	px, py := W / 2 - PILL_W / 2, cy + 98
-	ring := u32(0xffffff)
+	ring := lock_fg
 	ring_a := f32(0.22)
 	switch lk.auth {
 	case .Checking: ring, ring_a = C_BLUE, 0.95
 	case .Wrong:    ring, ring_a = C_RED, 0.95
 	case .Idle:     if lk.caps {ring, ring_a = C_YELLOW, 0.8}
 	}
-	round_rect(cv, px, py, PILL_W, PILL_H, PILL_H / 2, 0xffffff, 0.08)
+	round_rect(cv, px, py, PILL_W, PILL_H, PILL_H / 2, lock_fg, 0.08)
 	round_rect(cv, px, py, PILL_W, PILL_H, PILL_H / 2, ring, ring_a, 1.5)
-	text(cv, &soft_regular, 20, px + 18, py + PILL_H / 2 + 7, ICON_LOCK, 0xffffff, 0.55)
+	text(cv, &soft_regular, 20, px + 18, py + PILL_H / 2 + 7, ICON_LOCK, lock_fg, 0.55)
 	n := utf8.rune_count(lk.pw[:lk.pw_len])
 	if lk.auth == .Checking {
 		text_c(cv, &soft_regular, 16, W / 2, py + PILL_H / 2 + 6, "Checking…", C_BLUE)
 	} else if n == 0 {
-		text_c(cv, &soft_regular, 16, W / 2, py + PILL_H / 2 + 6, "Type your password", 0xffffff, 0.42)
+		text_c(cv, &soft_regular, 16, W / 2, py + PILL_H / 2 + 6, "Type your password", lock_fg, 0.42)
 	} else {
 		DOT :: 14
 		max_dots := int((PILL_W - 100) / DOT)
 		shown := min(n, max_dots)
 		x0 := W / 2 - f32(shown - 1) * DOT / 2
 		for i in 0 ..< shown {
-			round_rect(cv, x0 + f32(i) * DOT - 4.5, py + PILL_H / 2 - 4.5, 9, 9, 4.5, 0xffffff, 0.9)
+			round_rect(cv, x0 + f32(i) * DOT - 4.5, py + PILL_H / 2 - 4.5, 9, 9, 4.5, lock_fg, 0.9)
 		}
 	}
 
@@ -760,13 +760,13 @@ draw_ui :: proc(cv: ^Cv, W, H: f32, full: bool) {
 	case lk.auth == .Wrong:
 		msg, col = lk.fails > 1 ? fmt.tprintf("Wrong password (%d attempts)", lk.fails) : "Wrong password", C_RED
 	case lk.auth == .Checking && info.pam_msg != "":
-		msg, col = info.pam_msg, 0xd6dbe6
+		msg, col = info.pam_msg, lock_fg2
 	case lk.caps:
 		msg, col = fmt.tprintf("%s  Caps Lock is on", ICON_CAPS), C_YELLOW
 	}
 	if msg != "" {text_c(cv, &soft_regular, 15, W / 2, py + PILL_H + 30, msg, col)}
 	if lk.layout != "" {
-		text_c(cv, &soft_regular, 13, W / 2, py + PILL_H + (msg != "" ? 54 : 30), fmt.tprintf("%s  %s", ICON_KEYBOARD, lk.layout), 0xffffff, 0.5)
+		text_c(cv, &soft_regular, 13, W / 2, py + PILL_H + (msg != "" ? 54 : 30), fmt.tprintf("%s  %s", ICON_KEYBOARD, lk.layout), lock_fg, 0.5)
 	}
 
 	// Status row along the bottom.
@@ -799,7 +799,7 @@ draw_ui :: proc(cv: ^Cv, W, H: f32, full: bool) {
 		if i > 0 {x += GAP}
 		text(cv, &soft_regular, SZ + 3, x, base + 1, it.icon, it.col)
 		x += text_w(cv, &soft_regular, SZ + 3, it.icon) + 8
-		text(cv, &soft_regular, SZ, x, base, it.label, 0xffffff, 0.8)
+		text(cv, &soft_regular, SZ, x, base, it.label, lock_fg, 0.8)
 		x += text_w(cv, &soft_regular, SZ, it.label)
 	}
 }
@@ -876,6 +876,10 @@ LOCK_USAGE :: `usage: wlperch lock [-f|--daemonize]
 
 // `wlperch lock`: returns the exit code. 0 only after a successful unlock
 // (or, with --daemonize, in the parent once locked).
+// Text on the lock background: white, or dark on the light theme's background.
+@(private = "file") lock_fg: u32 = 0xffffff
+@(private = "file") lock_fg2: u32 = 0xd6dbe6
+
 lock_main :: proc(args: []string) -> int {
 	daemonize := false
 	for a in args {
@@ -891,6 +895,11 @@ lock_main :: proc(args: []string) -> int {
 	}
 	g_lock_ctx = context
 	lk.daemon_w = -1
+	// Light theme: dark text on a light background, unless a picture (dimmed) is set.
+	if theme_mode_load() == .Light && config.lock_image == "" {
+		theme_light = true
+		lock_fg, lock_fg2 = PALETTE_LIGHT.text, PALETTE_LIGHT.muted
+	}
 	lk.repeat_rate, lk.repeat_delay = 25, 600
 	if daemonize {
 		// The parent returns once the child reports the lock is in place.

@@ -34,13 +34,39 @@ col32 :: proc(hex: u32, a: f32 = 1) -> u32 {
 	return r | g << 8 | b << 16 | u32(clamp(a, 0, 1) * 255) << 24
 }
 
-C_BG :: 0x111318
-C_CARD :: 0x1a1d24
-C_CARD_HI :: 0x232731
-C_BORDER :: 0x2b303b
-C_TEXT :: 0xe4e7ee
-C_MUTED :: 0x8a92a3
-C_FAINT :: 0x5a6172
+// Neutrals follow the theme (theme_set_palette); accents stay.
+C_BG: u32 = 0x111318
+C_CARD: u32 = 0x1a1d24
+C_CARD_HI: u32 = 0x232731
+C_BORDER: u32 = 0x2b303b
+C_TEXT: u32 = 0xe4e7ee
+C_MUTED: u32 = 0x8a92a3
+C_FAINT: u32 = 0x5a6172
+C_WELL: u32 = 0x12151b     // sunken areas: graphs, bars, segment tracks
+C_TRACK: u32 = 0x2a2f3a    // empty part of sliders, switches, meters
+C_TRACK_HI: u32 = 0x3d4453
+C_OVERLAY: u32 = 0xffffff  // hover tints (with a small alpha)
+C_POPUP: u32 = 0x1e222a
+
+Palette :: struct {
+	bg, card, card_hi, border, text, muted, faint, well, track, track_hi, overlay, popup: u32,
+}
+
+PALETTE_DARK :: Palette{0x111318, 0x1a1d24, 0x232731, 0x2b303b, 0xe4e7ee, 0x8a92a3, 0x5a6172, 0x12151b, 0x2a2f3a, 0x3d4453, 0xffffff, 0x1e222a}
+PALETTE_LIGHT :: Palette{0xe8eaf0, 0xffffff, 0xf0f2f6, 0xd6dae2, 0x1b1f28, 0x596173, 0x969cab, 0xf1f3f7, 0xd5d9e1, 0xbfc5d0, 0x000000, 0xffffff}
+
+theme_light: bool
+
+// Switch the neutrals (and the Dear ImGui style when a context exists).
+theme_set_palette :: proc(light: bool) {
+	theme_light = light
+	p := light ? PALETTE_LIGHT : PALETTE_DARK
+	C_BG, C_CARD, C_CARD_HI, C_BORDER = p.bg, p.card, p.card_hi, p.border
+	C_TEXT, C_MUTED, C_FAINT = p.text, p.muted, p.faint
+	C_WELL, C_TRACK, C_TRACK_HI, C_OVERLAY, C_POPUP = p.well, p.track, p.track_hi, p.overlay, p.popup
+	if im.GetCurrentContext() != nil {theme_style_colors()}
+}
+
 C_BLUE :: 0x7aa2f7
 C_CYAN :: 0x7dcfff
 C_GREEN :: 0x9ece6a
@@ -96,29 +122,33 @@ theme_init :: proc() {
 	s.AntiAliasedLines = true
 	s.AntiAliasedFill = true
 
-	c := &s.Colors
+	theme_style_colors()
+}
+
+theme_style_colors :: proc() {
+	c := &im.GetStyle().Colors
 	c[im.Col.Text] = rgba(C_TEXT)
 	c[im.Col.TextDisabled] = rgba(C_MUTED)
 	c[im.Col.WindowBg] = rgba(C_BG, 0)
 	c[im.Col.ChildBg] = rgba(C_CARD)
-	c[im.Col.PopupBg] = rgba(0x1e222a, 0.98)
+	c[im.Col.PopupBg] = rgba(C_POPUP, 0.98)
 	c[im.Col.Border] = rgba(C_BORDER)
 	c[im.Col.BorderShadow] = rgba(0, 0)
 	c[im.Col.FrameBg] = rgba(C_CARD_HI)
-	c[im.Col.FrameBgHovered] = rgba(0x2a2f3b)
-	c[im.Col.FrameBgActive] = rgba(0x303644)
+	c[im.Col.FrameBgHovered] = rgba(C_TRACK)
+	c[im.Col.FrameBgActive] = rgba(C_TRACK_HI)
 	c[im.Col.ScrollbarBg] = rgba(0, 0)
 	c[im.Col.ScrollbarGrab] = rgba(C_BORDER)
-	c[im.Col.ScrollbarGrabHovered] = rgba(0x3a4150)
+	c[im.Col.ScrollbarGrabHovered] = rgba(C_TRACK_HI)
 	c[im.Col.ScrollbarGrabActive] = rgba(C_BLUE)
 	c[im.Col.CheckMark] = rgba(C_BLUE)
 	c[im.Col.SliderGrab] = rgba(C_BLUE)
 	c[im.Col.SliderGrabActive] = rgba(0x9bbcff)
 	c[im.Col.Button] = rgba(C_CARD_HI)
-	c[im.Col.ButtonHovered] = rgba(0x2d3340)
-	c[im.Col.ButtonActive] = rgba(0x363d4d)
+	c[im.Col.ButtonHovered] = rgba(C_TRACK)
+	c[im.Col.ButtonActive] = rgba(C_TRACK_HI)
 	c[im.Col.Header] = rgba(C_BLUE, 0.18)
-	c[im.Col.HeaderHovered] = rgba(0xffffff, 0.06)
+	c[im.Col.HeaderHovered] = rgba(C_OVERLAY, 0.06)
 	c[im.Col.HeaderActive] = rgba(C_BLUE, 0.28)
 	c[im.Col.Separator] = rgba(C_BORDER)
 	c[im.Col.NavCursor] = rgba(C_BLUE, 0.8)

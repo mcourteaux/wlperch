@@ -129,7 +129,7 @@ device_row :: proc(id: string, icon, title, sub: string, selected: bool, accent:
 		im.DrawList_AddRectFilled(d, p, {p.x + w, p.y + h}, col32(accent, 0.13), 8)
 		im.DrawList_AddRectFilled(d, {p.x, p.y + 8}, {p.x + 3, p.y + h - 8}, col32(accent), 2)
 	} else if hovered {
-		im.DrawList_AddRectFilled(d, p, {p.x + w, p.y + h}, col32(0xffffff, 0.05), 8)
+		im.DrawList_AddRectFilled(d, p, {p.x + w, p.y + h}, col32(C_OVERLAY, 0.05), 8)
 	}
 	alpha: f32 = dim ? 0.45 : 1
 	icon_col := selected ? col32(accent) : col32(C_MUTED, alpha)
@@ -189,7 +189,7 @@ slider :: proc(id: string, v: ^f32, max_v: f32, accent: u32, width: f32) -> bool
 	d := dl()
 	cy := p.y + h / 2
 	t := clamp(v^ / max_v, 0, 1)
-	im.DrawList_AddRectFilled(d, {p.x, cy - 3}, {p.x + width, cy + 3}, col32(0x2e3440), 3)
+	im.DrawList_AddRectFilled(d, {p.x, cy - 3}, {p.x + width, cy + 3}, col32(C_TRACK), 3)
 	// Over-amplification region (>100%) tinted.
 	if max_v > 1 {
 		x100 := p.x + width / max_v
@@ -213,7 +213,7 @@ icon_button :: proc(id: string, icon: string, col: u32, size: f32 = 28, active :
 	if active {
 		im.DrawList_AddRectFilled(d, p, {p.x + size, p.y + size}, col32(col, 0.16), 8)
 	} else if hovered {
-		im.DrawList_AddRectFilled(d, p, {p.x + size, p.y + size}, col32(0xffffff, 0.07), 8)
+		im.DrawList_AddRectFilled(d, p, {p.x + size, p.y + size}, col32(C_OVERLAY, 0.07), 8)
 	}
 	if hovered {
 		im.SetMouseCursor(.Hand)
@@ -250,8 +250,8 @@ toggle_switch :: proc(id: string, on: bool, accent: u32, pending := false) -> bo
 	hovered := im.IsItemHovered()
 	if hovered {im.SetMouseCursor(.Hand)}
 	d := dl()
-	bg := on ? col32(accent) : col32(0x353b48)
-	if hovered && !on {bg = col32(0x3d4453)}
+	bg := on ? col32(accent) : col32(C_TRACK)
+	if hovered && !on {bg = col32(C_TRACK_HI)}
 	im.DrawList_AddRectFilled(d, p, {p.x + w, p.y + h}, bg, h / 2)
 	r := h / 2 - 3
 	cx := on ? p.x + w - h / 2 : p.x + h / 2
@@ -285,7 +285,7 @@ segmented :: proc(id: string, items: []string, active: int, accent: u32) -> int 
 		if i == active {
 			im.DrawList_AddRectFilled(d, {x, p.y + 2}, {x + widths[i], p.y + 2 + h}, col32(accent, 0.9), 7)
 		} else if hovered {
-			im.DrawList_AddRectFilled(d, {x, p.y + 2}, {x + widths[i], p.y + 2 + h}, col32(0xffffff, 0.06), 7)
+			im.DrawList_AddRectFilled(d, {x, p.y + 2}, {x + widths[i], p.y + 2 + h}, col32(C_OVERLAY, 0.06), 7)
 		}
 		tc := i == active ? col32(0x11131a) : col32(C_TEXT, 0.85)
 		draw_text(i == active ? fonts.bold : fonts.ui, SZ_SMALL + 1, {x + pad, p.y + 2 + (h - 15) / 2}, tc, it)
@@ -425,10 +425,10 @@ history_graph_multi :: proc(series: []Graph_Series, v: ^Graph_View, max_v: f32, 
 	graph_view_input(v, fmt.tprintf("##hg%p", series[0].h), size, right_inset)
 	d := dl()
 	x0, y0, x1, y1 := p.x, p.y, p.x + size.x, p.y + size.y
-	im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, col32(0x12151b), 8)
+	im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, col32(C_WELL), 8)
 	for i in 1 ..< 4 {
 		gy := y0 + size.y * f32(i) / 4
-		im.DrawList_AddLine(d, {x0 + 1, gy}, {x1 - 1, gy}, col32(0xffffff, 0.035), 1)
+		im.DrawList_AddLine(d, {x0 + 1, gy}, {x1 - 1, gy}, col32(C_OVERLAY, 0.035), 1)
 	}
 	live := view_back(v) == 0
 	im.DrawList_PushClipRect(d, {x0, y0}, {x1, y1}, true)
@@ -462,7 +462,7 @@ history_graph_multi :: proc(series: []Graph_Series, v: ^Graph_View, max_v: f32, 
 	if v^ != {} {
 		txt := live ? fmt.tprintf("last %s", fmt_age(view_span(v))) : fmt.tprintf("%s · until %s ago · double-click: live", fmt_age(view_span(v)), fmt_age(view_back(v)))
 		tsz := measure(fonts.ui, 10.5, txt)
-		im.DrawList_AddRectFilled(d, {x0 + 4, y0 + 4}, {x0 + 12 + tsz.x, y0 + 6 + tsz.y}, col32(0x12151b, 0.85), 4)
+		im.DrawList_AddRectFilled(d, {x0 + 4, y0 + 4}, {x0 + 12 + tsz.x, y0 + 6 + tsz.y}, col32(C_WELL, 0.85), 4)
 		draw_text(fonts.ui, 10.5, {x0 + 8, y0 + 5}, col32(live ? C_MUTED : C_ORANGE), txt)
 	}
 }
@@ -478,7 +478,7 @@ usage_bar :: proc(frac: f32, col: u32, size: Vec2) {
 	im.Dummy(size)
 	d := dl()
 	r := size.y / 2
-	im.DrawList_AddRectFilled(d, p, {p.x + size.x, p.y + size.y}, col32(0x2a2f3a), r)
+	im.DrawList_AddRectFilled(d, p, {p.x + size.x, p.y + size.y}, col32(C_TRACK), r)
 	f := clamp(frac, 0, 1)
 	if f > 0 {
 		im.DrawList_AddRectFilled(d, p, {p.x + max(size.x * f, size.y), p.y + size.y}, col, r)
@@ -528,8 +528,8 @@ draw_layout :: proc(rects: []Layout_Rect, p: Vec2, size: Vec2, compact := false,
 		a := Vec2{ox + (r.x - minx) * s + gap, oy + (r.y - miny) * s + gap}
 		b := Vec2{ox + (r.x - minx + r.w) * s - gap, oy + (r.y - miny + r.h) * s - gap}
 		rounding: f32 = compact ? 2.5 : 6
-		fill := r.focused ? col32(accent, 0.22) : col32(0x2a303c)
-		border := r.focused ? col32(accent, 0.9) : col32(0x454d5e)
+		fill := r.focused ? col32(accent, 0.22) : col32(C_TRACK)
+		border := r.focused ? col32(accent, 0.9) : col32(C_TRACK_HI)
 		im.DrawList_AddRectFilled(d, a, b, fill, rounding)
 		im.DrawList_AddRect(d, a, b, border, rounding, compact ? 1 : 1.5)
 		if !compact {
@@ -557,7 +557,7 @@ sample_graph :: proc(samples: []Sensor_Sample, from, to: f64, color: u32, unit: 
 	im.Dummy(size)
 	d := dl()
 	x0, y0, x1, y1 := p.x, p.y, p.x + size.x, p.y + size.y
-	im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, col32(0x12151b), 6)
+	im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, col32(C_WELL), 6)
 	if len(samples) < 2 {
 		msg := "collecting history…"
 		msz := measure(fonts.ui, SZ_SMALL, msg)
@@ -609,7 +609,7 @@ sample_graph :: proc(samples: []Sensor_Sample, from, to: f64, color: u32, unit: 
 	// Labels on a backing so the line never runs through them.
 	corner_label :: proc(d: ^im.DrawList, pos: Vec2, text: string) {
 		sz := measure(fonts.ui, 10.5, text)
-		im.DrawList_AddRectFilled(d, {pos.x - 3, pos.y}, {pos.x + sz.x + 3, pos.y + sz.y}, col32(0x12151b, 0.85), 3)
+		im.DrawList_AddRectFilled(d, {pos.x - 3, pos.y}, {pos.x + sz.x + 3, pos.y + sz.y}, col32(C_WELL, 0.85), 3)
 		draw_text(fonts.ui, 10.5, pos, col32(C_MUTED), text)
 	}
 	corner_label(d, {x0 + 5, y0 + 3}, fmt.tprintf("max %s", hi_s))

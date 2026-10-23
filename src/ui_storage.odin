@@ -107,7 +107,7 @@ draw_storage_locked :: proc(w: f32) -> (act: Storage_Action) {
 				hovered := im.IsItemHovered()
 				if hovered {
 					im.SetMouseCursor(.Hand)
-					im.DrawList_AddRectFilled(dd, {vp.x - 6, vp.y - 2}, {vp.x + inner + 6, vp.y + h}, col32(0xffffff, 0.05), 7)
+					im.DrawList_AddRectFilled(dd, {vp.x - 6, vp.y - 2}, {vp.x + inner + 6, vp.y + h}, col32(C_OVERLAY, 0.05), 7)
 					tip(fmt.tprintf("Open %s in the file manager\n%s · %s", v.mountpoints[0], v.path, v.fstype))
 				}
 				if clicked {act = {.Open, strings.clone(v.mountpoints[0], context.temp_allocator)}}

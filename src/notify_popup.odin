@@ -325,7 +325,7 @@ render :: proc(p: ^Popup, n: ^Notification) {
 	if p.hovered {
 		p.close_r = {card.x + card.w - PAD - 20, card.y + PAD - 5, 24, 24}
 		hot := p.part == 0
-		fill_rr(&cv, p.close_r, 12, hot ? C_RED : 0xffffff, hot ? 0.22 : 0.07)
+		fill_rr(&cv, p.close_r, 12, hot ? C_RED : C_OVERLAY, hot ? 0.22 : 0.07)
 		cw := soft_text_width(&soft_symbols, 14, ICON_CLOSE)
 		text(&cv, &soft_symbols, 14, p.close_r.x + (p.close_r.w - cw) / 2, p.close_r.y + 4, ICON_CLOSE, hot ? C_RED : C_MUTED)
 	} else if stamp != "" {
@@ -562,6 +562,11 @@ notify_popups_tick :: proc() {
 		}
 		if n.expires == {} && n.timeout > 0 {n.expires = time.tick_add(now, n.timeout)}
 	}
+}
+
+// Redraw every popup (the theme changed).
+notify_popups_restyle :: proc() {
+	for p in popups {p.dirty = true}
 }
 
 // How long until a timeout line needs to move (-1: none moving).
