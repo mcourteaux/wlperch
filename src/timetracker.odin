@@ -279,6 +279,7 @@ tracker_start :: proc(index: int) {
 	if index < 0 || index >= len(tracker.projects) {return}
 	p := tracker.projects[index]
 	outs, focused := project_outputs()
+	remember_return_workspaces()
 	b := strings.builder_make(context.temp_allocator)
 	for o, i in outs {
 		fmt.sbprintf(&b, "workspace \"%s\" output %s; ", project_workspace(p, i + 1), o)
@@ -301,10 +302,33 @@ tracker_set_lock :: proc(on: bool) {
 	tracker.lock = on
 	if on {
 		_ = os.write_entire_file(tracker.lock_path, "on\n")
+		// Apply right away: already on a project workspace -> group the monitors.
+		ws: string
+		{
+			sync.guard(&sway.mu)
+			ws = strings.clone(sway.focused_ws, context.temp_allocator)
+		}
+		if p := project_for_workspace(ws); p >= 0 {tracker_start(p)}
 	} else {
 		os.remove(tracker.lock_path)
 	}
 	request_redraw()
+}
+
+// Remember what each output shows (if it's not a project workspace) so the
+// group lock can send it back there when the project is left.
+@(private = "file")
+remember_return_workspaces :: proc() {
+	sync.guard(&sway.mu)
+	for v in sway.visible {
+		if project_for_workspace(v.ws) >= 0 {continue}
+		if old, had := tracker.return_ws[v.output]; had {
+			delete(old)
+			tracker.return_ws[v.output] = strings.clone(v.ws)
+		} else {
+			tracker.return_ws[strings.clone(v.output)] = strings.clone(v.ws)
+		}
+	}
 }
 
 Sync_Move :: struct {
