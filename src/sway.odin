@@ -17,7 +17,11 @@ IPC_SUBSCRIBE :: 2
 IPC_GET_OUTPUTS :: 3
 IPC_GET_INPUTS :: 100
 IPC_GET_WORKSPACES :: 1
+IPC_GET_TREE :: 4
 EVENT_WORKSPACE :: 0x80000000
+EVENT_WINDOW :: 0x80000003
+
+PLACEHOLDER_APP_ID :: "wlwidgets-placeholder"
 
 Sway_Output :: struct {
 	name, make, model: string,
@@ -44,6 +48,8 @@ Sway_State :: struct {
 	focused_ws_seq: int,   // bumped on every workspace change
 	focused_output: string,
 	visible:        [dynamic]Visible_Ws, // workspace shown on each output
+	ws_windows:     map[string]int,      // workspace -> real windows (placeholders excluded)
+	tree_seq:       int,
 }
 sway: Sway_State
 
@@ -166,6 +172,62 @@ sway_refresh_workspaces :: proc() {
 	sway.focused_ws_seq += 1
 }
 
+// Count the real windows on every workspace (our placeholders don't count).
+sway_refresh_tree :: proc() {
+	reply, ok := sway_request(IPC_GET_TREE, "")
+	if !ok {return}
+	v, _ := jparse(reply)
+	counts := make(map[string]int, 32, context.temp_allocator)
+	count_views :: proc(n: json.Value) -> int {
+		c := 0
+		for k in ([]string{"nodes", "floating_nodes"}) {
+			for child in jarr(jobj(n, k)) {
+				if jobj(child, "pid") != nil {
+					if jstr(jobj(child, "app_id")) != PLACEHOLDER_APP_ID {c += 1}
+				} else {
+					c += count_views(child)
+				}
+			}
+		}
+		return c
+	}
+	walk :: proc(n: json.Value, counts: ^map[string]int) {
+		if jstr(jobj(n, "type")) == "workspace" {
+			counts[jstr(jobj(n, "name"))] = count_views(n)
+			return
+		}
+		for child in jarr(jobj(n, "nodes")) {walk(child, counts)}
+	}
+	walk(v, &counts)
+	sync.guard(&sway.mu)
+	for k in sway.ws_windows {delete(k)}
+	clear(&sway.ws_windows)
+	for k, c in counts {sway.ws_windows[strings.clone(k)] = c}
+	sway.tree_seq += 1
+}
+
+@(private = "file")
+Event_Kind :: enum {
+	Workspace,
+	Other, // output / input
+	Tree,  // windows appeared, disappeared or moved
+}
+
+@(private = "file")
+classify :: proc(type: u32, payload: string) -> bit_set[Event_Kind] {
+	switch type {
+	case EVENT_WORKSPACE:
+		return {.Workspace, .Tree}
+	case EVENT_WINDOW:
+		v, _ := jparse(payload)
+		switch jstr(jobj(v, "change")) {
+		case "new", "close", "move": return {.Tree}
+		}
+		return {}
+	}
+	return {.Other}
+}
+
 @(private = "file")
 refresh :: proc() {
 	outs_json, ok1 := sway_request(IPC_GET_OUTPUTS, "")
@@ -225,15 +287,14 @@ sway_switch_layout :: proc(index: int) {
 }
 
 // Swallow events that are already queued so a burst causes one refresh.
-// Returns whether any non-workspace event was among them.
 @(private = "file")
-drain_events :: proc(fd: posix.FD) -> (other: bool) {
+drain_events :: proc(fd: posix.FD) -> (kinds: bit_set[Event_Kind]) {
 	for {
 		pfd := posix.pollfd{fd = fd, events = {.IN}}
 		if posix.poll(&pfd, 1, 0) <= 0 {return}
-		type, _, ok := ipc_read(fd)
+		type, payload, ok := ipc_read(fd)
 		if !ok {return}
-		if type != EVENT_WORKSPACE {other = true}
+		kinds += classify(type, payload)
 	}
 }
 
@@ -250,17 +311,24 @@ sway_start :: proc() {
 				time.sleep(2 * time.Second)
 				continue
 			}
-			ipc_write(fd, IPC_SUBSCRIBE, `["output", "input", "workspace"]`)
+			ipc_write(fd, IPC_SUBSCRIBE, `["output", "input", "workspace", "window"]`)
 			sway_refresh_workspaces()
+			sway_refresh_tree()
 			for {
-				type, _, ok := ipc_read(fd)
+				type, payload, ok := ipc_read(fd)
 				if !ok {break}
 				if type & 0x80000000 != 0 {
+					kinds := classify(type, payload)
+					if kinds == {} {
+						free_all(context.temp_allocator)
+						continue // e.g. a window title changed
+					}
 					// Events come in bursts (e.g. one per input device); coalesce.
 					time.sleep(50 * time.Millisecond)
-					other := drain_events(fd) || type != EVENT_WORKSPACE
-					sway_refresh_workspaces()
-					if other {
+					kinds += drain_events(fd)
+					if .Workspace in kinds {sway_refresh_workspaces()}
+					if .Tree in kinds {sway_refresh_tree()}
+					if .Other in kinds {
 						refresh()
 						audio_refresh_async() // HDMI port -> connector mapping may have changed
 					}

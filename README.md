@@ -93,6 +93,14 @@ brings the others to that project's workspaces too. Leaving it sends the others
 back to what they showed before. Focus stays on the monitor you used. The
 setting is remembered.
 
+**Keep empty workspaces** (a toggle in the Time panel, or `wlwidgets track keep
+[on|off]`) stops sway from removing a project workspace once it's empty and you
+look away. Every empty project workspace gets a content-less placeholder window
+(app_id `wlwidgets-placeholder`, titled "ACME 2 · placeholder"). It goes there
+through a sway `for_window` rule, so it never flashes elsewhere or takes focus,
+and it closes as soon as a real window arrives. If you close a placeholder
+yourself, that workspace is left alone until it disappears.
+
 Time counts while one of a project's workspaces is focused. Numbered
 workspaces are not counted. Counting pauses after `idle_minutes` without input
 (through the `ext-idle-notify-v1` protocol; idle inhibitors such as a playing
@@ -150,6 +158,7 @@ wlwidgets show [panel] | hide | quit
 wlwidgets restart    # new binary + re-read config; keeps graph history
 wlwidgets track ACME # open the project's workspaces (time tracking)
 wlwidgets track lock on   # group-lock monitors into/out of project workspaces
+wlwidgets track keep on   # placeholder windows keep empty project workspaces
 wlwidgets daemon     # start in the background without showing
 wlwidgets status     # waybar JSON for the bar button (see below)
 ```

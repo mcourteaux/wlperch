@@ -27,6 +27,7 @@ commands:
   restart  restart the daemon (new binary, re-read config); keeps graph history
   track <project>  create/focus the project's workspaces (one per monitor) to track time
   track lock [on|off]  group-lock monitors: they follow each other into/out of projects
+  track keep [on|off]  keep empty project workspaces alive with placeholder windows
   status [sensors|timer]  print waybar JSON every few seconds for a custom module:
                    the panel button (memory warning), a room temperature + CO2,
                    or the running project timer
@@ -109,6 +110,16 @@ handle_command :: proc(line: string) -> string {
 		restart_requested = true
 	case "track":
 		if len(f) < 2 {return "usage: track <project> | track lock [on|off]\n"}
+		if f[1] == "keep" {
+			mode := len(f) > 2 ? f[2] : "toggle"
+			switch mode {
+			case "on":     placeholders_set_keep(true)
+			case "off":    placeholders_set_keep(false)
+			case "toggle": placeholders_set_keep(!placeholders.keep)
+			case:          return "usage: track keep [on|off]\n"
+			}
+			return placeholders.keep ? "keep on\n" : "keep off\n"
+		}
 		if f[1] == "lock" {
 			mode := len(f) > 2 ? f[2] : "toggle"
 			switch mode {
@@ -214,6 +225,7 @@ main :: proc() {
 	t0 = time.tick_now()
 	services_start()
 	tracker_init()
+	placeholders_init()
 	log.debugf("services_start took %v, rss %d kB", time.tick_since(t0), rss_kb())
 
 	if resume_show {
@@ -229,6 +241,7 @@ main :: proc() {
 	}
 
 	tracker_shutdown()
+	placeholders_destroy_all()
 	hide_popup()
 	if plat.gl_ready {imgl.Shutdown()}
 }
@@ -355,6 +368,7 @@ loop_iteration :: proc() {
 	}
 
 	tracker_tick()
+	placeholders_tick()
 
 	if restart_requested {
 		restart_requested = false

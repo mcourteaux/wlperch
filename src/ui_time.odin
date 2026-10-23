@@ -98,6 +98,18 @@ draw_time :: proc(w: f32) {
 		icon := active ? ICON_MONITORS : ICON_PLAY
 		draw_text(fonts.ui, 15, {rp.x + inner - 16, rp.y + 8}, col32(hovered || active ? pr.color : C_FAINT, active && !hovered ? 0.6 : 1), icon)
 	}
+	// Keep-alive toggle: placeholder windows hold empty project workspaces open.
+	{
+		kp := im.GetCursorScreenPos()
+		im.Dummy({1, 2})
+		lbl := "Keep empty workspaces (placeholder windows)"
+		im.SetCursorScreenPos({kp.x, kp.y + 4})
+		if toggle_switch("##keepws", placeholders.keep, C_TEAL) {placeholders_set_keep(!placeholders.keep)}
+		if im.IsItemHovered() {tip("Empty project workspaces get a placeholder window so sway doesn't remove them;\nit closes as soon as you put a real window there")}
+		draw_text(fonts.ui, SZ_SMALL, {kp.x + 48, kp.y + 7}, col32(placeholders.keep ? C_TEAL : C_MUTED), lbl)
+		im.SetCursorScreenPos(kp)
+		im.Dummy({inner, 30})
+	}
 	if start >= 0 {
 		tracker_start(start)
 		hide_requested = true // get out of the way of the new workspaces

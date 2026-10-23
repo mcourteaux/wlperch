@@ -94,6 +94,7 @@ Legend: `[x]` done · `[ ]` open · `[~]` partially done / needs polish
 - [x] Time tracker: [project.*] config, per-monitor project workspaces (create/recreate/pin), counting while focused, idle pause via ext-idle-notify-v1, TSV log + crash-safe heartbeat, today/week views, quick switch, `wlwidgets track`, waybar timer pill
 - [x] Group lock: monitors follow each other into/out of project workspaces (toggle + `track lock`), decision logic unit-tested
 - [ ] Group lock: live end-to-end check (not run while the user was working)
+- [x] Keep empty workspaces: placeholder xdg_toplevel windows (single-pixel buffer), placed via for_window, removed when a real window arrives, back when it leaves; verified live without focus changes
 - [ ] Time tracker: visual check of the panel (screen was locked during the test run)
 - [ ] Time tracker: optional window-rule assignment on numbered workspaces (e.g. by app/title)
 - [ ] Sensor history graphs (record readings over time)
