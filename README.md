@@ -88,13 +88,9 @@ the Time panel, or with `wlwidgets track <project>`:
 Doing it again simply recreates them after sway has removed them as empty.
 
 Project workspaces have names rather than numbers, so sway's `$mod+N`
-bindings can't reach them. Bind the "current project" commands instead. Without
-a name, they target the project you're in, or else the one you used last:
-
-```
-bindsym $mod+p exec wlwidgets track go          # go to the project's workspaces
-bindsym $mod+Shift+p exec wlwidgets track move  # send the focused window there
-```
+bindings can't reach them. The sway file binds the "current project" commands
+instead. Without a name, they target the project you're in, or else the one you
+used last: `$mod+p` runs `track go` and `$mod+Shift+p` runs `track move`.
 
 `track move` puts the window on the project's workspace for the monitor you're
 on, creating it if needed, and leaves your view alone (like `$mod+Shift+N`).
@@ -193,11 +189,16 @@ CPU/GPU at 1 Hz, so the graphs are already full when you open the popup.
 
 ### Sway
 
-```
-# ~/.config/sway/config
-exec wlwidgets daemon
-bindsym $mod+w exec wlwidgets toggle
-```
+Everything sway needs is in **one file**, [`contrib/sway/wlwidgets.conf`](contrib/sway/wlwidgets.conf):
+- `exec wlwidgets daemon`;
+- the panel toggle (`$mod+o`);
+- the project-workspace bindings (`$mod+p` / `$mod+Shift+p`);
+- the placeholder window style.
+
+`./build.sh install` copies it to `~/.config/sway/config.d/wlwidgets.conf`
+unless a config already starts the daemon. Edit it there. At runtime, wlwidgets
+itself only adds the per-workspace placement rules for placeholder windows,
+because those depend on your project names.
 
 ### Waybar
 

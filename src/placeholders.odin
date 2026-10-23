@@ -51,7 +51,6 @@ Placeholders :: struct {
 	keep_path: string,
 	list:      [dynamic]^Placeholder,
 	ruled:     map[string]bool, // for_window rules installed this session
-	styled:    bool,            // global "no border" rule installed
 	dismissed: map[string]bool, // workspaces whose placeholder the user closed
 	buffer:    ^wl.Buffer,    // tile color, single pixel
 	clear:     ^wl.Buffer,    // fully transparent, single pixel
@@ -139,10 +138,6 @@ spawn :: proc(ws: string) {
 		placeholders.clear = wl.wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(plat.single_pixel, 0, 0, 0, 0)
 		make_corner_buffers()
 	}
-	if !placeholders.styled {
-		sway_command(fmt.tprintf(`for_window [app_id="%s"] border none`, PLACEHOLDER_APP_ID))
-		placeholders.styled = true
-	}
 	p := new(Placeholder)
 	p.ws = strings.clone(ws)
 	p.title = fmt.aprintf("%s · placeholder", ws)
@@ -219,7 +214,7 @@ placeholders_tick :: proc() {
 	// Fallback for when the for_window rule is gone (e.g. after a sway reload).
 	for p in placeholders.list {
 		if p.configured && !p.moved && time.tick_since(p.mapped_at) > 300 * time.Millisecond {
-			sway_command(fmt.tprintf(`%s move container to workspace "%s", border none`, criteria(p.title), p.ws))
+			sway_command(fmt.tprintf(`%s move container to workspace "%s"`, criteria(p.title), p.ws))
 			p.moved = true
 		}
 	}

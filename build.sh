@@ -88,7 +88,13 @@ if [[ $MODE == install ]]; then
 	# Replace atomically: a running daemon keeps its (now unlinked) binary.
 	install -m 755 build/wlwidgets "$HOME/.local/bin/.wlwidgets.new"
 	mv -f "$HOME/.local/bin/.wlwidgets.new" "$HOME/.local/bin/wlwidgets"
-	echo ">> installed ~/.local/bin/wlwidgets (restart a running daemon with: wlwidgets quit)"
+	echo ">> installed ~/.local/bin/wlwidgets (restart a running daemon with: wlwidgets restart)"
+	# The sway side lives in one file; install it unless some config already has it.
+	SWAYD="${XDG_CONFIG_HOME:-$HOME/.config}/sway/config.d"
+	if [[ -d $SWAYD ]] && ! grep -qs "exec wlwidgets daemon" "$SWAYD"/*; then
+		cp contrib/sway/wlwidgets.conf "$SWAYD/wlwidgets.conf"
+		echo ">> installed $SWAYD/wlwidgets.conf (reload sway to activate)"
+	fi
 fi
 
 if [[ $MODE == run ]]; then
