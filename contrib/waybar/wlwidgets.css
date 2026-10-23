@@ -5,7 +5,10 @@
 #custom-wlwidgets,
 #custom-timer,
 #custom-sensors,
-#custom-notifications {
+#custom-notifications,
+#custom-media,
+#custom-media-prev,
+#custom-media-next {
     padding: 0 10px;
     margin: 3px 1px;
     border-radius: 8px;
@@ -15,7 +18,10 @@
 
 #custom-timer:hover,
 #custom-sensors:hover,
-#custom-notifications:hover {
+#custom-notifications:hover,
+#custom-media:hover,
+#custom-media-prev:hover,
+#custom-media-next:hover {
     background-color: rgba(255, 255, 255, 0.06);
 }
 
@@ -56,6 +62,18 @@
 }
 #custom-notifications.dnd { color: #5a6172; }
 #custom-notifications.off { color: #3a404c; }
+
+/* Media: green while playing, muted when paused; the skip buttons stay compact. */
+#custom-media { color: #8a92a3; }
+#custom-media.playing { color: #9ece6a; }
+#custom-media-prev,
+#custom-media-next {
+    color: #8a92a3;
+    padding: 0 6px;
+    margin: 3px 0;
+}
+#custom-media-prev:hover,
+#custom-media-next:hover { color: #e4e7ee; }
 
 /* Project timer: dim when nothing is counted. */
 #custom-timer { color: #5a6172; }

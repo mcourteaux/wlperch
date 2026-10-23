@@ -35,6 +35,9 @@ foreign sdbus {
 	sd_bus_process :: proc(bus: ^Sd_Bus, r: ^^Sd_Bus_Message) -> c.int ---
 	sd_bus_flush :: proc(bus: ^Sd_Bus) -> c.int ---
 	sd_bus_send :: proc(bus: ^Sd_Bus, m: ^Sd_Bus_Message, cookie: ^u64) -> c.int ---
+	sd_bus_call_method :: proc(bus: ^Sd_Bus, dest, path, iface, member: cstring, ret_error: ^Sd_Bus_Error, reply: ^^Sd_Bus_Message, types: cstring, #c_vararg args: ..any) -> c.int ---
+	sd_bus_error_free :: proc(e: ^Sd_Bus_Error) ---
+	sd_bus_set_method_call_timeout :: proc(bus: ^Sd_Bus, usec: u64) -> c.int ---
 	sd_bus_emit_signal :: proc(bus: ^Sd_Bus, path, iface, member, types: cstring, #c_vararg args: ..any) -> c.int ---
 
 	sd_bus_message_is_method_call :: proc(m: ^Sd_Bus_Message, iface, member: cstring) -> c.int ---

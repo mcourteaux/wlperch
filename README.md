@@ -16,6 +16,7 @@ pressing <kbd>Esc</kbd>, closes it.
 |---|---|
 | **Header** | Big clock and date · tabs for every panel (so the bar needs only one button) · setup and restart buttons. Panels without the big header get the tabs in their title row. |
 | **Quick settings** | Toggle tiles: night light (wlsunset), do not disturb (wlwidgets' own while it shows notifications, otherwise dunst's), Bluetooth power, and with projects configured group lock and keep-workspaces · keyboard layout switcher (sway xkb layouts) |
+| **Media** | The playing track from any MPRIS player (Spotify, browsers, mpv, VLC…): album art (or the app's icon), title, artist, album, a progress bar, and previous / play-pause / next. With several players, a switcher picks one. Hidden while no player runs. `wlwidgets media play-pause\|next\|previous` from a shell or keybinding. |
 | **Audio** | Two fix buttons: **refresh** switches the default output's card to another profile and back (cures PipeWire's occasional silent sink) and restores the default output; **restart** restarts PipeWire, WirePlumber and pipewire-pulse (`wlwidgets audio refresh/restart` from a shell or keybinding). Output and input devices (click to make default) · volume sliders (drag or scroll, up to 150 %) · mute. For HDMI/DP audio on a GPU, every plugged monitor is listed by its **name and sway connector** (`LG ULTRAWIDE · HDMI 2 · DP-3`). Picking one switches the card profile and the default sink. The full profile list is in a dropdown. |
 | **Displays** | Your current screen layout, drawn to scale · a dropdown of preset scripts (`desk.sh` & co) with a mini preview of each layout. Selecting one runs it, and the active preset is detected and ticked. |
 | **Weather** | Today's forecast from open-meteo.com (no API key): current conditions, high/low, rain, wind, humidity, sunrise/sunset, and the next 24 h |
@@ -56,13 +57,13 @@ switches in place. The first panel in the config is the default.
 
 | Panel (built-in) | Modules |
 |---|---|
-| `main` | header · quick · audio \| weather · clocks · displays · bluetooth |
+| `main` | header · quick · media · audio \| weather · clocks · displays · bluetooth |
 | `system` | cpu · memory · storage \| gpu · thermals · network \| processes |
 | `sensors` | sensors |
 | `notifications` | notifications |
 | `time` | time |
 
-Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time notifications`.
+Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time notifications media`.
 
 The system panel's graphs keep the last hour. Scroll over any of them to zoom
 (they zoom together); zooming out from the live view stays live. Dragging or
@@ -279,6 +280,7 @@ wlwidgets track move      # move the focused window to that project's workspace 
 wlwidgets track pin       # for a minute, go/move target this project from anywhere
 wlwidgets track lock on   # group-lock monitors into/out of project workspaces
 wlwidgets track keep on   # placeholder windows keep empty project workspaces
+wlwidgets media play-pause # also play, pause, next, previous [player]
 wlwidgets notify dnd [on|off]  # do not disturb (no argument: toggle)
 wlwidgets notify clear    # empty the notification history
 wlwidgets notify dismiss  # close the popups on screen
@@ -315,7 +317,7 @@ config. Hook them up with three lines:
 ```jsonc
 // config.jsonc
 "include": ["wlwidgets.jsonc"],
-"modules-right": [ ..., "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/notifications", "custom/wlwidgets" ],
+"modules-right": [ ..., "group/media", "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/notifications", "custom/wlwidgets" ],
 ```
 ```css
 /* style.css, at the top */
@@ -325,12 +327,13 @@ config. Hook them up with three lines:
 | Module | Shows | Click |
 |---|---|---|
 | `custom/wlwidgets` | panel button; red with `92%` when memory use passes `memory_warn_percent` | main panel |
+| `group/media` | ⏮ · `⏸ Artist — Title` · ⏭ while something plays (hidden otherwise); green while playing | play/pause (scroll: previous/next, right click: main panel); ⏮/⏭ skip |
 | `custom/timer` | `⏱ ACME 1:23` while a project is counted, dim otherwise | time panel |
 | `custom/sensors` | `bar_room` temperature + latest CO₂; orange >800 ppm, red >1200 ppm | sensors panel |
 | `custom/notifications` | bell; purple with the count when there are unread notifications, bell-off under do not disturb | notifications panel (right click: do not disturb) |
 | `memory` | waybar's own module | system panel |
 
-The buttons are fed by `wlwidgets status`, `status timer`, `status sensors` and `status notifications`,
+The buttons are fed by `wlwidgets status`, `status timer`, `status sensors`, `status notifications` and `status media [prev|next]`,
 small standalone loops that print waybar JSON.
 
 ## Configuration
@@ -382,7 +385,7 @@ enabled = true                # serve desktop notifications (takes over from dun
 # Panels: the first is the default. columns: modules per column, separated by |
 [panel.main]
 header = true                 # big clock and date
-columns = quick audio | weather clocks displays bluetooth
+columns = quick media audio | weather clocks displays bluetooth
 
 [panel.system]
 title = System                # compact title row when there's no header
@@ -446,6 +449,7 @@ src/{audio,sysmon,procs,sensors,sway,weather,network,bluetooth,nightlight,displa
 src/notifications.odin   notification server (D-Bus via sd-bus), history, do not disturb
 src/notify_popup.odin    software-rendered notification popups (layer surfaces + shm)
 src/notify_icons.odin    icon lookup and decoding (theme, PNG/JPEG, SVG via librsvg)
+src/media.odin           MPRIS players (sd-bus): scan, commands, `status media`
 src/dbus.odin            minimal sd-bus bindings
 src/softtext.odin        stb_truetype text into pixel buffers (placeholders, popups)
 ```

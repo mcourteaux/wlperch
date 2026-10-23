@@ -1,7 +1,7 @@
 // wlwidgets modules for waybar. In your waybar config add:
 //     "include": ["wlwidgets.jsonc"],
 // and put the module names in a modules list, e.g.
-//     "modules-right": [ ..., "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/notifications", "custom/wlwidgets" ]
+//     "modules-right": [ ..., "group/media", "custom/timer", "custom/sensors", "memory", "clock", "tray", "custom/notifications", "custom/wlwidgets" ]
 // (custom/wlwidgets last: the main panel opens under it). In style.css:
 //     @import "wlwidgets.css";
 {
@@ -12,6 +12,33 @@
         "return-type": "json",
         "format": "{}",
         "on-click": "wlwidgets toggle"
+    },
+    // Media: previous · track (click: play/pause, right click: the panel) · next.
+    // Hidden while nothing is playing.
+    "group/media": {
+        "orientation": "horizontal",
+        "modules": ["custom/media-prev", "custom/media", "custom/media-next"]
+    },
+    "custom/media": {
+        "exec": "wlwidgets status media",
+        "return-type": "json",
+        "format": "{}",
+        "on-click": "wlwidgets media play-pause",
+        "on-click-right": "wlwidgets toggle",
+        "on-scroll-up": "wlwidgets media previous",
+        "on-scroll-down": "wlwidgets media next"
+    },
+    "custom/media-prev": {
+        "exec": "wlwidgets status media prev",
+        "return-type": "json",
+        "format": "{}",
+        "on-click": "wlwidgets media previous"
+    },
+    "custom/media-next": {
+        "exec": "wlwidgets status media next",
+        "return-type": "json",
+        "format": "{}",
+        "on-click": "wlwidgets media next"
     },
     // Running project timer (time tracking by workspace); opens the time panel.
     "custom/timer": {

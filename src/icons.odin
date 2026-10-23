@@ -92,3 +92,7 @@ ICON_BELL_OFF :: "\U000F009B" // md-bell_off
 ICON_HARDDISK :: "\U000F02CA" // md-harddisk
 ICON_USB_DRIVE :: "\U000F129E" // md-usb_flash_drive
 ICON_EJECT :: "\U000F01EA" // md-eject
+ICON_PAUSE :: "\U000F03E4" // md-pause
+ICON_SKIP_NEXT :: "\U000F04AD" // md-skip_next
+ICON_SKIP_PREV :: "\U000F04AE" // md-skip_previous
+ICON_MUSIC :: "\U000F075A" // md-music

@@ -35,9 +35,13 @@ commands:
                            (to gather misplaced windows); each move extends it
   track lock [on|off]  group-lock monitors: they follow each other into/out of projects
   track keep [on|off]  keep empty project workspaces alive with placeholder windows
+  media play-pause|play|pause|next|previous [player]
+                   control the playing media player (MPRIS)
   notify dnd [on|off]  do not disturb (popups held; they wait in the Notifications panel)
   notify clear     empty the notification history
   notify dismiss   close the notification popups on screen
+  status media [prev|next]  waybar JSON: the playing track (click: play/pause),
+                   or a previous / next button
   status [sensors|timer|notifications]  print waybar JSON every few seconds for a
                    custom module: the panel button (memory warning), a room
                    temperature + CO2, the running project timer, or a bell
@@ -233,10 +237,14 @@ main :: proc() {
 		run_setup()
 		return
 	case "toggle", "show", "hide", "quit", "daemon", "restart", "track", "audio", "notify":
+	case "media":
+		os.exit(media_cli(os.args[2:]))
 	case "status":
 		config_load()
 		if len(os.args) > 2 && os.args[2] == "sensors" {
 			status_sensors_loop()
+		} else if len(os.args) > 2 && os.args[2] == "media" {
+			status_media_loop(len(os.args) > 3 ? os.args[3] : "")
 		} else if len(os.args) > 2 && os.args[2] == "notifications" {
 			status_notifications_loop()
 		} else if len(os.args) > 2 && os.args[2] == "timer" {

@@ -31,6 +31,7 @@ MODULES := [?]Module {
 	{"bluetooth", draw_bluetooth},
 	{"storage", draw_storage},
 	{"notifications", draw_notifications},
+	{"media", draw_media},
 	{"cpu", draw_cpu_card},
 	{"gpu", draw_gpu_card},
 	{"memory", draw_memory_card},

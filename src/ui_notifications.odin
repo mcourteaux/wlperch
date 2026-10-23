@@ -12,7 +12,7 @@ import gl "vendor:OpenGL"
 @(private = "file") fresh: map[u32]bool
 
 // GL texture for an icon (straight alpha, as imgui blends), made on first use.
-@(private = "file")
+// Also used by the media card.
 icon_texture :: proc(ic: ^Notif_Icon) -> im.TextureID {
 	if ic.tex != 0 {return im.TextureID(ic.tex)}
 	rgba := make([]u8, ICON_PX * ICON_PX * 4, context.temp_allocator)
