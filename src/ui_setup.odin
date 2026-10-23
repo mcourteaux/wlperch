@@ -136,6 +136,126 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 	return out[:]
 }
 
+// Components grouped into the dashboard's columns.
+@(private = "file")
+COLUMNS := [3]struct {
+	title: string,
+	ids:   []Comp_Id,
+} {
+	{"Basics", {.Program, .Service, .Config}},
+	{"Desktop", {.Sway, .Waybar, .Launcher}},
+	{"Extras", {.Notifications, .Rapl}},
+}
+
+@(private = "file")
+is_done :: proc(s: Comp_State) -> bool {return s == .Installed || s == .Running || s == .Custom}
+
+@(private = "file")
+needs_attention :: proc(s: Comp_State) -> bool {return s == .Outdated || s == .Partial || s == .Stopped}
+
+// One summary tile: caption, big value, optional sub line and progress bar.
+@(private = "file")
+stat_tile :: proc(id: string, w: f32, icon, caption, value, sub: string, accent: u32, progress: f32 = -1) {
+	card_begin(id, w)
+	p := im.GetCursorScreenPos()
+	iw := im.GetContentRegionAvail().x
+	// All tiles share one height; without a bar the content sits centered.
+	TILE_H :: 51
+	if progress < 0 {p.y += 5}
+	im.DrawList_AddCircleFilled(dl(), {p.x + 17, p.y + 19}, 17, col32(accent, 0.16))
+	isz := measure(fonts.ui, 18, icon)
+	draw_text(fonts.ui, 18, {p.x + 17 - isz.x / 2, p.y + 19 - isz.y / 2}, col32(accent), icon)
+	draw_text(fonts.ui, SZ_SMALL, {p.x + 46, p.y}, col32(C_MUTED), caption)
+	draw_text(fonts.bold, 20, {p.x + 46, p.y + 14}, col32(C_TEXT), value)
+	if sub != "" {
+		vw := measure(fonts.bold, 20, value).x
+		draw_text(fonts.ui, SZ_SMALL, {p.x + 54 + vw, p.y + 21}, col32(C_MUTED), sub)
+	}
+	if progress >= 0 {
+		y := p.y + 46
+		im.DrawList_AddRectFilled(dl(), {p.x, y}, {p.x + iw, y + 5}, col32(C_BORDER), 3)
+		im.DrawList_AddRectFilled(dl(), {p.x, y}, {p.x + iw * clamp(progress, 0, 1), y + 5}, col32(accent), 3)
+	}
+	im.Dummy({iw, TILE_H})
+	card_end()
+}
+
+// One component card; returns the action to run if one was clicked.
+@(private = "file")
+comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
+	inf := info(id)
+	card_begin(fmt.tprintf("comp:%v", id), width)
+	inner := im.GetContentRegionAvail().x
+	cp := im.GetCursorScreenPos()
+
+	// Accent strip along the top edge of the card.
+	wp := im.GetWindowPos()
+	ws := im.GetWindowSize()
+	im.DrawList_PushClipRect(dl(), wp, wp + ws, false)
+	im.DrawList_AddRectFilled(dl(), {wp.x + 1, wp.y + 1}, {wp.x + ws.x - 1, wp.y + 4}, col32(inf.accent, 0.55), 6, im.DrawFlags_RoundCornersTop)
+	im.DrawList_PopClipRect(dl())
+
+	// Header: icon badge, title, state pill underneath.
+	im.DrawList_AddCircleFilled(dl(), {cp.x + 18, cp.y + 20}, 18, col32(inf.accent, 0.16))
+	isz := measure(fonts.ui, 19, inf.icon)
+	draw_text(fonts.ui, 19, {cp.x + 18 - isz.x / 2, cp.y + 20 - isz.y / 2}, col32(inf.accent), inf.icon)
+	draw_text(fonts.bold, 16, {cp.x + 48, cp.y + 1}, col32(C_TEXT), inf.title)
+	stext, scol := state_pill(c.state)
+	ssz := measure(fonts.bold, 11, stext)
+	sx, sy := cp.x + 48, cp.y + 22
+	im.DrawList_AddCircleFilled(dl(), {sx + 9, sy + 9}, 3, col32(scol))
+	im.DrawList_AddRectFilled(dl(), {sx, sy}, {sx + ssz.x + 24, sy + 18}, col32(scol, 0.14), 9)
+	draw_text(fonts.bold, 11, {sx + 17, sy + 2}, col32(scol), stext)
+	im.Dummy({inner, 44})
+
+	wrapped(fonts.ui, SZ_BODY, C_MUTED, inf.desc, inner)
+	for line in c.detail {wrapped(fonts.mono, SZ_SMALL, C_FAINT, line, inner)}
+	if c.message != "" {
+		wrapped(fonts.ui, SZ_SMALL, c.msg_ok ? C_GREEN : C_RED, fmt.tprintf("%s %s", c.msg_ok ? ICON_CHECK : ICON_ALERT, c.message), inner)
+	}
+	if inf.preview != "" && show_preview[id] {
+		text := strings.trim_space(inf.preview)
+		im.PushStyleColorImVec4(.ChildBg, rgba(0x12151b))
+		im.PushStyleVarImVec2(.WindowPadding, {12, 10})
+		im.BeginChild(cstr(fmt.tprintf("##code:%v", id)), {inner, 0}, {.AutoResizeY, .AlwaysUseWindowPadding}, {})
+		wrapped(fonts.mono, SZ_SMALL, C_TEXT, text, inner - 24)
+		im.EndChild()
+		im.PopStyleVar()
+		im.PopStyleColor()
+	}
+
+	// Footer: actions on the left, file toggle on the right.
+	im.Dummy({1, 2})
+	fp := im.GetCursorScreenPos()
+	im.DrawList_AddLine(dl(), {fp.x, fp.y - 4}, {fp.x + inner, fp.y - 4}, col32(C_BORDER), 1)
+	ax := fp.x
+	acts := actions_for(id, c.state)
+	if c.busy {
+		draw_text(fonts.ui, SZ_SMALL, {ax, fp.y + 6}, col32(C_ORANGE), "working…")
+	} else if len(acts) == 0 {
+		draw_text(fonts.ui, SZ_SMALL, {ax, fp.y + 6}, col32(C_FAINT), is_done(c.state) ? "nothing to do" : "—")
+	} else {
+		for a, i in acts {
+			im.SetCursorScreenPos({ax, fp.y})
+			if pill_button(fmt.tprintf("##%v:%d", id, i), a.label, inf.accent, a.primary) {run = a.run}
+			ax += pill_width(a.label) + 8
+		}
+	}
+	if inf.preview != "" {
+		lbl := show_preview[id] ? "Hide file" : "Show file"
+		lsz := measure(fonts.ui, SZ_SMALL, lbl)
+		lp := Vec2{fp.x + inner - lsz.x, fp.y + 6}
+		im.SetCursorScreenPos(lp)
+		if im.InvisibleButton(cstr(fmt.tprintf("##prev:%v", id)), lsz + {0, 2}) {show_preview[id] = !show_preview[id]}
+		if im.IsItemHovered() {im.SetMouseCursor(.Hand)}
+		draw_text(fonts.ui, SZ_SMALL, lp, col32(inf.accent, 0.9), lbl)
+	}
+	im.SetCursorScreenPos(fp)
+	im.Dummy({inner, 28})
+	card_end()
+	return
+}
+
 draw_setup :: proc() {
 	io := im.GetIO()
 	if im.IsKeyPressed(.Escape, false) {plat.closed = true}
@@ -162,70 +282,64 @@ draw_setup :: proc() {
 	im.Dummy({width, 56})
 	im.Dummy({1, 6})
 
-	// ---- Components ---------------------------------------------------------
+	GAP :: 14
 	run: proc() = nil
 	{
 		sync.guard(&setup.mu)
-		im.PushStyleVarImVec2(.ItemSpacing, {10, 12})
+
+		// ---- Summary tiles ----------------------------------------------------
+		done, applicable, attention, missing := 0, 0, 0, 0
 		for id in Comp_Id {
-			c := &setup.comps[id]
-			inf := info(id)
-			card_begin(fmt.tprintf("comp:%v", id), width)
-			inner := im.GetContentRegionAvail().x
-			cp := im.GetCursorScreenPos()
+			s := setup.comps[id].state
+			if s == .Unavailable {continue}
+			applicable += 1
+			if is_done(s) {done += 1}
+			if needs_attention(s) {attention += 1}
+			if s == .Missing {missing += 1}
+		}
+		tw := (width - GAP * 3) / 4
+		ty := im.GetCursorScreenPos().y
+		svc_text, svc_col := state_pill(setup.comps[.Service].state)
+		ntf_text, ntf_col := state_pill(setup.comps[.Notifications].state)
+		tiles := [4]struct {
+			icon, caption, value, sub: string,
+			accent:                    u32,
+			progress:                  f32,
+		} {
+			{ICON_CHECK, "Set up", fmt.tprintf("%d / %d", done, applicable), "components", C_BLUE, applicable > 0 ? f32(done) / f32(applicable) : 0},
+			{ICON_POWER, "Daemon", svc_text, "", svc_col, -1},
+			{ICON_BELL, "Notifications", ntf_text, "", ntf_col, -1},
+			attention > 0 ? {ICON_ALERT, "Needs attention", fmt.tprintf("%d", attention), attention == 1 ? "component" : "components", C_ORANGE, -1} : {ICON_HOME, "Not installed", fmt.tprintf("%d", missing), "optional", C_MUTED, -1},
+		}
+		tile_h: f32 = 0
+		for t, i in tiles {
+			im.SetCursorScreenPos({p.x + f32(i) * (tw + GAP), ty})
+			stat_tile(fmt.tprintf("tile:%d", i), tw, t.icon, t.caption, t.value, t.sub, t.accent, t.progress)
+			tile_h = max(tile_h, im.GetItemRectSize().y)
+		}
+		im.SetCursorScreenPos({p.x, ty + tile_h + 18})
 
-			// Title row: icon, title, state pill; actions on the right.
-			draw_text(fonts.ui, 19, {cp.x - 1, cp.y - 1}, col32(inf.accent), inf.icon)
-			draw_text(fonts.bold, 16, {cp.x + 26, cp.y}, col32(C_TEXT), inf.title)
-			tw := measure(fonts.bold, 16, inf.title).x
-			stext, scol := state_pill(c.state)
-			ssz := measure(fonts.bold, 11, stext)
-			sx := cp.x + 36 + tw
-			im.DrawList_AddRectFilled(dl(), {sx, cp.y + 1}, {sx + ssz.x + 14, cp.y + 19}, col32(scol, 0.16), 9)
-			draw_text(fonts.bold, 11, {sx + 7, cp.y + 3}, col32(scol), stext)
-
-			acts := actions_for(id, c.state)
-			ax := cp.x + inner
-			if c.busy {
-				w := measure(fonts.ui, SZ_SMALL, "working…").x
-				draw_text(fonts.ui, SZ_SMALL, {ax - w, cp.y + 3}, col32(C_ORANGE), "working…")
-			} else {
-				for i := len(acts) - 1; i >= 0; i -= 1 {
-					a := acts[i]
-					ax -= pill_width(a.label)
-					im.SetCursorScreenPos({ax, cp.y - 4})
-					if pill_button(fmt.tprintf("##%v:%d", id, i), a.label, inf.accent, a.primary) {run = a.run}
-					ax -= 8
-				}
+		// ---- Component columns ------------------------------------------------
+		// A card ends with its own 6px spacing; the empty Dummy after each adds the rest.
+		im.PushStyleVarImVec2(.ItemSpacing, {10, GAP - 6})
+		cw := (width - GAP * 2) / 3
+		cy := im.GetCursorScreenPos().y
+		bottom := cy
+		for col, ci in COLUMNS {
+			x := p.x + f32(ci) * (cw + GAP)
+			im.SetCursorScreenPos({x, cy})
+			im.BeginGroup()
+			draw_text(fonts.bold, SZ_SMALL, {x + 2, cy}, col32(C_FAINT), strings.to_upper(col.title, context.temp_allocator))
+			im.Dummy({cw, 14})
+			for id in col.ids {
+				if r := comp_card(id, &setup.comps[id], cw); r != nil {run = r}
+				im.Dummy({cw, 0})
 			}
-			im.SetCursorScreenPos(cp)
-			im.Dummy({inner, 24})
-
-			wrapped(fonts.ui, SZ_BODY, C_MUTED, inf.desc, inner)
-			for line in c.detail {label(fonts.mono, SZ_SMALL, col32(C_FAINT), line)}
-			if c.message != "" {
-				label(fonts.ui, SZ_SMALL, col32(c.msg_ok ? C_GREEN : C_RED), fmt.tprintf("%s %s", c.msg_ok ? ICON_CHECK : ICON_ALERT, c.message))
-			}
-			if inf.preview != "" {
-				lbl := show_preview[id] ? "Hide file" : "Show file"
-				lp := im.GetCursorScreenPos()
-				if im.InvisibleButton(cstr(fmt.tprintf("##prev:%v", id)), measure(fonts.ui, SZ_SMALL, lbl) + {0, 2}) {show_preview[id] = !show_preview[id]}
-				if im.IsItemHovered() {im.SetMouseCursor(.Hand)}
-				draw_text(fonts.ui, SZ_SMALL, lp, col32(inf.accent, 0.9), lbl)
-				if show_preview[id] {
-					text := strings.trim_space(inf.preview)
-					im.PushStyleColorImVec4(.ChildBg, rgba(0x12151b))
-					im.PushStyleVarImVec2(.WindowPadding, {12, 10})
-					im.BeginChild(cstr(fmt.tprintf("##code:%v", id)), {inner, 0}, {.AutoResizeY, .AlwaysUseWindowPadding}, {})
-					wrapped(fonts.mono, SZ_SMALL, C_TEXT, text, inner - 24)
-					im.EndChild()
-					im.PopStyleVar()
-					im.PopStyleColor()
-				}
-			}
-			card_end()
+			im.EndGroup()
+			bottom = max(bottom, im.GetItemRectMax().y)
 		}
 		im.PopStyleVar()
+		im.SetCursorScreenPos({p.x, bottom})
 	}
 	if run != nil {
 		run()

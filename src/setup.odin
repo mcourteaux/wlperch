@@ -626,7 +626,7 @@ run_setup :: proc() {
 	if !platform_init() {os.exit(1)}
 	im_init()
 	setup_check()
-	if !platform_open_window("wlperch setup", "wlperch-setup", 820, 860) {
+	if !platform_open_window("wlperch setup", "wlperch-setup", 1180, 880) {
 		log.error("couldn't open the setup window")
 		os.exit(1)
 	}
