@@ -677,6 +677,7 @@ loop_iteration :: proc() {
 		gl_down(proc() {
 			fade_reset()
 			notif_textures_reset()
+			emoji_textures_reset()
 			if imgl_ready {
 				imgl.Shutdown()
 				imgl_ready = false

@@ -937,16 +937,42 @@ test_menu_rewrite :: proc(t: ^testing.T) {
 		{"bindsym $mod+d exec pkill fuzzel || fuzzel\n", "bindsym $mod+d exec pkill fuzzel || wlperch toggle launch --center\n"},
 		{"bindsym $mod+d exec /usr/bin/tofi-drun --drun-launch=true\n", "bindsym $mod+d exec wlperch toggle launch --center\n"},
 		{"bindsym $mod+r exec 'dmenu_run -i'\n", "bindsym $mod+r exec 'wlperch toggle run --center'\n"},
+		// Emoji pickers open the emoji panel.
+		{"set $emoji ~/.config/wofi-emoji/wofi-emoji\n", "set $emoji wlperch toggle emoji --center\n"},
+		{"bindsym $mod+period exec rofi -modi emoji -show emoji\n", "bindsym $mod+period exec wlperch toggle emoji --center\n"},
 		// Left alone: comments, dmenu-style pickers, window switchers, other words.
 		{"# set $menu wofi --show drun\n", "# set $menu wofi --show drun\n"},
 		{"bindsym $mod+v exec cliphist list | wofi --dmenu | cliphist decode | wl-copy\n", "bindsym $mod+v exec cliphist list | wofi --dmenu | cliphist decode | wl-copy\n"},
 		{"bindsym $mod+Tab exec rofi -show window\n", "bindsym $mod+Tab exec rofi -show window\n"},
-		{"set $emoji ~/.config/wofi-emoji/wofi-emoji\n", "set $emoji ~/.config/wofi-emoji/wofi-emoji\n"},
 		{"for_window [app_id=\"wofi\"] floating enable\n", "for_window [app_id=\"wofi\"] floating enable\n"},
 	}
 	for c in cases {
 		got, _ := menu_rewrite(c[0])
 		testing.expect_value(t, got, c[1])
+	}
+}
+
+@(test)
+test_emoji_search :: proc(t: ^testing.T) {
+	emoji_load()
+	testing.expect(t, len(emoji_table) > 3000)
+	best :: proc(words: []string) -> string {
+		tone := emoji_tone_asked(words)
+		top: f32 = -1
+		ch := ""
+		for &e in emoji_table {
+			if s := emoji_score(&e, words, tone); s > top {top, ch = s, e.ch}
+		}
+		return ch
+	}
+	testing.expect_value(t, best({"thumbs", "up"}), "👍")
+	testing.expect_value(t, best({"thumbs", "up", "dark"}), "👍🏿")
+	testing.expect_value(t, best({"party"}), "🎉") // party popper; partying face next
+	testing.expect_value(t, best({"red", "heart"}), "❤️")
+	// Variants stay out of a plain search; their base knows it has them.
+	for &e in emoji_table {
+		if e.ch == "👍🏿" {testing.expect(t, emoji_score(&e, {"thumbs"}, false) < 0)}
+		if e.ch == "👍" {testing.expect(t, e.tones)}
 	}
 }
 

@@ -137,10 +137,11 @@ panels_load :: proc(src: string, m: ini.Map) {
 	}
 }
 
-// The launcher's key bindings ("toggle launch", "toggle run") work with any
-// panel set: add the built-in panels when the config doesn't define them.
+// The launcher's key bindings ("toggle launch", "toggle run", "toggle
+// emoji") work with any panel set: add the built-in panels when the config
+// doesn't define them.
 panels_ensure_launcher :: proc() {
-	for name in ([]string{"launch", "run"}) {
+	for name in ([]string{"launch", "run", "emoji"}) {
 		if panel_find(name) >= 0 {continue}
 		p := Panel{name = strings.clone(name), width = 680, tab = false}
 		col: [dynamic]string

@@ -356,7 +356,8 @@ To wire it up by hand, see the commented lines in
 ### Launcher
 
 `wlperch toggle launch --center` is an app launcher in place of rofi, wofi or
-fuzzel; `wlperch toggle run --center` runs commands, like their run mode.
+fuzzel; `wlperch toggle run --center` runs commands, like their run mode, and
+`wlperch toggle emoji --center` is an emoji picker.
 
 - **Apps:** the desktop entries in `~/.local/share/applications` and the
   `applications` folder of every `$XDG_DATA_DIRS` entry (Flatpak's too), with
@@ -381,6 +382,15 @@ fuzzel; `wlperch toggle run --center` runs commands, like their run mode.
   after it, or the typed line through `sh`; Shift+Enter runs it in a terminal;
   Tab completes the program name. With nothing matching an app search, Enter
   runs the text as a command.
+- **Emoji:** start with `:` (`:thumbs`), or open the emoji panel. Words
+  match the emoji's name and keywords (`:party`, `:heart red`); add `dark`,
+  `light`, `medium`… for skin tones. Enter types the emoji into the window
+  you were in (with `wtype`; without it, Enter copies), Shift+Enter or Ctrl+C
+  copies it. Emoji you use come first. A plain search also lists up to three
+  emoji whose name starts with a typed word, after the apps. The table
+  (Unicode 15.1 names and groups, emojilib keywords) is built into wlperch;
+  `tools/emojigen` regenerates it, see `assets/emoji/LICENSE.txt`. Pictures
+  come from your colour emoji font (Noto Color Emoji) through Pango.
 - **Keys:** Up/Down (or Ctrl+N/P, Ctrl+J/K), Page Up/Down, Enter, Escape.
 - **Terminal:** apps with `Terminal=true` and Shift+Enter use `[launcher]
   terminal`, else `$TERMINAL`, sway's `$term`, or the first of foot, kitty,
@@ -393,14 +403,15 @@ keys over:
   become wlperch's: `rofi -show drun|combi`, `wofi --show drun`, `fuzzel`,
   `tofi-drun` and `j4-dmenu-desktop` open `launch`; `rofi -show run`,
   `wofi --show run`, `tofi-run`, `bemenu-run`, `dmenu_run` and `wmenu-run`
-  open `run`; `rofi -show calc` opens the calculator. So
+  open `run`; `rofi -show calc` opens the calculator; emoji pickers
+  (`rofi -show emoji`, `wofi-emoji`, `rofimoji`, `bemoji`) open `emoji`. So
   `set $menu wofi --show drun` becomes `set $menu wlperch toggle launch --center`.
 - **What stays:** dmenu-style uses (`cliphist list | wofi --dmenu`), window
-  switchers (`rofi -show window`), emoji pickers and comments.
+  switchers (`rofi -show window`) and comments.
 - **Backups:** each file is copied to `~/.local/share/wlperch/launcher-backup/`
   first. Symlinked dotfiles are edited through the link.
 - **Without a launcher:** setup adds `config.d/wlperch-launcher.conf` with
-  `$mod+d` and `$mod+Shift+d`.
+  `$mod+d`, `$mod+Shift+d` and `$mod+period` (emoji).
 - **Applying it:** setup reloads sway. **Try it** opens the launcher;
   **Switch back** restores the copies.
 
@@ -602,6 +613,7 @@ wlperch media play-pause # also play, pause, next, previous [player]
 wlperch toggle calc     # the calculator popup (bind it to a key)
 wlperch toggle launch --center  # the app launcher (apps, sums, panels)
 wlperch toggle run --center     # the launcher's command mode
+wlperch toggle emoji --center   # the emoji picker
 wlperch calc '0x1f * 3' # print a result as decimal, hex, octal, binary, f64/f32 bits, hex float
 wlperch notify dnd [on|off]  # do not disturb (no argument: toggle)
 wlperch notify clear    # empty the notification history
@@ -750,7 +762,7 @@ width = 560
 tab = false                   # no tab in the tab strip
 columns = calculator
 
-[panel.launch]                # wlperch toggle launch (the run panel is alike)
+[panel.launch]                # wlperch toggle launch (the run and emoji panels are alike)
 width = 680
 tab = false
 columns = launcher

@@ -116,4 +116,5 @@ ICON_CIRCLE_MEDIUM :: "\U000F09DE" // md-circle_medium
 ICON_APPS :: "\U000F003B" // md-apps
 ICON_MAGNIFY :: "\U000F0349" // md-magnify
 ICON_CONSOLE :: "\U000F018D" // md-console
+ICON_EMOTICON :: "\U000F01F5" // md-emoticon-happy-outline
 ICON_RETURN :: "\U000F0311" // md-keyboard_return

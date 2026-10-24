@@ -1,7 +1,8 @@
 // Launcher module: a search field over apps (desktop entries), wlperch's
 // panels and the calculator; "> command" runs a command (the "run" panel
-// starts with it). Keyboard first: type, arrows (or Ctrl+N/P, Ctrl+J/K),
-// Enter; Tab completes a command or takes a sum to the calculator.
+// starts with it), ":name" searches emoji (the "emoji" panel does without the
+// colon). Keyboard first: type, arrows (or Ctrl+N/P, Ctrl+J/K), Enter; Tab
+// completes a command or takes a sum to the calculator.
 package main
 
 import "base:runtime"
@@ -19,6 +20,7 @@ Row_Kind :: enum {
 	Panel, // one of wlperch's panels
 	Bin,   // a program on $PATH (run mode)
 	Shell, // the typed command line
+	Emoji, // emoji_table[index]
 }
 
 @(private = "file")
@@ -59,6 +61,11 @@ FIELD_H :: f32(50)
 ICON_SZ :: f32(32)
 @(private = "file")
 ICON_LOADS_PER_FRAME :: 4
+@(private = "file")
+EMOJI_SZ :: f32(38)
+// Emoji also listed in a plain search ("heart"), after the apps.
+@(private = "file")
+EMOJI_IN_SEARCH :: 3
 
 @(private = "file")
 ui_text :: proc() -> string {return string(cstring(&lui.buf[0]))}
@@ -96,6 +103,15 @@ run_mode :: proc(q: string) -> (cmd: string, ok: bool) {
 	return "", false
 }
 
+// The emoji panel, or a query starting with ":": emoji instead of apps.
+@(private = "file")
+emoji_mode :: proc(q: string) -> (query: string, ok: bool) {
+	t := strings.trim_left_space(q)
+	if strings.has_prefix(t, ":") {return strings.trim_space(t[1:]), true}
+	if len(panels) > 0 && cur_panel().name == "emoji" {return strings.trim_space(t), true}
+	return "", false
+}
+
 // A sum worth showing: an operator, a digit next to letters (2pi) or "=".
 @(private = "file")
 looks_like_math :: proc(q: string) -> (expr: string, ok, literal: bool) {
@@ -116,6 +132,26 @@ build_rows :: proc(q: string) {
 	clear(&lui.rows)
 	lui.calc_ok = false
 	now := time.to_unix_seconds(time.now())
+
+	if eq, ok := emoji_mode(q); ok {
+		emoji_load()
+		words := strings.fields(strings.to_lower(eq, context.temp_allocator), context.temp_allocator)
+		tone := emoji_tone_asked(words)
+		for &e, i in emoji_table {
+			s: f32
+			if len(words) == 0 {
+				if e.tone {continue}
+			} else {
+				s = emoji_score(&e, words, tone)
+				if s < 0 {continue}
+			}
+			append(&lui.rows, Row{kind = .Emoji, index = i, score = s + launcher_frecency(emoji_use_id(&e), now)})
+		}
+		// Stable: ties keep Unicode's order (smileys first, then people, …).
+		slice.stable_sort_by(lui.rows[:], proc(a, b: Row) -> bool {return a.score > b.score})
+		if len(words) > 0 && len(lui.rows) > 300 {resize(&lui.rows, 300)}
+		return
+	}
 
 	if cmd, ok := run_mode(q); ok {
 		bins := launcher_bins()
@@ -181,6 +217,7 @@ build_rows :: proc(q: string) {
 			if s >= 0 {append(&lui.rows, Row{kind = .Panel, index = i, score = s * 0.9})}
 		}
 	}
+	emoji_rows := emoji_in_search(words, q)
 	rest := lui.rows[start:]
 	if len(words) == 0 {
 		// Most used first, then by name.
@@ -197,9 +234,38 @@ build_rows :: proc(q: string) {
 		ordered_remove(&lui.rows, calc_row)
 		inject_at(&lui.rows, 1, r)
 	}
+	// A few emoji whose name has the word, after everything else.
+	append(&lui.rows, ..emoji_rows)
 	if len(words) > 0 && len(lui.rows) == 0 {
 		append(&lui.rows, Row{kind = .Shell, text = strings.trim_space(q)})
 	}
+}
+
+// Emoji for a plain search: only names with the words at a word start
+// ("heart", "thumbs up"), at most EMOJI_IN_SEARCH, so apps stay on top.
+@(private = "file")
+emoji_in_search :: proc(words: []string, q: string) -> []Row {
+	out: [dynamic]Row
+	out.allocator = context.temp_allocator
+	if len(words) == 0 || len(strings.trim_space(q)) < 3 {return nil}
+	emoji_load()
+	now := time.to_unix_seconds(time.now())
+	for &e, i in emoji_table {
+		if e.tone {continue}
+		s: f32 = 0
+		for w in words {
+			ws := fuzzy_score(w, e.name, false)
+			if ws < 85 { // the start of the name or of one of its words
+				s = -1
+				break
+			}
+			s += ws
+		}
+		if s < 0 {continue}
+		append(&out, Row{kind = .Emoji, index = i, score = s + launcher_frecency(emoji_use_id(&e), now)})
+	}
+	slice.stable_sort_by(out[:], proc(a, b: Row) -> bool {return a.score > b.score})
+	return out[:min(len(out), EMOJI_IN_SEARCH)]
 }
 
 panel_label :: proc(p: Panel) -> string {
@@ -235,11 +301,14 @@ activate :: proc(r: Row, terminal, alt: bool) {
 	case .Shell:
 		hide_requested = true
 		launcher_run(r.text, terminal)
+	case .Emoji:
+		emoji_insert(&emoji_table[r.index], copy_only = terminal)
 	}
 }
 
 draw_launcher :: proc(w: f32) {
 	p := cur_panel()
+	emoji_pictures_trim()
 	if ui.shown_frames <= 1 {
 		launcher_refresh()
 		set_text(p.name == "run" ? "> " : "")
@@ -268,6 +337,7 @@ draw_launcher :: proc(w: f32) {
 
 	// Search field, with a magnifier (or prompt) inside on the left.
 	_, running := run_mode(ui_text())
+	_, emojis := emoji_mode(ui_text())
 	top := im.GetCursorScreenPos()
 	im.PushFontFloat(fonts.ui, 18)
 	im.PushStyleVarImVec2(.FramePadding, {46, (FIELD_H - 22) / 2})
@@ -278,16 +348,16 @@ draw_launcher :: proc(w: f32) {
 	im.PushStyleVar(.FrameBorderSize, 1)
 	ctx := context
 	im.SetNextItemWidth(w)
-	hint: cstring = p.name == "run" ? "Command to run…" : "Search apps, = calculate, > run a command"
+	hint: cstring = p.name == "run" ? "Command to run…" : p.name == "emoji" ? "Search emoji…" : "Search apps, = calculate, > run a command, : emoji"
 	entered := im.InputTextWithHint("##launch", hint, cstring(&lui.buf[0]), uint(len(lui.buf)), {.EnterReturnsTrue, .CallbackAlways, .CallbackHistory, .CallbackCompletion}, input_cb, &ctx)
 	active := im.IsItemActive()
 	if active {im.SetNavCursorVisible(false)}
 	im.PopStyleVar(3)
 	im.PopStyleColor(3)
 	im.PopFont()
-	accent: u32 = running ? C_GREEN : C_BLUE
+	accent: u32 = running ? C_GREEN : emojis ? C_YELLOW : C_BLUE
 	if active {im.DrawList_AddRect(dl(), top, {top.x + w, top.y + FIELD_H}, col32(accent, 0.7), 12, 1.5)}
-	icon := running ? ICON_CONSOLE : ICON_MAGNIFY
+	icon := running ? ICON_CONSOLE : emojis ? ICON_EMOTICON : ICON_MAGNIFY
 	isz := measure(fonts.ui, 20, icon)
 	draw_text(fonts.ui, 20, {top.x + 16, top.y + (FIELD_H - isz.y) / 2}, col32(active ? accent : C_MUTED), icon)
 
@@ -305,6 +375,10 @@ draw_launcher :: proc(w: f32) {
 	if io.KeyCtrl {
 		if im.IsKeyPressed(.N) || im.IsKeyPressed(.J) {lui.move += 1}
 		if im.IsKeyPressed(.P) || im.IsKeyPressed(.K) {lui.move -= 1}
+		// Ctrl+C on an emoji: copy it (the field's own copy has nothing to copy).
+		if im.IsKeyPressed(.C) && lui.sel < n && lui.rows[lui.sel].kind == .Emoji {
+			emoji_insert(&emoji_table[lui.rows[lui.sel].index], copy_only = true)
+		}
 	}
 	if im.IsKeyPressed(.PageDown) {lui.move += ROWS}
 	if im.IsKeyPressed(.PageUp) {lui.move -= ROWS}
@@ -366,7 +440,7 @@ draw_launcher :: proc(w: f32) {
 	d := dl()
 	loads := 0
 	if n == 0 {
-		msg := running ? "Type a command; Enter runs it, Shift+Enter in a terminal." : len(launcher.apps) == 0 ? "No applications found." : "Nothing matches."
+		msg := running ? "Type a command; Enter runs it, Shift+Enter in a terminal." : emojis ? "No emoji matches." : len(launcher.apps) == 0 ? "No applications found." : "Nothing matches."
 		msz := measure(fonts.ui, SZ_BODY, msg)
 		draw_text(fonts.ui, SZ_BODY, {list.x + (w - msz.x) / 2, list.y + 40}, col32(C_FAINT), msg)
 	}
@@ -397,13 +471,17 @@ draw_launcher :: proc(w: f32) {
 	// Footer: what the keys do for the selected row, and a count.
 	im.Dummy({1, 2})
 	fp := im.GetCursorScreenPos()
-	keys := "↵ open   Tab next   > run a command   = calculate"
+	keys := "↵ open   Tab next   > run a command   = calculate   : emoji"
 	if lui.sel < n {
 		#partial switch lui.rows[lui.sel].kind {
 		case .Calc:          keys = "↵ copy   Tab or Ctrl+↵ open in the calculator"
 		case .Bin:           keys = "↵ run   ⇧↵ in a terminal   Tab complete"
 		case .Shell:         keys = "↵ run   ⇧↵ in a terminal"
 		case .Panel:         keys = "↵ open the panel"
+		case .Emoji:
+			e := &emoji_table[lui.rows[lui.sel].index]
+			keys = emoji_can_type() ? "↵ type it   ⇧↵ or Ctrl+C copy" : "↵ copy (install wtype to type it)"
+			if e.tones {keys = strings.concatenate({keys, "   + “dark”, “light”… skin tones"}, context.temp_allocator)}
 		}
 	}
 	draw_text(fonts.ui, SZ_SMALL, {fp.x + 2, fp.y}, col32(C_FAINT), keys)
@@ -464,6 +542,26 @@ draw_row :: proc(r: Row, pos: Vec2, w: f32, selected: bool, loads: ^int) -> bool
 		glyph_badge(ip, ICON_CONSOLE, C_GREEN)
 		title = r.text
 		sub = "run in a shell"
+	case .Emoji:
+		e := &emoji_table[r.index]
+		pic, cached := emoji_cached(e)
+		if !cached && loads^ < ICON_LOADS_PER_FRAME {
+			loads^ += 1
+			pic = emoji_picture(e)
+			cached = true
+		} else if !cached {
+			loads^ += 1
+		}
+		ep := Vec2{pos.x + (ICON_SZ - EMOJI_SZ) / 2, pos.y + (ROW_H - 2 - EMOJI_SZ) / 2}
+		if pic != nil {
+			im.DrawList_AddImage(d, im.TextureRef{_TexID = icon_texture(pic)}, ep, {ep.x + EMOJI_SZ, ep.y + EMOJI_SZ})
+		} else if cached {
+			// No colour emoji font (or no Pango): the UI font's attempt.
+			gsz := measure(fonts.ui, 24, e.ch)
+			draw_text(fonts.ui, 24, {ip.x + (ICON_SZ - gsz.x) / 2, ip.y + (ICON_SZ - gsz.y) / 2}, col32(C_TEXT), e.ch)
+		}
+		title = strings.concatenate({strings.to_upper(e.name[:1], context.temp_allocator), e.name[1:]}, context.temp_allocator)
+		sub = e.keywords != "" ? strings.concatenate({e.group, " · ", e.keywords}, context.temp_allocator) : e.group
 	case .Calc:
 		glyph_badge(ip, ICON_CALC, C_ORANGE)
 		formats := calc_formats(lui.calc_v)

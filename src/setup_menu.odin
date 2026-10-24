@@ -2,9 +2,10 @@
 // fuzzel, tofi, bemenu, dmenu and j4-dmenu-desktop over to wlperch's launcher
 // panels, and back.
 //
-// Only app / command launching is switched (rofi -show drun|run|combi|calc,
-// wofi --show drun|run, …); dmenu-style uses (`… | wofi --dmenu`), window
-// switchers and emoji pickers stay. The sway config and config.d/* are
+// App / command launching (rofi -show drun|run|combi|calc, wofi --show
+// drun|run, …) and emoji pickers (rofi -show emoji, wofi-emoji, rofimoji,
+// bemoji) are switched; dmenu-style uses (`… | wofi --dmenu`) and window
+// switchers stay. The sway config and config.d/* are
 // rewritten with backups in ~/.local/share/wlperch/launcher-backup/ (see
 // config_switch.odin); with no launcher bound anywhere, a
 // config.d/wlperch-launcher.conf with Mod+D / Mod+Shift+D is written instead.
@@ -21,11 +22,13 @@ MENU_CONF :: `# wlperch launcher (written by wlperch setup; "Switch back" remove
 # Apps, panels and sums; Shift: run a command.
 bindsym $mod+d exec wlperch toggle launch --center
 bindsym $mod+Shift+d exec wlperch toggle run --center
+bindsym $mod+period exec wlperch toggle emoji --center
 `
 
 MENU_LAUNCH :: "wlperch toggle launch --center"
 MENU_RUN :: "wlperch toggle run --center"
 MENU_CALC :: "wlperch toggle calc --center"
+MENU_EMOJI :: "wlperch toggle emoji --center"
 
 MENU_SWITCH :: Config_Switch {
 	backup  = "launcher-backup",
@@ -71,6 +74,7 @@ menu_replacement :: proc(prog: string, args: []string) -> string {
 		case "drun", "combi": return MENU_LAUNCH
 		case "run":           return MENU_RUN
 		case "calc":          return MENU_CALC
+		case "emoji":         return MENU_EMOJI
 		}
 	case "wofi":
 		switch mode {
@@ -81,12 +85,14 @@ menu_replacement :: proc(prog: string, args: []string) -> string {
 		return MENU_LAUNCH
 	case "tofi-run", "bemenu-run", "dmenu_run", "wmenu-run":
 		return MENU_RUN
+	case "wofi-emoji", "rofimoji", "bemoji":
+		return MENU_EMOJI
 	}
 	return ""
 }
 
 @(private = "file")
-MENU_PROGS := [?]string{"rofi", "wofi", "fuzzel", "tofi-drun", "tofi-run", "j4-dmenu-desktop", "bemenu-run", "dmenu_run", "wmenu-run"}
+MENU_PROGS := [?]string{"rofi", "wofi", "fuzzel", "tofi-drun", "tofi-run", "j4-dmenu-desktop", "bemenu-run", "dmenu_run", "wmenu-run", "wofi-emoji", "rofimoji", "bemoji"}
 
 // Rewrite launcher commands in sway config text:
 //   set $menu wofi --show drun        -> set $menu wlperch toggle launch --center
@@ -113,6 +119,7 @@ menu_rewrite :: proc(text: string, allocator := context.temp_allocator) -> (out:
 			word := line[start:i]
 			prog := word[strings.last_index_byte(word, '/') + 1:]
 			if !slice_has(MENU_PROGS[:], prog) {continue}
+			if start > 0 && line[start - 1] == '~' {start -= 1} // "~/.config/wofi-emoji/wofi-emoji"
 			// The shell command it belongs to: from the last separator.
 			seg := line[:start]
 			quote: u8 = 0
@@ -189,7 +196,7 @@ menu_setup_check :: proc(p: ^Component, add_detail: proc(c: ^Component, line: st
 		add_detail(p, "your sway config already opens wlperch's launcher")
 	case:
 		p.state = .Missing
-		add_detail(p, fmt.tprintf("no launcher bound; adds %s (Mod+D, Mod+Shift+D)", spec.new_path))
+		add_detail(p, fmt.tprintf("no launcher bound; adds %s (Mod+D, Mod+Shift+D, Mod+.)", spec.new_path))
 	}
 }
 

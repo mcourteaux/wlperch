@@ -324,6 +324,11 @@ width = 680
 tab = false
 columns = launcher
 
+[panel.emoji]
+width = 680
+tab = false
+columns = launcher
+
 [panel.github]
 title = GitHub
 width = 1120
