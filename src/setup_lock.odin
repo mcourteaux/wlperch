@@ -129,6 +129,19 @@ lock_setup_check :: proc(p: ^Component, add_detail: proc(c: ^Component, line: st
 		p.state = .Missing
 		add_detail(p, fmt.tprintf("no locker set up; adds %s", spec.new_path))
 	}
+	// The countdown before the idle lock ([lock] countdown_seconds) follows swayidle.
+	if config.lock_countdown_seconds > 0 {
+		_, secs := session_lock_state()
+		plan := countdown_plan(secs, config.lock_idle_seconds, config.lock_countdown_seconds)
+		switch {
+		case plan.length > 0:
+			add_detail(p, fmt.tprintf("%d s countdown before %s locks after %d s idle", plan.length, plan.self_lock ? "wlperch" : "swayidle", plan.lock_after))
+		case plan.lock_after > 0:
+			add_detail(p, fmt.tprintf("no countdown: the idle lock comes after only %d s", plan.lock_after))
+		case:
+			add_detail(p, "no countdown: swayidle has no idle lock (see [lock] idle_lock_seconds)")
+		}
+	}
 }
 
 @(private = "file")

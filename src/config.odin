@@ -76,6 +76,8 @@ Config :: struct {
 	lock_bluetooth:     bool,
 
 	lock_background_light: u32, // used instead with the light theme (no image)
+	lock_countdown_seconds: int, // overlay before the idle lock; 0 = off (idle_countdown.odin)
+	lock_idle_seconds:      int, // > 0: wlperch itself locks after this much idle time
 
 	// [launcher]
 	launcher_terminal:  string, // prefix for Terminal=true apps; "" = detect
@@ -210,6 +212,17 @@ blur_animate_from = 10
 show_notifications = true
 show_media = true
 show_bluetooth = true
+# Countdown before the screen locks for inactivity: the screen dims from
+# its edges and a ring counts down; any key or mouse move cancels it (and
+# goes to your app as usual). 0 = off. It follows the lock timeout of
+# swayidle (e.g. "timeout 300 'wlperch lock -f'": shown from 285 s) and,
+# like that lock, waits while an idle inhibitor (a playing video) is active.
+countdown_seconds = 15
+# 0 = swayidle locks on idle (nothing to change in its config). A number of
+# seconds: wlperch locks by itself after that much idle time, with the
+# countdown before it; for setups without an idle lock in swayidle. Needs
+# the daemon running; a swayidle lock that comes earlier still wins.
+idle_lock_seconds = 0
 
 [launcher]
 # The app launcher: "wlperch toggle launch --center" (apps, calculator,
@@ -532,6 +545,9 @@ config_load :: proc() {
 	c.lock_bluetooth = parse_bool(get(m, defaults, "lock", "show_bluetooth"), true)
 
 	c.lock_background_light = parse_hex_color(get(m, defaults, "lock", "background_light"), 0xe9ebf0)
+	c.lock_countdown_seconds = parse_int_lim(get(m, defaults, "lock", "countdown_seconds"), LIM_LOCK_COUNTDOWN)
+	c.lock_idle_seconds = parse_int_lim(get(m, defaults, "lock", "idle_lock_seconds"), LIM_LOCK_IDLE)
+	if c.lock_idle_seconds > 0 {c.lock_idle_seconds = max(c.lock_idle_seconds, 10)}
 
 	c.launcher_terminal = strings.clone(get(m, defaults, "launcher", "terminal"))
 
@@ -687,6 +703,8 @@ LIM_LOCK_DIM :: Float_Limits{0, 1, 0.35}
 LIM_IDLE_SECONDS :: Int_Limits{5, 86400, 300}
 LIM_BAR_HEIGHT :: Int_Limits{20, 80, 34}
 LIM_BAR_TRAY :: Int_Limits{12, 48, 20}
+LIM_LOCK_COUNTDOWN :: Int_Limits{0, 120, 15}
+LIM_LOCK_IDLE :: Int_Limits{0, 86400, 0}
 
 parse_int_lim :: proc(s: string, l: Int_Limits) -> int {
 	return clamp(strconv.parse_int(strings.trim_space(s)) or_else l.fallback, l.lo, l.hi)

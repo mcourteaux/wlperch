@@ -14,7 +14,7 @@ import "core:sys/linux"
 import "core:sys/posix"
 
 @(private = "file")
-STATE_MAGIC :: u32(0x57_4c_57_37) // "WLW7" (bump when Saved_State changes)
+STATE_MAGIC :: u32(0x57_4c_57_38) // "WLW8" (bump when Saved_State changes)
 
 @(private = "file")
 Saved_State :: struct {
@@ -26,6 +26,7 @@ Saved_State :: struct {
 	vram:  History,
 	cpu_temp, gpu_temp, cpu_power, gpu_power: History,
 	mem_low, mem_dismissed: bool, // low-memory warning state
+	idle_since: i64, // monotonic ns of the last input when away (idle countdown), 0 = unknown
 }
 
 @(private = "file")
@@ -54,6 +55,7 @@ reexec_self :: proc(show_after := false) {
 		state.gpu_power = thermals.gpu_power_h
 	}
 	state.mem_low, state.mem_dismissed = memwarn_saved()
+	state.idle_since = countdown_saved()
 
 	mfd, err := linux.memfd_create("wlperch-state", {})
 	if err != .NONE {
@@ -146,6 +148,7 @@ resume_from_args :: proc() -> (ipc_fd: posix.FD, ok: bool, show: bool) {
 		thermals.gpu_power_h = state.gpu_power
 		perf_resumed = true
 		memwarn_restore(state.mem_low, state.mem_dismissed)
+		countdown_restore(state.idle_since)
 	}
 	reap_children()
 	return posix.FD(ifd), true, show

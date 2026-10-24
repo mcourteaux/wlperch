@@ -398,6 +398,28 @@ That new locker takes over the lock, and its password unlocks the session.
 Unlike swaylock, there is no "unlock on SIGUSR1", so `loginctl unlock-session`
 doesn't unlock it.
 
+**Countdown before the idle lock.** `[lock] countdown_seconds` (15 by
+default, 0 = off) seconds before the screen locks for inactivity, every
+monitor dims from its edges inwards and a card in the middle counts down in
+a draining ring. Move the mouse or press a key and it disappears; that
+input goes to your app as usual, because the overlay never takes the
+keyboard or the pointer.
+- **Timing:** swayidle still does the locking, and nothing in its config
+  changes. The daemon reads the lock timeout from this session's running
+  swayidle (`timeout 300 'wlperch lock -f'` shows the countdown from 285 s)
+  and gets told by the compositor when you've been idle that long. Both
+  count from the same last input and both wait while an idle inhibitor is
+  active (a playing video), so the countdown reaches 0 as the screen locks.
+  If the daemon isn't running, the screen still locks, without the
+  countdown. **Setup → Lock screen** shows what it found.
+- **Without an idle lock in swayidle** (only `before-sleep`, say), set
+  `[lock] idle_lock_seconds` to make wlperch lock by itself after that many
+  idle seconds, with the countdown before it. This needs the daemon
+  running. If swayidle would lock earlier, its lock still wins.
+- **Not shown** while the screen is locked, and a lock that comes another
+  way (the lock key, `before-sleep`) ends it. `wlperch countdown-preview
+  [seconds]` shows it without locking.
+
 **Setup → Lock screen → Use wlperch lock** switches an existing swaylock
 setup over:
 - **What changes:** every `swaylock` command in your sway config,

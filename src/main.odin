@@ -137,6 +137,7 @@ show_popup :: proc() {
 	if platform_show(placement, w, h) {
 		plat_visible_flag = true
 		app.show_time = time.tick_now()
+		countdown_on_popup_shown()
 		on_show()
 	}
 }
@@ -146,6 +147,7 @@ hide_popup :: proc() {
 	platform_hide()
 	plat_visible_flag = false
 	hidden_since = time.tick_now()
+	countdown_on_popup_hidden()
 	on_hide()
 }
 
@@ -288,7 +290,10 @@ handle_command :: proc(line: string) -> string {
 			return "usage: notify [status|dnd [on|off]|clear|dismiss]\n"
 		}
 	case "lockinfo":
+		countdown_on_locked()
 		return lock_info_reply()
+	case "countdown-preview":
+		return countdown_preview(len(f) > 1 ? strconv.parse_int(f[1]) or_else 0 : 0)
 	case "theme":
 		return theme_command(f[1:])
 	case "daemon", "ping":
@@ -435,6 +440,7 @@ main :: proc() {
 	tracker_init()
 	placeholders_init()
 	notifications_start()
+	countdown_init()
 	log.debugf("services_start took %v, rss %d kB", time.tick_since(t0), rss_kb())
 
 	if resume_show {
@@ -579,8 +585,9 @@ loop_iteration :: proc() {
 		if r := platform_key_repeat(); r >= 0 {
 			timeout = min(timeout < 0 ? max(int) : timeout, int(time.duration_milliseconds(r)) + 1)
 		}
-	} else if plat.egl_context != nil && config.release_gpu_after > 0 {
+	} else if plat.egl_context != nil && config.release_gpu_after > 0 && !countdown_holds_reexec() {
 		// Wake up to release GPU resources once we've been hidden long enough.
+		// (Not while the idle countdown holds it: its events wake us.)
 		left := config.release_gpu_after - time.tick_since(hidden_since)
 		timeout = max(int(time.duration_milliseconds(left)), 0) + 1
 	}
@@ -602,6 +609,10 @@ loop_iteration :: proc() {
 	}
 	if mt := memwarn_timeout(); mt >= 0 {
 		ms := int(time.duration_milliseconds(mt)) + 1
+		timeout = timeout < 0 ? ms : min(timeout, ms)
+	}
+	if ct := countdown_timeout(); ct >= 0 {
+		ms := int(time.duration_milliseconds(ct)) + 1
 		timeout = timeout < 0 ? ms : min(timeout, ms)
 	}
 
@@ -650,6 +661,7 @@ loop_iteration :: proc() {
 	placeholders_tick()
 	notifications_tick()
 	memwarn_tick()
+	countdown_tick()
 
 	if restart_requested {
 		restart_requested = false
@@ -688,7 +700,7 @@ loop_iteration :: proc() {
 			last_render_second = sec
 			render_frame()
 		}
-	} else if plat.egl_context != nil && config.release_gpu_after > 0 && time.tick_since(hidden_since) >= config.release_gpu_after && !notifications_busy() && !memwarn_busy() {
+	} else if plat.egl_context != nil && config.release_gpu_after > 0 && time.tick_since(hidden_since) >= config.release_gpu_after && !notifications_busy() && !memwarn_busy() && !countdown_holds_reexec() {
 		// The GPU driver keeps its memory after eglTerminate; a fresh process image doesn't.
 		// (Not while notification popups are up: they'd vanish.)
 		notifications_save()

@@ -246,6 +246,8 @@ SETTINGS := [?]Setting {
 	{group = "Lock screen", section = "lock", key = "show_notifications", label = "Notification count", kind = .Bool, apply = .Lock},
 	{group = "Lock screen", section = "lock", key = "show_media", label = "Playing track", kind = .Bool, apply = .Lock, help = "Show what's playing, with play / pause."},
 	{group = "Lock screen", section = "lock", key = "show_bluetooth", label = "Bluetooth devices", kind = .Bool, apply = .Lock, help = "Connected devices with their battery, when the daemon runs."},
+	{group = "Lock screen", section = "lock", key = "countdown_seconds", label = "Countdown before the idle lock", kind = .Int, apply = .Daemon, ilim = LIM_LOCK_COUNTDOWN, step = 5, unit = "s", help = "The screen dims and a ring counts down before it locks for inactivity; any key or mouse move cancels it. Follows swayidle's lock timeout and its idle inhibitors. 0 = off."},
+	{group = "Lock screen", section = "lock", key = "idle_lock_seconds", label = "wlperch locks after", kind = .Int, apply = .Daemon, ilim = LIM_LOCK_IDLE, step = 30, unit = "s", help = "0 = swayidle locks on idle (the usual setup). A number: wlperch itself locks after this much idle time, for setups without an idle lock in swayidle. A swayidle lock that comes earlier still wins."},
 	// Time tracking
 	{group = "Time tracking", section = "timetracker", key = "idle_seconds", label = "Break after", kind = .Int, apply = .Daemon, ilim = LIM_IDLE_SECONDS, step = 30, unit = "s", old_section = "timetracker", old_key = "idle_minutes", old_scale = 60},
 	// GitHub
