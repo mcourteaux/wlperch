@@ -1,7 +1,9 @@
-// Setup component "Desktop portal": apps that follow the system dark / light
-// setting (Discord and other Electron apps, Chrome, Firefox, Flatpaks) read
-// it from xdg-desktop-portal (org.freedesktop.appearance color-scheme) and
-// update live on its SettingChanged signal. wlperch theme already sets the
+// Setup component "Desktop portal": GTK4/libadwaita apps and Flatpaks read
+// the system dark / light setting from xdg-desktop-portal
+// (org.freedesktop.appearance color-scheme) and update live on its
+// SettingChanged signal. Chromium/Electron apps (Discord, Chrome) ask the
+// portal first but fall back to the GTK theme, which wlperch theme switches
+// itself, so they follow without it. wlperch theme already sets the
 // gsettings color-scheme the gtk backend serves; this makes sure the portal
 // can run at all.
 //
@@ -74,8 +76,8 @@ portal_session_cmd :: proc() -> string {
 @(private = "file")
 portal_conf_text :: proc() -> string {
 	return fmt.tprintf(`# Start the systemd graphical session (written by wlperch setup; "Switch back" removes it).
-# xdg-desktop-portal needs it: apps that follow the system dark / light
-# setting (Discord, browsers, Flatpaks) read it from the portal.
+# xdg-desktop-portal needs it: GTK4 apps and Flatpaks read the system
+# dark / light setting from the portal (also screen sharing, file pickers).
 exec %s
 `, portal_session_cmd())
 }
@@ -196,7 +198,7 @@ portal_setup_check :: proc(p: ^Component, add_detail: proc(c: ^Component, line: 
 	} else if !st.session && !st.elsewhere {
 		add_detail(p, fmt.tprintf("Start session adds %s: exec %s", spec.new_path, portal_session_cmd()))
 	}
-	if !st.ready {add_detail(p, "Discord: Settings > Appearance > Sync with computer, once the portal answers")}
+	add_detail(p, "Discord follows the GTK theme without it: Settings > Appearance > Sync with computer")
 }
 
 @(private = "file")

@@ -245,7 +245,7 @@ theme_setup_check :: proc(p: ^Component, add_detail: proc(c: ^Component, line: s
 		p.state = .Missing
 		add_detail(p, fmt.tprintf("no theme switch bound; adds %s (Mod+Shift+T)", spec.new_path))
 	}
-	if !portal_status.ready {add_detail(p, "apps following the system (Discord, browsers) won't switch until the Desktop portal card is set up")}
+	if !portal_status.ready {add_detail(p, "GTK4 apps and Flatpaks won't switch until the Desktop portal card is set up (Discord follows the GTK theme)")}
 }
 
 @(private = "file")
