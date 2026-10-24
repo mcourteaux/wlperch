@@ -94,6 +94,24 @@ sway_client_colors_valid :: proc(class: Sway_Client_Class, s: string) -> bool {
 	return true
 }
 
+// sway's focused-window border colour for the current mode (an override in
+// [theme.<mode>] sway_client_focused wins): wlperch's own windows draw their
+// frame in it while they have keyboard focus, like any focused window.
+focus_border_color :: proc() -> u32 {
+	m: Theme_Mode = theme_light ? .Light : .Dark
+	builtin := SWAY_COLORS
+	colors := config.theme_targets[m].sway_client[.Focused]
+	if colors == "" {colors = builtin[m][.Focused]}
+	first, _, _ := strings.partition(strings.trim_space(colors), " ")
+	if c, ok := parse_hex_color(first); ok {return c}
+	return C_BLUE
+}
+
+// Frame colour of a wlperch window: the focus colour while it has the keyboard.
+window_border_color :: proc(unfocused_alpha: f32) -> u32 {
+	return plat.keyboard_focus ? col32(focus_border_color()) : col32(C_OVERLAY, unfocused_alpha)
+}
+
 // The client.* commands for a mode (none with sway_colors = off).
 theme_sway_commands :: proc(m: Theme_Mode, allocator := context.temp_allocator) -> []string {
 	t := config.theme_targets[m]

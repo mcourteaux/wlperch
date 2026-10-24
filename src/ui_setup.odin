@@ -367,7 +367,7 @@ draw_setup :: proc() {
 	if rounded {
 		draw_shadow(fpos, fsize, WIN_SHADOW - 3, 3, WIN_RADIUS)
 		im.DrawList_AddRectFilled(bg, fpos, fpos + fsize, col32(C_BG), WIN_RADIUS)
-		im.DrawList_AddRect(bg, fpos, fpos + fsize, col32(C_OVERLAY, 0.07), WIN_RADIUS)
+		im.DrawList_AddRect(bg, fpos, fpos + fsize, window_border_color(0.07), WIN_RADIUS)
 	} else {
 		im.DrawList_AddRectFilled(bg, fpos, fpos + fsize, col32(C_BG))
 	}

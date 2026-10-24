@@ -104,7 +104,7 @@ draw_ui :: proc() -> f32 {
 	im.SetNextWindowPos(panel_pos)
 	im.SetNextWindowSize({panel_w, panel_h})
 	im.PushStyleColorImVec4(.WindowBg, rgba(C_BG))
-	im.PushStyleColorImVec4(.Border, rgba(C_OVERLAY, 0.07))
+	im.PushStyleColor(.Border, window_border_color(0.07))
 	im.PushStyleVar(.WindowBorderSize, 1)
 	im.PushStyleVar(.WindowRounding, 18)
 	im.PushStyleVarImVec2(.WindowPadding, {16, 16})
