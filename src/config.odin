@@ -251,6 +251,13 @@ nvim_file = ~/.vimrc.color
 # Adwaita-dark only while one of those is in use.
 # kitty_theme: a theme name from "kitty +kitten themes" (all kitty windows).
 # wallpaper: an image for sway's outputs. command: anything else (sh -c).
+# sway_colors: auto = sway's window decorations (titlebars, borders) in
+# wlperch's palette for the mode, re-applied after "swaymsg reload"; off =
+# leave sway's client.* colours alone. One class can be overridden with
+# sway_client_<class> = border background text [indicator child_border]
+# (classes: focused, focused_inactive, focused_tab_title, unfocused, urgent,
+# placeholder; background takes one colour), e.g.
+#   sway_client_focused = #4a5b85 #232836 #e4e7ee #7d9c5a #4a5b85
 [theme.dark]
 gtk_theme = auto
 icon_theme =
@@ -260,6 +267,7 @@ nvim_colorscheme =
 kvantum_theme =
 vscode_theme =
 command =
+sway_colors = auto
 
 [theme.light]
 gtk_theme = auto
@@ -270,6 +278,7 @@ nvim_colorscheme =
 kvantum_theme =
 vscode_theme =
 command =
+sway_colors = auto
 
 [bar]
 # wlperch's own bar ("wlperch bar"), a waybar replacement: run it from sway
@@ -559,21 +568,7 @@ config_load :: proc() {
 
 	c.launcher_terminal = strings.clone(get(m, defaults, "launcher", "terminal"))
 
-	clear(&c.theme_links)
-	for l in split_list(get(m, defaults, "theme", "links"), ",") {append(&c.theme_links, expand_home(l))}
-	c.theme_nvim_file = expand_home(get(m, defaults, "theme", "nvim_file"))
-	for mode in Theme_Mode {
-		sec := mode == .Dark ? "theme.dark" : "theme.light"
-		t := &c.theme_targets[mode]
-		t.gtk_theme = strings.clone(get(m, defaults, sec, "gtk_theme"))
-		t.icon_theme = strings.clone(get(m, defaults, sec, "icon_theme"))
-		t.kitty_theme = strings.clone(get(m, defaults, sec, "kitty_theme"))
-		t.wallpaper = expand_home(get(m, defaults, sec, "wallpaper"))
-		t.nvim_colorscheme = strings.clone(get(m, defaults, sec, "nvim_colorscheme"))
-		t.kvantum_theme = strings.clone(get(m, defaults, sec, "kvantum_theme"))
-		t.vscode_theme = strings.clone(get(m, defaults, sec, "vscode_theme"))
-		t.command = strings.clone(get(m, defaults, sec, "command"))
-	}
+	config_load_theme(m, defaults)
 	bar_config_load(m, defaults)
 
 	c.sensors_dir = expand_home(get(m, defaults, "sensors", "dir"))
@@ -607,6 +602,51 @@ lock_bg_mode_parse :: proc(s: string, image: string) -> Lock_Bg_Mode {
 	case "image", "picture": return image != "" ? .Image : .Color
 	}
 	return image != "" ? .Image : .Color
+}
+
+// [theme], [theme.dark] and [theme.light].
+config_load_theme :: proc(m, defaults: ini.Map) {
+	get :: proc(m, d: ini.Map, section, key: string) -> string {
+		if s, ok := m[section]; ok {
+			if v, vok := s[key]; vok {return unquote(strings.trim_space(v))}
+		}
+		return unquote(strings.trim_space(d[section][key]))
+	}
+	c := &config
+	clear(&c.theme_links)
+	for l in split_list(get(m, defaults, "theme", "links"), ",") {append(&c.theme_links, expand_home(l))}
+	c.theme_nvim_file = expand_home(get(m, defaults, "theme", "nvim_file"))
+	for mode in Theme_Mode {
+		sec := mode == .Dark ? "theme.dark" : "theme.light"
+		t := &c.theme_targets[mode]
+		t.gtk_theme = strings.clone(get(m, defaults, sec, "gtk_theme"))
+		t.icon_theme = strings.clone(get(m, defaults, sec, "icon_theme"))
+		t.kitty_theme = strings.clone(get(m, defaults, sec, "kitty_theme"))
+		t.wallpaper = expand_home(get(m, defaults, sec, "wallpaper"))
+		t.nvim_colorscheme = strings.clone(get(m, defaults, sec, "nvim_colorscheme"))
+		t.kvantum_theme = strings.clone(get(m, defaults, sec, "kvantum_theme"))
+		t.vscode_theme = strings.clone(get(m, defaults, sec, "vscode_theme"))
+		t.command = strings.clone(get(m, defaults, sec, "command"))
+		t.sway_colors = strings.to_lower(get(m, defaults, sec, "sway_colors"), context.temp_allocator) != "off"
+		for class in Sway_Client_Class {
+			key := strings.concatenate({"sway_client_", SWAY_CLIENT_NAMES[class]}, context.temp_allocator)
+			v := get(m, defaults, sec, key)
+			if v != "" && !sway_client_colors_valid(class, v) {
+				log.warnf("[%s] %s: expected #rrggbb colours (%s), using the built-in", sec, key, class == .Background ? "one" : class == .Focused_Tab_Title ? "three" : "three to five")
+				v = ""
+			}
+			t.sway_client[class] = strings.clone(v)
+		}
+	}
+}
+
+// Only the theme sections again, before a switch: the Settings tab saves a
+// [theme.*] key and asks the daemon to switch, without a restart.
+config_reload_theme :: proc() {
+	defaults, _ := ini.load_map_from_string(DEFAULT_CONFIG, context.temp_allocator)
+	m, _, ok := ini.load_map_from_path(config_path(), context.temp_allocator)
+	if !ok {return}
+	config_load_theme(m, defaults)
 }
 
 unquote :: proc(s: string) -> string {

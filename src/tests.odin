@@ -1341,3 +1341,33 @@ test_compose_dead_keys :: proc(t: ^testing.T) {
 	a, _ = feed(&c, sym("space"), buf[:])
 	testing.expect_value(t, a, xkb.Compose_Action.Pass)
 }
+
+@(test)
+test_theme_sway_colors :: proc(t: ^testing.T) {
+	testing.expect(t, sway_client_colors_valid(.Focused, "#4a5b85 #232836 #e4e7ee #7d9c5a #4a5b85"))
+	testing.expect(t, sway_client_colors_valid(.Unfocused, "#1f232b #111318 #8a92a3"))
+	testing.expect(t, sway_client_colors_valid(.Urgent, "#f7768eff #F7768E #111318"))
+	testing.expect(t, sway_client_colors_valid(.Background, "#111318"))
+	testing.expect(t, !sway_client_colors_valid(.Background, "#111318 #111318"))
+	testing.expect(t, !sway_client_colors_valid(.Focused_Tab_Title, "#2b303b #1a1d24 #c8ccd6 #2b303b"))
+	testing.expect(t, !sway_client_colors_valid(.Focused, "#4a5b85 #232836"))
+	testing.expect(t, !sway_client_colors_valid(.Focused, "4a5b85 #232836 #e4e7ee"))
+	testing.expect(t, !sway_client_colors_valid(.Focused, "#4a5b8g #232836 #e4e7ee"))
+	// Every built-in value is one sway takes.
+	builtin := SWAY_COLORS
+	for m in Theme_Mode {
+		for class in Sway_Client_Class {testing.expect(t, sway_client_colors_valid(class, builtin[m][class]))}
+	}
+	saved := config.theme_targets
+	defer config.theme_targets = saved
+	config.theme_targets[.Light] = {}
+	config.theme_targets[.Light].sway_colors = true
+	config.theme_targets[.Light].sway_client[.Urgent] = "#ff0000 #ff0000 #ffffff"
+	cmds := theme_sway_commands(.Light)
+	testing.expect_value(t, len(cmds), len(Sway_Client_Class))
+	testing.expect_value(t, cmds[int(Sway_Client_Class.Focused)], "client.focused #7f9bd6 #dce5f7 #1b1f28 #4f7a1f #7f9bd6")
+	testing.expect_value(t, cmds[int(Sway_Client_Class.Urgent)], "client.urgent #ff0000 #ff0000 #ffffff")
+	testing.expect_value(t, cmds[int(Sway_Client_Class.Background)], "client.background #e8eaf0")
+	config.theme_targets[.Light].sway_colors = false
+	testing.expect_value(t, len(theme_sway_commands(.Light)), 0)
+}

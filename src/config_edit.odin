@@ -202,8 +202,10 @@ SETTINGS_GROUPS := [?]string{"Panel", "Clock and weather", "Bar", "Memory", "Loc
 @(private = "file") CH_UNITS :: []Setting_Choice{{"metric", "Metric"}, {"imperial", "Imperial"}}
 @(private = "file") CH_BAR_POS :: []Setting_Choice{{"top", "Top"}, {"bottom", "Bottom"}}
 @(private = "file") CH_ANCHOR :: []Setting_Choice{{"top right", "Top right"}, {"top left", "Top left"}, {"top", "Top centre"}, {"bottom right", "Bottom right"}, {"bottom left", "Bottom left"}, {"bottom", "Bottom centre"}}
+@(private = "file") CH_SWAY_COLORS :: []Setting_Choice{{"auto", "wlperch palette"}, {"off", "Leave alone"}}
 @(private = "file") CH_LOCK_BG :: []Setting_Choice{{"", "Auto"}, {"color", "Colour"}, {"image", "Picture"}, {"blur", "Blurred screen"}}
 
+THEME_HELP_SWAY :: `sway's titlebars and borders (client.* colours) in wlperch's palette for this mode, set over IPC and again after "swaymsg reload". One class can be changed with sway_client_<class> = border background text [indicator child_border] in config.ini.`
 THEME_HELP_GTK :: `GTK theme for this mode. "auto" switches Adwaita <-> Adwaita-dark while one of those is in use; empty = leave alone.`
 
 @(rodata)
@@ -265,6 +267,7 @@ SETTINGS := [?]Setting {
 	{group = "Dark theme", section = "theme.dark", key = "nvim_colorscheme", label = "nvim colorscheme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Written with \"set background\" to the nvim file of [theme] nvim_file; have nvim source it."},
 	{group = "Dark theme", section = "theme.dark", key = "vscode_theme", label = "VS Code theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "VS Code's workbench.colorTheme, e.g. \"Default Dark Modern\"."},
 	{group = "Dark theme", section = "theme.dark", key = "kvantum_theme", label = "Kvantum theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Kvantum theme for Qt apps."},
+	{group = "Dark theme", section = "theme.dark", key = "sway_colors", label = "sway window colours", kind = .Choice, apply = .Theme, choices = CH_SWAY_COLORS, help = THEME_HELP_SWAY},
 	{group = "Light theme", section = "theme.light", key = "wallpaper", label = "Wallpaper", kind = .Path, apply = .Theme, hint = "leave alone", help = "An image for sway's outputs."},
 	{group = "Light theme", section = "theme.light", key = "gtk_theme", label = "GTK theme", kind = .Text, apply = .Theme, hint = "leave alone", help = THEME_HELP_GTK},
 	{group = "Light theme", section = "theme.light", key = "icon_theme", label = "Icon theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Icon theme name (gsettings icon-theme)."},
@@ -272,6 +275,7 @@ SETTINGS := [?]Setting {
 	{group = "Light theme", section = "theme.light", key = "nvim_colorscheme", label = "nvim colorscheme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Written with \"set background\" to the nvim file of [theme] nvim_file; have nvim source it."},
 	{group = "Light theme", section = "theme.light", key = "vscode_theme", label = "VS Code theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "VS Code's workbench.colorTheme, e.g. \"Default Dark Modern\"."},
 	{group = "Light theme", section = "theme.light", key = "kvantum_theme", label = "Kvantum theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Kvantum theme for Qt apps."},
+	{group = "Light theme", section = "theme.light", key = "sway_colors", label = "sway window colours", kind = .Choice, apply = .Theme, choices = CH_SWAY_COLORS, help = THEME_HELP_SWAY},
 }
 
 // The comment block right above `key` in [section] of DEFAULT_CONFIG, as one line.

@@ -259,12 +259,15 @@ Event_Kind :: enum {
 	Workspace,
 	Other, // output / input
 	Tree,  // windows appeared, disappeared or moved
+	Reload, // sway re-read its config (client.* colours back to the config's)
 }
 
 @(private = "file")
 classify :: proc(type: u32, payload: string) -> bit_set[Event_Kind] {
 	switch type {
 	case EVENT_WORKSPACE:
+		v, _ := jparse(payload)
+		if jstr(jobj(v, "change")) == "reload" {return {.Workspace, .Tree, .Reload}}
 		return {.Workspace, .Tree}
 	case EVENT_WINDOW:
 		v, _ := jparse(payload)
@@ -371,6 +374,7 @@ sway_start :: proc() {
 			ipc_write(fd, IPC_SUBSCRIBE, `["output", "input", "workspace", "window"]`)
 			sway_refresh_workspaces()
 			sway_refresh_tree()
+			theme_sway_reapply() // a restarted daemon or sway: the saved mode's decorations
 			for {
 				type, payload, ok := ipc_read(fd)
 				if !ok {break}
@@ -380,9 +384,13 @@ sway_start :: proc() {
 						free_all(context.temp_allocator)
 						continue // e.g. a window title changed
 					}
+					// Right away: the titlebars show the config's colours until then.
+					if .Reload in kinds {theme_sway_reapply()}
 					// Events come in bursts (e.g. one per input device); coalesce.
 					time.sleep(50 * time.Millisecond)
-					kinds += drain_events(fd)
+					more := drain_events(fd)
+					if .Reload in more && .Reload not_in kinds {theme_sway_reapply()}
+					kinds += more
 					if .Workspace in kinds {sway_refresh_workspaces()}
 					if .Tree in kinds {sway_refresh_tree()}
 					if .Other in kinds {

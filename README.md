@@ -522,6 +522,18 @@ running, the CLI switches the desktop itself and prints what it changed.
   The default covers `~/.config/waybar/colors.css` and
   `~/.config/wofi/colors.css`, and waybar reloads (SIGUSR2, only the waybars of
   this session) when one of its files changed.
+- **sway's window decorations:** with `sway_colors = auto` (the default, per
+  mode) the titlebars and borders (`client.focused`, `focused_inactive`,
+  `focused_tab_title`, `unfocused`, `urgent`, `placeholder`, `background`)
+  are set over sway IPC in wlperch's palette: dark is the familiar
+  `#232836` / `#1a1d24` / `#111318` set, light has white-grey titles with
+  dark text and a blue tint on the focused one, like the light bar. A
+  `swaymsg reload` resets them to your sway config's colours; the daemon sees
+  sway's reload event and applies the mode's colours again (also when it
+  starts, once a mode was saved). Change one class with
+  `sway_client_<class> = border background text [indicator child_border]`
+  (e.g. `sway_client_urgent = #d6264f #d6264f #ffffff`), or set
+  `sway_colors = off` to leave sway's colours alone.
 - **Per mode** (`[theme.dark]`, `[theme.light]`; empty = leave alone):
   `wallpaper` (sway's output background), `kitty_theme` (every kitty window,
   through `kitty +kitten themes`), `nvim_colorscheme` (writes `set background`

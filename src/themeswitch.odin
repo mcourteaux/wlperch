@@ -4,7 +4,8 @@
 // color-scheme (GTK, libadwaita and, through the settings portal, most apps),
 // the GTK theme, an existing gtk-3.0/gtk-4.0 settings.ini, dark/light symlink
 // twins (waybar / wofi colors.css, reloading waybar), sway's wallpaper, kitty,
-// an nvim colour file, Kvantum, VS Code and a free-form command.
+// an nvim colour file, Kvantum, VS Code, sway's window decorations
+// (client.* colours, over IPC) and a free-form command.
 //
 // The mode is kept in ~/.local/share/wlperch/theme; the bar, the setup window
 // and the lock screen (own processes) watch it with theme_watch_open. Without a saved mode the gsettings color-scheme decides.
@@ -32,6 +33,103 @@ Theme_Targets :: struct {
 	kvantum_theme:    string,
 	vscode_theme:     string,
 	command:          string,
+	sway_colors:      bool, // "auto": set sway's client.* colours for the mode
+	sway_client:      [Sway_Client_Class]string, // per-class overrides ("" = built-in)
+}
+
+// sway's window decoration classes, as "client.<name>".
+Sway_Client_Class :: enum {Focused, Focused_Inactive, Focused_Tab_Title, Unfocused, Urgent, Placeholder, Background}
+
+SWAY_CLIENT_NAMES := [Sway_Client_Class]string {
+	.Focused           = "focused",
+	.Focused_Inactive  = "focused_inactive",
+	.Focused_Tab_Title = "focused_tab_title",
+	.Unfocused         = "unfocused",
+	.Urgent            = "urgent",
+	.Placeholder       = "placeholder",
+	.Background        = "background",
+}
+
+// Built-in decorations: border, background, text, indicator, child_border.
+// Dark is the palette sway configs have used alongside wlperch (PALETTE_DARK:
+// bg / card / border, soft and muted text); light follows PALETTE_LIGHT and
+// the light bar (white cards, #1b1f28 text, a blue tint on the focused title).
+SWAY_COLORS :: [Theme_Mode][Sway_Client_Class]string {
+	.Dark = {
+		.Focused           = "#4a5b85 #232836 #e4e7ee #7d9c5a #4a5b85",
+		.Focused_Inactive  = "#2b303b #1a1d24 #c8ccd6 #2b303b #2b303b",
+		.Focused_Tab_Title = "#2b303b #1a1d24 #c8ccd6",
+		.Unfocused         = "#1f232b #111318 #8a92a3 #1f232b #1f232b",
+		.Urgent            = "#f7768e #f7768e #111318 #f7768e #f7768e",
+		.Placeholder       = "#111318 #111318 #8a92a3 #111318 #111318",
+		.Background        = "#111318",
+	},
+	.Light = {
+		.Focused           = "#7f9bd6 #dce5f7 #1b1f28 #4f7a1f #7f9bd6",
+		.Focused_Inactive  = "#c9ced8 #f5f6f9 #2e3440 #c9ced8 #c9ced8",
+		.Focused_Tab_Title = "#c9ced8 #f5f6f9 #2e3440",
+		.Unfocused         = "#d6dae2 #e8eaf0 #596173 #d6dae2 #d6dae2",
+		.Urgent            = "#d6264f #d6264f #ffffff #d6264f #d6264f",
+		.Placeholder       = "#e8eaf0 #e8eaf0 #596173 #e8eaf0 #e8eaf0",
+		.Background        = "#e8eaf0",
+	},
+}
+
+// A value for client.<class>: #rrggbb[aa] colours, 1 for background, 3 for
+// focused_tab_title, 3 to 5 for the others (as sway takes them).
+sway_client_colors_valid :: proc(class: Sway_Client_Class, s: string) -> bool {
+	f := strings.fields(s, context.temp_allocator)
+	lo, hi := 3, 5
+	#partial switch class {
+	case .Background:        lo, hi = 1, 1
+	case .Focused_Tab_Title: lo, hi = 3, 3
+	}
+	if len(f) < lo || len(f) > hi {return false}
+	for c in f {
+		if len(c) != 7 && len(c) != 9 || c[0] != '#' {return false}
+		for ch in c[1:] {
+			if !(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f' || ch >= 'A' && ch <= 'F') {return false}
+		}
+	}
+	return true
+}
+
+// The client.* commands for a mode (none with sway_colors = off).
+theme_sway_commands :: proc(m: Theme_Mode, allocator := context.temp_allocator) -> []string {
+	t := config.theme_targets[m]
+	if !t.sway_colors {return nil}
+	builtin := SWAY_COLORS
+	out := make([]string, len(Sway_Client_Class), allocator)
+	for class in Sway_Client_Class {
+		colors := t.sway_client[class] != "" ? t.sway_client[class] : builtin[m][class]
+		out[int(class)] = fmt.aprintf("client.%s %s", SWAY_CLIENT_NAMES[class], colors, allocator = allocator)
+	}
+	return out
+}
+
+// Set sway's window decorations for the mode; sway redraws the titlebars.
+// One request per class, so a class this sway doesn't know can't stop the rest.
+theme_sway_apply :: proc(m: Theme_Mode) -> (applied, ok: bool) {
+	cmds := theme_sway_commands(m)
+	if len(cmds) == 0 || os.get_env("SWAYSOCK", context.temp_allocator) == "" {return false, true}
+	ok = true
+	for c in cmds {
+		if !sway_command(c) {
+			log.warnf("theme: sway rejected %q", c)
+			ok = false
+		}
+	}
+	return true, ok
+}
+
+// After sway (re)loads its config, which resets client.* to the config's
+// colours, and when the daemon connects: the saved mode's colours again.
+// Only once the theme was switched with wlperch (a saved mode).
+theme_sway_reapply :: proc() {
+	data, err := os.read_entire_file(theme_mode_path(), context.temp_allocator)
+	if err != nil {return}
+	m: Theme_Mode = strings.trim_space(string(data)) == "light" ? .Light : .Dark
+	if applied, _ := theme_sway_apply(m); applied {log.infof("theme: sway colours (%s) applied", theme_mode_name(m))}
 }
 
 @(private = "file")
@@ -145,6 +243,12 @@ theme_switch :: proc(m: Theme_Mode) {
 theme_command :: proc(args: []string) -> string {
 	sub := len(args) > 0 ? args[0] : "status"
 	cur: Theme_Mode = theme_light ? .Light : .Dark
+	if sub != "status" {
+		// Settings saved since the start (the Settings tab switches through
+		// here); not while the worker reads them.
+		sync.guard(&theme_state.mu)
+		if !theme_state.busy {config_reload_theme()}
+	}
 	switch sub {
 	case "status":
 		return fmt.tprintf("%s\n", theme_mode_name(cur))
@@ -256,7 +360,10 @@ theme_apply_desktop :: proc(m: Theme_Mode) -> []string {
 		if n > 0 {note(&done, true, "waybar reloaded")}
 	}
 
-	// swaymsg, not sway_command: this runs off the main thread.
+	if applied, ok := theme_sway_apply(m); applied {note(&done, ok, "sway window colours")}
+
+	// swaymsg, not sway_command: this runs off the main thread (and a slow
+	// wallpaper load would hold the shared connection).
 	if t.wallpaper != "" && os.get_env("SWAYSOCK", context.temp_allocator) != "" {
 		_, c := run_code({"swaymsg", "output", "*", "bg", t.wallpaper, "fill"}, allocator = context.temp_allocator)
 		note(&done, c == 0, fmt.tprintf("wallpaper %s", filepath.base(t.wallpaper)))
