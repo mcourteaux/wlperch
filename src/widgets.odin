@@ -12,6 +12,42 @@ Vec2 :: im.Vec2
 
 dl :: proc() -> ^im.DrawList {return im.GetWindowDrawList()}
 
+// A text field's frame, in two parts: field_fill before the InputText (whose
+// own FrameBg should be transparent and FrameBorderSize 0), field_outline
+// after it (once its colour, e.g. focus, is known). Both sit on whole device
+// pixels at any output scale, fractional included, and share one radius: the
+// outline is a crisp line about 1 px wide that hugs the fill exactly.
+field_fill :: proc(a, b: Vec2, rounding: f32, col: u32) {
+	d := dl()
+	sa, sb, _, px := field_snap(a, b)
+	saved := d._FringeScale
+	d._FringeScale = px // anti-alias over one device pixel, not one logical one
+	im.DrawList_AddRectFilled(d, sa, sb, col, rounding)
+	d._FringeScale = saved
+}
+
+field_outline :: proc(a, b: Vec2, rounding: f32, col: u32) {
+	d := dl()
+	sa, sb, t, px := field_snap(a, b)
+	saved := d._FringeScale
+	d._FringeScale = px
+	// AddRect strokes along p_min + 0.5 .. p_max - 0.5; put the stroke's
+	// centre t/2 inside the snapped edge so it covers whole device pixels.
+	h := t / 2 - 0.5
+	im.DrawList_AddRect(d, sa + h, sb - h, col, max(rounding - t / 2, 0), t)
+	d._FringeScale = saved
+}
+
+// Snaps a rect to device pixels; t: a ~1 px line as whole device pixels, px:
+// one device pixel, both in logical units.
+@(private = "file")
+field_snap :: proc(a, b: Vec2) -> (sa, sb: Vec2, t, px: f32) {
+	s := platform_scale()
+	if s <= 0 {s = 1}
+	snap :: proc(v: Vec2, s: f32) -> Vec2 {return {math.round(v.x * s) / s, math.round(v.y * s) / s}}
+	return snap(a, s), snap(b, s), max(math.round(s), 1) / s, 1 / s
+}
+
 cstr :: proc(s: string) -> cstring {return strings.clone_to_cstring(s, context.temp_allocator)}
 
 // Begin/end pointers of a string for ImGui's (text_begin, text_end) APIs.

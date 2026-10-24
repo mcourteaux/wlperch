@@ -172,26 +172,25 @@ draw_calculator :: proc(w: f32) {
 		calc.refocus = false
 	}
 	if len(calc.history) == 0 {calc.recall = 0}
+	// The frame is ours, as in the launcher: one crisp outline, orange on focus.
+	field_pos := im.GetCursorScreenPos()
+	field_end := field_pos + Vec2{field_w, 17 + 2 * 10} // the InputText's height
+	field_fill(field_pos, field_end, 10, col32(C_BG))
 	im.PushFontFloat(fonts.mono, 17)
 	im.PushStyleVarImVec2(.FramePadding, {12, 10})
-	im.PushStyleVar(.FrameRounding, 10)
-	im.PushStyleColorImVec4(.FrameBg, rgba(C_BG))
-	im.PushStyleColorImVec4(.FrameBgHovered, rgba(C_BG))
-	im.PushStyleColorImVec4(.FrameBgActive, rgba(C_BG))
-	im.PushStyleVar(.FrameBorderSize, 1)
-	field_pos := im.GetCursorScreenPos()
+	im.PushStyleVar(.FrameBorderSize, 0)
+	im.PushStyleColorImVec4(.FrameBg, {})
+	im.PushStyleColorImVec4(.FrameBgHovered, {})
+	im.PushStyleColorImVec4(.FrameBgActive, {})
 	ctx := context // for the callback
 	im.SetNextItemWidth(field_w)
 	entered := im.InputTextWithHint("##calcinput", "sqrt(2) * 0x10, floor(7/2), sin(pi/6)…", cstring(&calc.buf[0]), uint(len(calc.buf)), {.EnterReturnsTrue, .CallbackAlways, .CallbackHistory}, calc_input_cb, &ctx)
 	active := im.IsItemActive()
 	if active {im.SetNavCursorVisible(false)} // the orange outline marks focus
-	im.PopStyleVar(3)
+	im.PopStyleVar(2)
 	im.PopStyleColor(3)
 	im.PopFont()
-	if active {
-		fsz := im.GetItemRectSize()
-		im.DrawList_AddRect(dl(), field_pos, {field_pos.x + fsz.x, field_pos.y + fsz.y}, col32(C_ORANGE, 0.7), 10, 1.5)
-	}
+	field_outline(field_pos, field_end, 10, active ? col32(C_ORANGE, 0.85) : col32(C_BORDER))
 
 	text := calc_effective(calc_text())
 	v: Calc_Value

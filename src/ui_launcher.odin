@@ -119,6 +119,8 @@ FIELD_H :: f32(58)
 @(private = "file")
 FIELD_SZ :: f32(22) // query font size
 @(private = "file")
+FIELD_R :: f32(12) // its corner radius
+@(private = "file")
 TITLE_SZ :: SZ_BODY + 3
 @(private = "file")
 SUB_SZ :: SZ_SMALL + 1.5
@@ -413,21 +415,25 @@ draw_launcher :: proc(w: f32) {
 	// Search field, with a magnifier (or prompt) inside on the left.
 	_, running := run_mode(ui_text())
 	_, emojis := emoji_mode(ui_text())
+	// The frame is ours (field_fill/field_outline), exactly FIELD_H tall like
+	// the InputText (a line is FIELD_SZ tall), with one outline: grey, or the
+	// mode's accent while focused.
 	top := im.GetCursorScreenPos()
+	bot := Vec2{top.x + w, top.y + FIELD_H}
+	field_fill(top, bot, FIELD_R, col32(C_CARD))
 	im.PushFontFloat(fonts.ui, FIELD_SZ)
-	im.PushStyleVarImVec2(.FramePadding, {52, (FIELD_H - FIELD_SZ * 1.2) / 2})
-	im.PushStyleVar(.FrameRounding, 12)
-	im.PushStyleColorImVec4(.FrameBg, rgba(C_CARD))
-	im.PushStyleColorImVec4(.FrameBgHovered, rgba(C_CARD))
-	im.PushStyleColorImVec4(.FrameBgActive, rgba(C_CARD))
-	im.PushStyleVar(.FrameBorderSize, 1)
+	im.PushStyleVarImVec2(.FramePadding, {52, (FIELD_H - FIELD_SZ) / 2})
+	im.PushStyleVar(.FrameBorderSize, 0)
+	im.PushStyleColorImVec4(.FrameBg, {})
+	im.PushStyleColorImVec4(.FrameBgHovered, {})
+	im.PushStyleColorImVec4(.FrameBgActive, {})
 	ctx := context
 	im.SetNextItemWidth(w)
 	hint: cstring = p.name == "run" ? "Command to run…" : p.name == "emoji" ? "Search emoji…" : "Search apps, = calculate, > run a command, : emoji"
 	entered := im.InputTextWithHint("##launch", hint, cstring(&lui.buf[0]), uint(len(lui.buf)), {.EnterReturnsTrue, .CallbackAlways, .CallbackHistory, .CallbackCompletion}, input_cb, &ctx)
 	active := im.IsItemActive()
 	if active {im.SetNavCursorVisible(false)}
-	im.PopStyleVar(3)
+	im.PopStyleVar(2)
 	im.PopStyleColor(3)
 	im.PopFont()
 
@@ -449,7 +455,7 @@ draw_launcher :: proc(w: f32) {
 	_, running = run_mode(text)
 	_, emojis = emoji_mode(text)
 	accent: u32 = running ? C_GREEN : emojis ? C_YELLOW : lui.math ? C_ORANGE : C_BLUE
-	if active {im.DrawList_AddRect(dl(), top, {top.x + w, top.y + FIELD_H}, col32(accent, 0.7), 12, 1.5)}
+	field_outline(top, bot, FIELD_R, active ? col32(accent, 0.85) : col32(C_BORDER))
 	icon := running ? ICON_CONSOLE : emojis ? ICON_EMOTICON : lui.math ? ICON_CALC : ICON_MAGNIFY
 	isz := measure(fonts.ui, 23, icon)
 	draw_text(fonts.ui, 23, {top.x + 18, top.y + (FIELD_H - isz.y) / 2}, col32(active ? accent : C_MUTED), icon)
