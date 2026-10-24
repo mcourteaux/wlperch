@@ -72,6 +72,7 @@ on_show :: proc() {
 
 on_hide :: proc() {
 	storage_on_hide()
+	launcher_save_sum()
 }
 
 draw_ui :: proc() -> f32 {

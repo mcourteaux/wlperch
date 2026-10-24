@@ -68,6 +68,7 @@ reexec_self :: proc(show_after := false) {
 		off += n
 	}
 
+	launcher_save_sum() // the launcher's kept sum, if the popup didn't hide first
 	tracker_shutdown() // the new image opens a fresh segment right away
 	stop_children()
 	// Some drivers (NVIDIA) open their device files without O_CLOEXEC; don't

@@ -7,6 +7,7 @@ package main
 
 import "base:runtime"
 import "core:fmt"
+import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
@@ -45,24 +46,88 @@ Launch_UI :: struct {
 	wheel:    f32, // unspent wheel motion (smooth scrolling sends fractions)
 	calc_ok:  bool,
 	calc_v:   Calc_Value,
+	calc_lit: bool, // the calc row is a lone number (a conversion), not a sum
+	math:     bool, // the query is a sum: the result as in the calculator, no other rows
 	copied:   string, // format label just copied from the calc row
+	restored: bool, // the kept sum was put back and is selected: typing replaces it
+	sel_all:  bool, // select the whole text when the field takes `buf` over
+}
+
+// A sum left in the launcher comes back, selected, the next time it opens,
+// also after a restart: ~/.local/share/wlperch/launcher-sum. Other queries
+// (and an emptied field) start empty, as usual.
+@(private = "file")
+Kept_Sum :: struct {
+	text:   string, // heap
+	loaded: bool,
+	dirty:  bool, // differs from the file
+}
+
+@(private = "file")
+kept: Kept_Sum
+
+@(private = "file")
+kept_path :: proc() -> string {
+	d := data_dir()
+	defer delete(d)
+	return strings.concatenate({d, "/launcher-sum"}, context.temp_allocator)
+}
+
+@(private = "file")
+kept_load :: proc() {
+	if kept.loaded {return}
+	kept.loaded = true
+	if data, err := os.read_entire_file(kept_path(), context.temp_allocator); err == nil {
+		kept.text = strings.clone(strings.trim_space(string(data)))
+	}
+}
+
+@(private = "file")
+kept_set :: proc(s: string) {
+	kept_load()
+	if s == kept.text {return}
+	delete(kept.text)
+	kept.text = strings.clone(s)
+	kept.dirty = true
+}
+
+// Write the kept sum out if it changed (the popup hid, or we re-exec).
+launcher_save_sum :: proc() {
+	if !kept.dirty {return}
+	kept.dirty = false
+	path := kept_path()
+	if kept.text == "" {
+		os.remove(path)
+		return
+	}
+	d := data_dir()
+	defer delete(d)
+	os.make_directory_all(d)
+	tmp := strings.concatenate({path, ".tmp"}, context.temp_allocator)
+	if os.write_entire_file(tmp, strings.concatenate({kept.text, "\n"}, context.temp_allocator)) == nil {os.rename(tmp, path)}
 }
 
 @(private = "file")
 lui: Launch_UI
 
 @(private = "file")
-ROWS :: 8
+ROWS :: 7
 @(private = "file")
-ROW_H :: f32(52)
+ROW_H :: f32(62)
 @(private = "file")
-FIELD_H :: f32(50)
+FIELD_H :: f32(58)
 @(private = "file")
-ICON_SZ :: f32(32)
+FIELD_SZ :: f32(22) // query font size
+@(private = "file")
+TITLE_SZ :: SZ_BODY + 3
+@(private = "file")
+SUB_SZ :: SZ_SMALL + 1.5
+@(private = "file")
+ICON_SZ :: f32(40)
 @(private = "file")
 ICON_LOADS_PER_FRAME :: 4
 @(private = "file")
-EMOJI_SZ :: f32(38)
+EMOJI_SZ :: f32(46)
 // Emoji also listed in a plain search ("heart"), after the apps.
 @(private = "file")
 EMOJI_IN_SEARCH :: 3
@@ -89,8 +154,8 @@ input_cb :: proc "c" (data: ^im.InputTextCallbackData) -> i32 {
 		im.InputTextCallbackData_DeleteChars(data, 0, data.BufTextLen)
 		im.InputTextCallbackData_InsertChars(data, 0, cstr(ui_text()))
 		data.CursorPos = data.BufTextLen
-		data.SelectionStart, data.SelectionEnd = data.BufTextLen, data.BufTextLen
-		lui.pending = false
+		data.SelectionStart, data.SelectionEnd = lui.sel_all ? 0 : data.BufTextLen, data.BufTextLen
+		lui.pending, lui.sel_all, lui.restored = false, false, false
 	}
 	return 0
 }
@@ -130,7 +195,7 @@ looks_like_math :: proc(q: string) -> (expr: string, ok, literal: bool) {
 @(private = "file")
 build_rows :: proc(q: string) {
 	clear(&lui.rows)
-	lui.calc_ok = false
+	lui.calc_ok, lui.calc_lit, lui.math = false, false, false
 	now := time.to_unix_seconds(time.now())
 
 	if eq, ok := emoji_mode(q); ok {
@@ -185,7 +250,7 @@ build_rows :: proc(q: string) {
 	calc_literal := false
 	if expr, ok, literal := looks_like_math(q); ok && expr != "" {
 		if v, err := calc_eval(expr, {is_int = true}, calc_degrees()); err == "" {
-			lui.calc_ok, lui.calc_v = true, v
+			lui.calc_ok, lui.calc_v, lui.calc_lit = true, v, literal
 			calc_row, calc_literal = len(lui.rows), literal
 			append(&lui.rows, Row{kind = .Calc, text = expr})
 		}
@@ -311,7 +376,16 @@ draw_launcher :: proc(w: f32) {
 	emoji_pictures_trim()
 	if ui.shown_frames <= 1 {
 		launcher_refresh()
-		set_text(p.name == "run" ? "> " : "")
+		start := ""
+		if p.name == "run" {
+			start = "> "
+		} else if p.name != "emoji" {
+			kept_load()
+			start = kept.text
+		}
+		set_text(start)
+		lui.restored = start != "" && p.name != "run"
+		lui.sel_all = lui.restored
 		lui.typed = false
 		lui.sel, lui.top = 0, 0
 		delete(lui.query)
@@ -323,10 +397,11 @@ draw_launcher :: proc(w: f32) {
 		io := im.GetIO()
 		if q := &io.InputQueueCharacters; q.Size > 0 {
 			b := strings.builder_make(context.temp_allocator)
-			strings.write_string(&b, ui_text())
+			if !lui.restored {strings.write_string(&b, ui_text())} // a kept sum is selected: replace it
 			for k in 0 ..< q.Size {strings.write_rune(&b, ([^]rune)(q.Data)[k])}
 			q.Size = 0
 			set_text(strings.to_string(b))
+			lui.restored, lui.sel_all = false, false
 			lui.refocus = true
 		}
 	}
@@ -339,8 +414,8 @@ draw_launcher :: proc(w: f32) {
 	_, running := run_mode(ui_text())
 	_, emojis := emoji_mode(ui_text())
 	top := im.GetCursorScreenPos()
-	im.PushFontFloat(fonts.ui, 18)
-	im.PushStyleVarImVec2(.FramePadding, {46, (FIELD_H - 22) / 2})
+	im.PushFontFloat(fonts.ui, FIELD_SZ)
+	im.PushStyleVarImVec2(.FramePadding, {52, (FIELD_H - FIELD_SZ * 1.2) / 2})
 	im.PushStyleVar(.FrameRounding, 12)
 	im.PushStyleColorImVec4(.FrameBg, rgba(C_CARD))
 	im.PushStyleColorImVec4(.FrameBgHovered, rgba(C_CARD))
@@ -355,11 +430,6 @@ draw_launcher :: proc(w: f32) {
 	im.PopStyleVar(3)
 	im.PopStyleColor(3)
 	im.PopFont()
-	accent: u32 = running ? C_GREEN : emojis ? C_YELLOW : C_BLUE
-	if active {im.DrawList_AddRect(dl(), top, {top.x + w, top.y + FIELD_H}, col32(accent, 0.7), 12, 1.5)}
-	icon := running ? ICON_CONSOLE : emojis ? ICON_EMOTICON : ICON_MAGNIFY
-	isz := measure(fonts.ui, 20, icon)
-	draw_text(fonts.ui, 20, {top.x + 16, top.y + (FIELD_H - isz.y) / 2}, col32(active ? accent : C_MUTED), icon)
 
 	io := im.GetIO()
 	text := ui_text()
@@ -368,7 +438,21 @@ draw_launcher :: proc(w: f32) {
 		lui.query = strings.clone(text)
 		build_rows(text)
 		lui.sel, lui.top = 0, 0
+		// A sum: the calculator's view of it, and it's kept for next time.
+		lui.math = lui.calc_ok && !lui.calc_lit && len(lui.rows) > 0 && lui.rows[0].kind == .Calc
+		if lui.math {resize(&lui.rows, 1)}
+		// (Not while closing: Escape makes the field revert to the text it had
+		// when it took focus.)
+		if p.name != "run" && p.name != "emoji" && !hide_requested {kept_set(lui.math ? strings.trim_space(text) : "")}
 	}
+
+	_, running = run_mode(text)
+	_, emojis = emoji_mode(text)
+	accent: u32 = running ? C_GREEN : emojis ? C_YELLOW : lui.math ? C_ORANGE : C_BLUE
+	if active {im.DrawList_AddRect(dl(), top, {top.x + w, top.y + FIELD_H}, col32(accent, 0.7), 12, 1.5)}
+	icon := running ? ICON_CONSOLE : emojis ? ICON_EMOTICON : lui.math ? ICON_CALC : ICON_MAGNIFY
+	isz := measure(fonts.ui, 23, icon)
+	draw_text(fonts.ui, 23, {top.x + 18, top.y + (FIELD_H - isz.y) / 2}, col32(active ? accent : C_MUTED), icon)
 
 	// Keys.
 	n := len(lui.rows)
@@ -444,7 +528,20 @@ draw_launcher :: proc(w: f32) {
 		msz := measure(fonts.ui, SZ_BODY, msg)
 		draw_text(fonts.ui, SZ_BODY, {list.x + (w - msz.x) / 2, list.y + 40}, col32(C_FAINT), msg)
 	}
+	if lui.math && n > 0 {
+		// The result as the calculator shows it: big, then the format tiles.
+		im.PushClipRect(list, {list.x + w, list.y + list_h}, true)
+		im.PushStyleVarImVec2(.ItemSpacing, {8, 6}) // the calculator card's tile spacing
+		im.SetCursorScreenPos({list.x, list.y + 6})
+		formats := calc_formats(lui.calc_v)
+		clicked := calc_result_big(formats[0], "= ", w, 1, &lui.copied)
+		if calc_tiles(formats[1:], w, 1, &lui.copied) {clicked = true}
+		if clicked {lui.refocus = true}
+		im.PopStyleVar()
+		im.PopClipRect()
+	}
 	for i in lui.top ..< min(lui.top + ROWS, n) {
+		if lui.math {break}
 		r := lui.rows[i]
 		y := list.y + f32(i - lui.top) * ROW_H
 		im.SetCursorScreenPos({list.x, y})
@@ -484,11 +581,11 @@ draw_launcher :: proc(w: f32) {
 			if e.tones {keys = strings.concatenate({keys, "   + “dark”, “light”… skin tones"}, context.temp_allocator)}
 		}
 	}
-	draw_text(fonts.ui, SZ_SMALL, {fp.x + 2, fp.y}, col32(C_FAINT), keys)
-	if n > 0 {
+	draw_text(fonts.ui, SZ_SMALL + 1, {fp.x + 2, fp.y}, col32(C_FAINT), keys)
+	if n > 0 && !lui.math {
 		cnt := fmt.tprintf("%d / %d", lui.sel + 1, n)
-		csz := measure(fonts.ui, SZ_SMALL, cnt)
-		draw_text(fonts.ui, SZ_SMALL, {fp.x + w - csz.x - 2, fp.y}, col32(C_FAINT), cnt)
+		csz := measure(fonts.ui, SZ_SMALL + 1, cnt)
+		draw_text(fonts.ui, SZ_SMALL + 1, {fp.x + w - csz.x - 2, fp.y}, col32(C_FAINT), cnt)
 	}
 	im.Dummy({w, 16})
 }
@@ -498,13 +595,13 @@ draw_launcher :: proc(w: f32) {
 draw_row :: proc(r: Row, pos: Vec2, w: f32, selected: bool, loads: ^int) -> bool {
 	d := dl()
 	ip := Vec2{pos.x, pos.y + (ROW_H - 2 - ICON_SZ) / 2}
-	tx := pos.x + ICON_SZ + 14
+	tx := pos.x + ICON_SZ + 16
 	title, sub: string
 	glyph_badge :: proc(ip: Vec2, glyph: string, col: u32) {
 		d := dl()
 		im.DrawList_AddRectFilled(d, ip, {ip.x + ICON_SZ, ip.y + ICON_SZ}, col32(col, 0.18), 9)
-		gsz := measure(fonts.ui, 18, glyph)
-		draw_text(fonts.ui, 18, {ip.x + (ICON_SZ - gsz.x) / 2, ip.y + (ICON_SZ - gsz.y) / 2}, col32(col), glyph)
+		gsz := measure(fonts.ui, 22, glyph)
+		draw_text(fonts.ui, 22, {ip.x + (ICON_SZ - gsz.x) / 2, ip.y + (ICON_SZ - gsz.y) / 2}, col32(col), glyph)
 	}
 	chip_clicked := false
 	switch r.kind {
@@ -523,8 +620,8 @@ draw_row :: proc(r: Row, pos: Vec2, w: f32, selected: bool, loads: ^int) -> bool
 			col := app_color(app.name)
 			im.DrawList_AddRectFilled(d, ip, {ip.x + ICON_SZ, ip.y + ICON_SZ}, col32(col, 0.2), 9)
 			ini := app_initial(app.name)
-			isz := measure(fonts.bold, 16, ini)
-			draw_text(fonts.bold, 16, {ip.x + (ICON_SZ - isz.x) / 2, ip.y + (ICON_SZ - isz.y) / 2}, col32(col), ini)
+			isz := measure(fonts.bold, 19, ini)
+			draw_text(fonts.bold, 19, {ip.x + (ICON_SZ - isz.x) / 2, ip.y + (ICON_SZ - isz.y) / 2}, col32(col), ini)
 		}
 		title = app.name
 		sub = app.generic != "" && app.comment != "" && app.generic != app.comment ? strings.concatenate({app.generic, " · ", app.comment}, context.temp_allocator) : app.generic != "" ? app.generic : app.comment
@@ -557,8 +654,8 @@ draw_row :: proc(r: Row, pos: Vec2, w: f32, selected: bool, loads: ^int) -> bool
 			im.DrawList_AddImage(d, im.TextureRef{_TexID = icon_texture(pic)}, ep, {ep.x + EMOJI_SZ, ep.y + EMOJI_SZ})
 		} else if cached {
 			// No colour emoji font (or no Pango): the UI font's attempt.
-			gsz := measure(fonts.ui, 24, e.ch)
-			draw_text(fonts.ui, 24, {ip.x + (ICON_SZ - gsz.x) / 2, ip.y + (ICON_SZ - gsz.y) / 2}, col32(C_TEXT), e.ch)
+			gsz := measure(fonts.ui, 30, e.ch)
+			draw_text(fonts.ui, 30, {ip.x + (ICON_SZ - gsz.x) / 2, ip.y + (ICON_SZ - gsz.y) / 2}, col32(C_TEXT), e.ch)
 		}
 		title = strings.concatenate({strings.to_upper(e.name[:1], context.temp_allocator), e.name[1:]}, context.temp_allocator)
 		sub = e.keywords != "" ? strings.concatenate({e.group, " · ", e.keywords}, context.temp_allocator) : e.group
@@ -566,10 +663,10 @@ draw_row :: proc(r: Row, pos: Vec2, w: f32, selected: bool, loads: ^int) -> bool
 		glyph_badge(ip, ICON_CALC, C_ORANGE)
 		formats := calc_formats(lui.calc_v)
 		res := strings.concatenate({"= ", formats[0].text}, context.temp_allocator)
-		draw_text(fonts.mono, 17, {tx, pos.y + 6}, col32(C_TEXT), fit(fonts.mono, 17, res, w - (tx - pos.x)))
+		draw_text(fonts.mono, 19, {tx, pos.y + 8}, col32(C_TEXT), fit(fonts.mono, 19, res, w - (tx - pos.x)))
 		// Other formats as chips: click copies.
 		x := tx
-		y := pos.y + 29
+		y := pos.y + 36
 		for f in formats[1:] {
 			if strings.has_prefix(f.label, "oct") || strings.has_prefix(f.label, "f32") {continue}
 			lab := lui.copied == f.label ? "copied" : f.label
@@ -591,7 +688,7 @@ draw_row :: proc(r: Row, pos: Vec2, w: f32, selected: bool, loads: ^int) -> bool
 				delete(lui.copied)
 				lui.copied = ""
 			}
-			im.DrawList_AddRectFilled(d, {x, y - 1}, {x + cw, y + 17}, col32(hov ? 0x2a2f3b : C_CARD_HI), 6)
+			im.DrawList_AddRectFilled(d, {x, y - 1}, {x + cw, y + 17}, col32(hov ? C_BORDER : C_CARD_HI), 6)
 			lw := measure(fonts.ui, SZ_SMALL - 1, lab).x
 			draw_text(fonts.ui, SZ_SMALL - 1, {x + 6, y + 1}, col32(lab == "copied" ? C_GREEN : C_MUTED), lab)
 			draw_text(fonts.mono, SZ_SMALL, {x + 12 + lw, y}, col32(C_TEXT, 0.85), val)
@@ -600,13 +697,13 @@ draw_row :: proc(r: Row, pos: Vec2, w: f32, selected: bool, loads: ^int) -> bool
 		return chip_clicked
 	}
 	right: f32 = selected ? 30 : 0
-	draw_text(fonts.bold, SZ_BODY + 1, {tx, pos.y + (sub != "" ? 8 : 16)}, col32(C_TEXT), fit(fonts.bold, SZ_BODY + 1, title, w - (tx - pos.x) - right))
+	draw_text(fonts.bold, TITLE_SZ, {tx, pos.y + (sub != "" ? 10 : 19)}, col32(C_TEXT), fit(fonts.bold, TITLE_SZ, title, w - (tx - pos.x) - right))
 	if sub != "" {
-		draw_text(fonts.ui, SZ_SMALL + 0.5, {tx, pos.y + 28}, col32(C_MUTED), fit(fonts.ui, SZ_SMALL + 0.5, sub, w - (tx - pos.x) - right))
+		draw_text(fonts.ui, SUB_SZ, {tx, pos.y + 33}, col32(C_MUTED), fit(fonts.ui, SUB_SZ, sub, w - (tx - pos.x) - right))
 	}
 	if selected {
-		rsz := measure(fonts.ui, 16, ICON_RETURN)
-		draw_text(fonts.ui, 16, {pos.x + w - rsz.x, pos.y + (ROW_H - 2 - rsz.y) / 2}, col32(C_MUTED), ICON_RETURN)
+		rsz := measure(fonts.ui, 18, ICON_RETURN)
+		draw_text(fonts.ui, 18, {pos.x + w - rsz.x, pos.y + (ROW_H - 2 - rsz.y) / 2}, col32(C_MUTED), ICON_RETURN)
 	}
 	return false
 }

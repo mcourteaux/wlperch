@@ -224,28 +224,13 @@ draw_calculator :: proc(w: f32) {
 	}
 	dim: f32 = (text != "" && err != "") ? 0.45 : 1
 	formats := calc_formats(v)
-	dec := formats[0] // grouped digits; copies without them
-	prefix := showing_ans ? "ans = " : "= "
-	size: f32 = SZ_BIG
-	for size > 14 && measure(fonts.mono, size, strings.concatenate({prefix, dec.text}, context.temp_allocator)).x > inner - 24 {size -= 1}
-	rp := im.GetCursorScreenPos()
-	pw := measure(fonts.mono, size, prefix).x
-	dw := measure(fonts.mono, size, dec.text).x
-	im.SetCursorScreenPos({rp.x + pw, rp.y})
-	if im.InvisibleButton("##calcresult", {dw, size + 4}) {copy_format(dec)}
-	hovered := im.IsItemHovered()
-	if hovered {im.SetMouseCursor(.Hand)}
-	draw_text(fonts.mono, size, rp, col32(C_MUTED, dim), prefix)
-	draw_text(fonts.mono, size, {rp.x + pw, rp.y}, col32(C_TEXT, dim), dec.text)
-	if calc.copied == dec.label {
-		draw_text(fonts.ui, SZ_SMALL, {rp.x + pw + dw + 10, rp.y + size - 14}, col32(C_GREEN), "copied")
-	} else if hovered {
-		draw_text(fonts.ui, 14, {rp.x + pw + dw + 8, rp.y + size - 16}, col32(C_MUTED), ICON_COPY)
+	clicked := calc_result_big(formats[0], showing_ans ? "ans = " : "= ", inner, dim, &calc.copied)
+	if calc_tiles(formats[1:], inner, dim, &calc.copied) {clicked = true}
+	if clicked {
+		// Back to the field, cursor at the end, to keep typing.
+		calc_set_text(calc_text())
+		calc.refocus = true
 	}
-	if !hovered && calc.copied == dec.label {forget_copied()}
-	im.SetCursorScreenPos({rp.x, rp.y + size + 8})
-
-	calc_tiles(formats[1:], inner, dim)
 
 	// History, newest first; a click puts the expression back.
 	if len(calc.history) > 0 {
@@ -305,20 +290,45 @@ calc_help :: proc(inner: f32) {
 	im.Dummy({1, 2})
 }
 
+// Put a format on the clipboard; `copied` names it (until the pointer leaves).
 @(private = "file")
-copy_format :: proc(f: Calc_Format) {
+copy_format :: proc(f: Calc_Format, copied: ^string) {
 	run_async({"wl-copy", "--", f.copy})
-	delete(calc.copied)
-	calc.copied = strings.clone(f.label)
-	// Back to the field, cursor at the end, to keep typing.
-	calc_set_text(calc_text())
-	calc.refocus = true
+	delete(copied^)
+	copied^ = strings.clone(f.label)
 }
 
 @(private = "file")
-forget_copied :: proc() {
-	delete(calc.copied)
-	calc.copied = ""
+forget_copied :: proc(copied: ^string) {
+	delete(copied^)
+	copied^ = ""
+}
+
+// The big "= result" line (click copies the decimal); true when clicked.
+// Shared with the launcher's math mode.
+calc_result_big :: proc(dec: Calc_Format, prefix: string, inner, dim: f32, copied: ^string) -> (clicked: bool) {
+	size: f32 = SZ_BIG
+	for size > 14 && measure(fonts.mono, size, strings.concatenate({prefix, dec.text}, context.temp_allocator)).x > inner - 24 {size -= 1}
+	rp := im.GetCursorScreenPos()
+	pw := measure(fonts.mono, size, prefix).x
+	dw := measure(fonts.mono, size, dec.text).x
+	im.SetCursorScreenPos({rp.x + pw, rp.y})
+	if im.InvisibleButton("##calcresult", {max(dw, 1), size + 4}) {
+		copy_format(dec, copied)
+		clicked = true
+	}
+	hovered := im.IsItemHovered()
+	if hovered {im.SetMouseCursor(.Hand)}
+	draw_text(fonts.mono, size, rp, col32(C_MUTED, dim), prefix)
+	draw_text(fonts.mono, size, {rp.x + pw, rp.y}, col32(C_TEXT, dim), dec.text)
+	if copied^ == dec.label {
+		draw_text(fonts.ui, SZ_SMALL, {rp.x + pw + dw + 10, rp.y + size - 14}, col32(C_GREEN), "copied")
+	} else if hovered {
+		draw_text(fonts.ui, 14, {rp.x + pw + dw + 8, rp.y + size - 16}, col32(C_MUTED), ICON_COPY)
+	}
+	if !hovered && copied^ == dec.label {forget_copied(copied)}
+	im.SetCursorScreenPos({rp.x, rp.y + size + 8})
+	return
 }
 
 // Cut `s` with an ellipsis to fit `w`.
@@ -348,9 +358,9 @@ wrap_groups :: proc(font: ^im.Font, size: f32, s: string, w: f32) -> []string {
 	return lines[:]
 }
 
-// The formats as tiles: two per row when they fit, full width otherwise.
-@(private = "file")
-calc_tiles :: proc(formats: []Calc_Format, inner, dim: f32) {
+// The formats as tiles: two per row when they fit, full width otherwise;
+// a click copies one (true). Shared with the launcher's math mode.
+calc_tiles :: proc(formats: []Calc_Format, inner, dim: f32, copied: ^string) -> (any_clicked: bool) {
 	GAP :: 8
 	PAD :: 10
 	half := (inner - GAP) / 2
@@ -381,19 +391,22 @@ calc_tiles :: proc(formats: []Calc_Format, inner, dim: f32) {
 			im.SetCursorScreenPos({x, y})
 			clicked := im.InvisibleButton(cstr(fmt.tprintf("##calctile%s", f.label)), {tile_w, tile_h})
 			hovered := im.IsItemHovered()
-			if clicked {copy_format(f)}
-			if !hovered && calc.copied == f.label {forget_copied()}
+			if clicked {
+				copy_format(f, copied)
+				any_clicked = true
+			}
+			if !hovered && copied^ == f.label {forget_copied(copied)}
 			d := dl()
-			im.DrawList_AddRectFilled(d, {x, y}, {x + tile_w, y + tile_h}, col32(hovered ? 0x2a2f3b : C_CARD_HI, 1), 10)
+			im.DrawList_AddRectFilled(d, {x, y}, {x + tile_w, y + tile_h}, col32(hovered ? C_BORDER : C_CARD_HI, 1), 10)
 			lab := f.label
 			lab_col := col32(C_MUTED, dim)
-			if calc.copied == f.label {
+			if copied^ == f.label {
 				lab, lab_col = "copied", col32(C_GREEN)
 			} else if hovered {
 				im.SetMouseCursor(.Hand)
 			}
 			draw_text(fonts.bold, SZ_SMALL, {x + PAD, y + PAD - 1}, lab_col, strings.to_upper(lab, context.temp_allocator))
-			if hovered && calc.copied != f.label {
+			if hovered && copied^ != f.label {
 				isz := measure(fonts.ui, 14, ICON_COPY)
 				draw_text(fonts.ui, 14, {x + tile_w - PAD - isz.x, y + PAD - 2}, col32(C_MUTED), ICON_COPY)
 			}
@@ -405,4 +418,5 @@ calc_tiles :: proc(formats: []Calc_Format, inner, dim: f32) {
 		im.Dummy({inner, 0})
 		i += len(row)
 	}
+	return
 }
