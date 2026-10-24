@@ -243,6 +243,7 @@ SETTINGS := [?]Setting {
 	{group = "Lock screen", section = "lock", key = "screenshot_blur", label = "Screen blur strength", kind = .Int, apply = .Lock, ilim = LIM_LOCK_SCREENSHOT_BLUR, slider = true},
 	{group = "Lock screen", section = "lock", key = "show_notifications", label = "Notification count", kind = .Bool, apply = .Lock},
 	{group = "Lock screen", section = "lock", key = "show_media", label = "Playing track", kind = .Bool, apply = .Lock, help = "Show what's playing, with play / pause."},
+	{group = "Lock screen", section = "lock", key = "show_bluetooth", label = "Bluetooth devices", kind = .Bool, apply = .Lock, help = "Connected devices with their battery, when the daemon runs."},
 	// Time tracking
 	{group = "Time tracking", section = "timetracker", key = "idle_seconds", label = "Break after", kind = .Int, apply = .Daemon, ilim = LIM_IDLE_SECONDS, step = 30, unit = "s", old_section = "timetracker", old_key = "idle_minutes", old_scale = 60},
 	// GitHub

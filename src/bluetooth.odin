@@ -3,6 +3,7 @@
 package main
 
 import "core:encoding/json"
+import "core:fmt"
 import "core:strings"
 import "core:sync"
 import "core:thread"
@@ -188,4 +189,34 @@ bluetooth_start :: proc() {
 			for sync.sema_wait_with_timeout(&trigger, 0) {}
 		}
 	})
+}
+
+// For the lock screen ("lockinfo"): one line per connected device,
+//   bt <battery %, -1 unknown> <charging 0|1> <BlueZ icon or -> <name>
+// Nothing while Bluetooth is off. Older lock clients ignore unknown keys.
+// A lock screen asks every few seconds; it gets fresher data than the
+// 60 s background poll, but at most one extra refresh per 30 s.
+@(private = "file")
+lock_refresh_at: time.Tick
+
+bluetooth_lock_lines :: proc(b: ^strings.Builder) {
+	if lock_refresh_at == {} || time.tick_since(lock_refresh_at) >= 30 * time.Second {
+		lock_refresh_at = time.tick_now()
+		bluetooth_refresh_async()
+	}
+	sync.guard(&bluetooth.mu)
+	if !bluetooth.ok || !bluetooth.powered {return}
+	for d in bluetooth.devices {
+		if !d.connected {continue}
+		icon := d.icon
+		if icon == "" || strings.contains_any(icon, " \t\r\n") {icon = "-"}
+		fmt.sbprintf(b, "bt %d %d %s ", clamp(d.battery, -1, 100), int(d.charging), icon)
+		n := 0
+		for r in d.name {
+			if n == 48 {break}
+			strings.write_rune(b, r < ' ' ? ' ' : r)
+			n += 1
+		}
+		strings.write_byte(b, '\n')
+	}
 }

@@ -71,6 +71,7 @@ Config :: struct {
 	lock_dim:           f32,
 	lock_notifications: bool,
 	lock_media:         bool,
+	lock_bluetooth:     bool,
 
 	lock_background_light: u32, // used instead with the light theme (no image)
 
@@ -194,10 +195,12 @@ dim = 0.35
 # How strongly the screenshot is blurred with background_mode = blur
 # (0..100). Even 0 blurs by a ~20 px radius so no text stays readable.
 screenshot_blur = 60
-# Show the unread notification count (and which apps) / the playing track.
+# Show the unread notification count (and which apps) / the playing track /
+# connected Bluetooth devices with their battery (needs the daemon).
 # Notification text is never shown on the lock screen.
 show_notifications = true
 show_media = true
+show_bluetooth = true
 
 [launcher]
 # The app launcher: "wlperch toggle launch --center" (apps, calculator,
@@ -515,6 +518,7 @@ config_load :: proc() {
 	c.lock_dim = f32(parse_float_lim(get(m, defaults, "lock", "dim"), LIM_LOCK_DIM))
 	c.lock_notifications = parse_bool(get(m, defaults, "lock", "show_notifications"), true)
 	c.lock_media = parse_bool(get(m, defaults, "lock", "show_media"), true)
+	c.lock_bluetooth = parse_bool(get(m, defaults, "lock", "show_bluetooth"), true)
 
 	c.lock_background_light = parse_hex_color(get(m, defaults, "lock", "background_light"), 0xe9ebf0)
 

@@ -2,7 +2,8 @@
 // re-execs and crashes can't touch it) holding an ext-session-lock-v1 lock.
 // One software-rendered surface per output: the focused one gets the clock,
 // password field and a status row (unread notification count, what's
-// playing, battery); the others just the clock.
+// playing, battery) with connected Bluetooth devices above it; the others
+// just the clock.
 //
 // The lock is only ever released after PAM accepted the password. Every
 // error path exits without unlocking; the compositor then keeps the session
@@ -73,6 +74,7 @@ Lock_Info :: struct {
 	charging: bool,
 	weather:  string,
 	pam_msg:  string, // e.g. a fingerprint prompt
+	bt:       string, // the daemon's "bt" lines (see bluetooth_lock_lines)
 }
 
 @(private = "file")
@@ -515,6 +517,7 @@ info_thread :: proc() {
 	for {
 		unread, dnd := -1, false
 		apps, weather_s: string
+		bt := strings.builder_make(context.temp_allocator)
 		if reply, ok := ipc_query("lockinfo"); ok {
 			for line in strings.split_lines(reply, context.temp_allocator) {
 				k, _, v := strings.partition(line, " ")
@@ -523,6 +526,7 @@ info_thread :: proc() {
 				case "dnd":     dnd = v == "1"
 				case "apps":    apps = v
 				case "weather": weather_s = v
+				case "bt":      if config.lock_bluetooth {fmt.sbprintln(&bt, v)}
 				}
 			}
 		}
@@ -550,13 +554,15 @@ info_thread :: proc() {
 		{
 			sync.guard(&info.mu)
 			changed := info.unread != unread || info.dnd != dnd || info.apps != apps || info.media != media_s ||
-				info.playing != playing || info.battery != bat || info.charging != charging || info.weather != weather_s
+				info.playing != playing || info.battery != bat || info.charging != charging || info.weather != weather_s ||
+				info.bt != strings.to_string(bt)
 			if changed {
-				delete(info.apps); delete(info.media); delete(info.weather)
+				delete(info.apps); delete(info.media); delete(info.weather); delete(info.bt)
 				info.unread, info.dnd, info.playing, info.battery, info.charging = unread, dnd, playing, bat, charging
 				info.apps = strings.clone(apps)
 				info.media = strings.clone(media_s)
 				info.weather = strings.clone(weather_s)
+				info.bt = strings.clone(strings.to_string(bt))
 				wake('i')
 			}
 		}
@@ -618,6 +624,7 @@ lock_info_reply :: proc() -> string {
 			fmt.sbprintf(&b, "weather %s %.0f°\n", icon, weather.temp)
 		}
 	}
+	bluetooth_lock_lines(&b)
 	return strings.to_string(b)
 }
 
@@ -845,6 +852,7 @@ draw_ui :: proc(cv: ^Cv, W, H: f32, full: bool) {
 		icon, c := battery_glyph(info.battery, info.charging)
 		append(&items, Item{icon, fmt.tprintf("%d%%", info.battery), c})
 	}
+	draw_bt_row(cv, W, H - 44 - (len(items) > 0 ? 34 : 0))
 	if len(items) == 0 {return}
 	SZ :: 15
 	GAP :: 40
@@ -862,6 +870,87 @@ draw_ui :: proc(cv: ^Cv, W, H: f32, full: bool) {
 		text(cv, &soft_regular, SZ, x, base, it.label, lock_fg, 0.8)
 		x += text_w(cv, &soft_regular, SZ, it.label)
 	}
+}
+
+// One lockinfo "bt" line: battery (-1 unknown), charging, BlueZ icon, name.
+Lock_BT :: struct {
+	battery:  int,
+	charging: bool,
+	icon:     string,
+	name:     string,
+}
+
+lock_bt_parse :: proc(line: string) -> (d: Lock_BT, ok: bool) {
+	f := strings.fields(line, context.temp_allocator)
+	if len(f) < 3 {return}
+	d.battery = clamp(strconv.parse_int(f[0]) or_else -1, -1, 100)
+	d.charging = f[1] == "1"
+	d.icon = f[2] == "-" ? "" : f[2]
+	// The name is everything after the third field, inner spaces kept.
+	rest := line
+	for _ in 0 ..< 3 {
+		_, _, rest = strings.partition(strings.trim_left_space(rest), " ")
+	}
+	d.name = strings.trim_space(rest)
+	if d.name == "" {d.name = "Bluetooth device"}
+	return d, true
+}
+
+// Connected Bluetooth devices, centred on one line above the status row:
+// icon, name, and the battery when known (red at 20 % or less). Devices that
+// don't fit become "+N". Caller holds info.mu.
+@(private = "file")
+draw_bt_row :: proc(cv: ^Cv, W, base: f32) {
+	if info.bt == "" {return}
+	SZ :: 14
+	GAP :: 28
+	Dev :: struct {icon, name, bat_icon, bat: string, bat_col: u32, w: f32}
+	devs: [dynamic]Dev
+	devs.allocator = context.temp_allocator
+	lines := info.bt
+	for line in strings.split_lines_iterator(&lines) {
+		d := lock_bt_parse(line) or_continue
+		v := Dev{icon = bt_icon(d.icon), name = clip(d.name, 24)}
+		v.w = text_w(cv, &soft_regular, SZ + 2, v.icon) + 6 + text_w(cv, &soft_regular, SZ, v.name)
+		if d.battery >= 0 {
+			v.bat_icon, v.bat_col = battery_glyph(d.battery, d.charging)
+			if !d.charging && d.battery <= 20 {v.bat_col = C_RED}
+			v.bat = fmt.tprintf("%d%%", d.battery)
+			v.w += 10 + text_w(cv, &soft_regular, SZ + 1, v.bat_icon) + 2 + text_w(cv, &soft_regular, SZ, v.bat)
+		}
+		append(&devs, v)
+	}
+	if len(devs) == 0 {return}
+	n := len(devs)
+	more := ""
+	total: f32
+	for {
+		total = 0
+		for d, i in devs {total += d.w + (i > 0 ? GAP : 0)}
+		if len(devs) < n {
+			more = fmt.tprintf("+%d", n - len(devs))
+			total += GAP + text_w(cv, &soft_regular, SZ, more)
+		}
+		if total <= W - 64 || len(devs) == 1 {break}
+		pop(&devs)
+	}
+	x := W / 2 - total / 2
+	for d, i in devs {
+		if i > 0 {x += GAP}
+		text(cv, &soft_regular, SZ + 2, x, base + 1, d.icon, lock_fg, 0.6)
+		x += text_w(cv, &soft_regular, SZ + 2, d.icon) + 6
+		text(cv, &soft_regular, SZ, x, base, d.name, lock_fg, 0.7)
+		x += text_w(cv, &soft_regular, SZ, d.name)
+		if d.bat_icon != "" {
+			low := d.bat_col == C_RED
+			x += 10
+			text(cv, &soft_regular, SZ + 1, x, base + 1, d.bat_icon, d.bat_col)
+			x += text_w(cv, &soft_regular, SZ + 1, d.bat_icon) + 2
+			text(cv, &soft_regular, SZ, x, base, d.bat, low ? C_RED : lock_fg, low ? 1 : 0.7)
+			x += text_w(cv, &soft_regular, SZ, d.bat)
+		}
+	}
+	if more != "" {text(cv, &soft_regular, SZ, x + GAP, base, more, lock_fg, 0.5)}
 }
 
 @(private = "file")

@@ -25,7 +25,7 @@ pressing <kbd>Esc</kbd>, closes it.
 | **Bluetooth** | Connected and paired devices with battery level (BlueZ `Battery1`, falling back to UPower). Click a device to connect or disconnect it. |
 | **Notifications** | wlperch is the desktop notification server (see [Notifications](#notifications)): popups in the top-right corner, and this panel keeps the history of the last 7 days, grouped by day, with unread dots, action buttons for notifications the app still listens to, remove / clear all, and do not disturb. |
 | **Calculator** | Type an expression and the result updates as you type: `sqrt(2) * 0x10`, `floor(7/2)`, `sin(pi/6)`, `5!`, `0xff & ~0b1010`, `2pi`. Shows it as decimal, hex, octal and binary (integers; negatives as 64-bit two's complement) and as IEEE-754: f64 and f32 bit patterns and a C hex float literal (`0x1.8p+1`). Click any of them to copy it. Integers stay exact up to 128 bits. Enter keeps the result as `ans` (an expression starting with an operator continues from it), Up/Down recall the history, RAD/DEG switches the angle unit, and **?** lists the syntax. It has its own popup for a key binding (`wlperch toggle calc`, which takes the keyboard right away), and `wlperch calc <expression>` prints every format in a terminal. |
-| **Lock screen** | `wlperch lock` replaces swaylock (see [Lock screen](#lock-screen)): a big clock and date, the password field, Caps Lock and keyboard layout, and a status row with the unread notification count (and which apps), what's playing and the battery. |
+| **Lock screen** | `wlperch lock` replaces swaylock (see [Lock screen](#lock-screen)): a big clock and date, the password field, Caps Lock and keyboard layout, and a status row with the unread notification count (and which apps), what's playing, the battery and connected Bluetooth devices. |
 | **Storage** | Each drive with its mounted volumes: free space and a fill bar (orange from 85 %, red from 95 %). Click a volume to open it in the file manager. External drives (USB / hotplug) also list unmounted volumes with a **Mount** button, and an **eject** button unmounts everything and powers the drive off (udisks, no root needed). Boot, EFI and swap partitions are hidden. While the popup is open, drives you plug in show up within a few seconds. |
 
 ### How the HDMI audio → monitor mapping works
@@ -350,7 +350,11 @@ locked, which is what swayidle's `before-sleep` needs.
   the bottom:
   - the unread notification count and which apps sent them, never their text;
   - what's playing (any MPRIS player);
-  - the battery.
+  - the battery;
+  - above it, the connected Bluetooth devices with their battery when known
+    (red at 20 % or less); hidden when none are connected or Bluetooth is
+    off. While the screen is locked the daemon re-reads BlueZ at most every
+    30 s.
 - **Other monitors:** show only the clock.
 - **Password:** checked with PAM, in a separate thread so the clock keeps
   running. The PAM service is `swaylock` when `/etc/pam.d/swaylock` exists,
@@ -804,6 +808,7 @@ blur = 0                      # blur the picture this much (e.g. 16); 0 = sharp
 dim = 0.35                    # darken the picture (0..1)
 show_notifications = true     # unread count + app names (never the text)
 show_media = true             # the playing track
+show_bluetooth = true         # connected Bluetooth devices and their battery
 
 [launcher]
 terminal =                    # for Terminal=true apps, e.g. "alacritty -e"; empty: $TERMINAL, sway's $term, …
