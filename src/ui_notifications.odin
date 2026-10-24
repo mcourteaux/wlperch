@@ -167,6 +167,7 @@ draw_notifications :: proc(w: f32) {
 	act_id: u32
 	act_key: string
 	remove_id: u32
+	clear_day := ""
 	day := ""
 	for i := len(notifs.list) - 1; i >= 0; i -= 1 {
 		n := notifs.list[i]
@@ -174,8 +175,24 @@ draw_notifications :: proc(w: f32) {
 		if dlab := day_label(n.at); dlab != day {
 			day = dlab
 			im.Dummy({1, 4})
-			label(fonts.bold, SZ_SMALL, col32(C_FAINT), strings.to_upper(day, context.temp_allocator))
+			hp := im.GetCursorScreenPos()
+			title := strings.to_upper(day, context.temp_allocator)
+			label(fonts.bold, SZ_SMALL, col32(C_FAINT), title)
 			im.Dummy({1, 2})
+			// "Clear" right after the day's title: removes that day's entries.
+			cl := "Clear"
+			cx := hp.x + measure(fonts.bold, SZ_SMALL, title).x + 10
+			csz := measure(fonts.ui, SZ_SMALL, cl)
+			back := im.GetCursorScreenPos()
+			im.SetCursorScreenPos({cx - 4, hp.y - 2})
+			if im.InvisibleButton(cstr(fmt.tprintf("##clr-%s", day)), {csz.x + 8, csz.y + 4}) {clear_day = day}
+			ch := im.IsItemHovered()
+			if ch {
+				im.SetMouseCursor(.Hand)
+				tip(fmt.tprintf("Remove the notifications of %s", strings.to_lower(day, context.temp_allocator)))
+			}
+			draw_text(fonts.ui, SZ_SMALL, {cx, hp.y}, col32(ch ? C_TEXT : C_FAINT, ch ? 0.9 : 0.7), cl)
+			im.SetCursorScreenPos(back)
 		}
 		p := im.GetCursorScreenPos()
 		// The icon fills the smallest row (app line + summary) between its paddings.
@@ -261,4 +278,10 @@ draw_notifications :: proc(w: f32) {
 		hide_requested = true
 	}
 	if remove_id != 0 {notif_remove(remove_id)}
+	if clear_day != "" {
+		ids: [dynamic]u32
+		ids.allocator = context.temp_allocator
+		for n in notifs.list {if !n.transient && day_label(n.at) == clear_day {append(&ids, n.id)}}
+		for id in ids {notif_remove(id)}
+	}
 }
