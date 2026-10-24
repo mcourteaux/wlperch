@@ -19,6 +19,7 @@ import "core:fmt"
 import "core:log"
 import "core:math"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:sys/linux"
 import "core:sys/posix"
@@ -976,16 +977,48 @@ bar_lock :: proc() -> bool {
 	fd := posix.open(path, {.CREAT, .RDWR, .CLOEXEC}, {.IRUSR, .IWUSR})
 	if fd < 0 {return true}
 	// sway's reload starts the new bar while the old one may still be exiting.
-	for _ in 0 ..< 30 {
-		if linux.flock(linux.Fd(fd), {.EX, .NB}) == .NONE {return true}
+	// A bar that doesn't go away (started by hand or by setup, which sway
+	// doesn't stop) is asked to quit: the newest bar wins.
+	for i in 0 ..< 60 {
+		if linux.flock(linux.Fd(fd), {.EX, .NB}) == .NONE {
+			posix.ftruncate(fd, 0)
+			pid := fmt.tprintf("%d", posix.getpid())
+			posix.pwrite(fd, raw_data(pid), len(pid), 0)
+			return true
+		}
+		if i == 10 || i == 40 {
+			buf: [16]u8
+			n := posix.pread(fd, &buf[0], len(buf), 0)
+			old, ok := strconv.parse_int(strings.trim_space(string(buf[:max(n, 0)])))
+			// Only a bar: the pid may be stale and reused by something else.
+			comm, _ := os.read_entire_file(fmt.tprintf("/proc/%d/comm", old), context.temp_allocator)
+			if ok && old > 1 && old != int(posix.getpid()) && strings.trim_space(string(comm)) == "wlperch-bar" {
+				fmt.eprintfln("wlperch bar: asking the previous bar (pid %d) to quit", old)
+				posix.kill(posix.pid_t(old), i == 10 ? .SIGTERM : .SIGKILL)
+			}
+		}
 		time.sleep(100 * time.Millisecond)
 	}
 	posix.close(fd)
 	return false
 }
 
+// Started by sway, stderr goes nowhere visible: keep it in a log file.
+@(private = "file")
+bar_log_to_file :: proc() {
+	if posix.isatty(2) {return}
+	dir := posix_getenv("XDG_RUNTIME_DIR")
+	if dir == "" {dir = "/tmp"}
+	path := fmt.ctprintf("%s/wlperch-bar-%s.log", dir, posix_getenv("WAYLAND_DISPLAY"))
+	fd := posix.open(path, {.CREAT, .WRONLY, .TRUNC, .CLOEXEC}, {.IRUSR, .IWUSR})
+	if fd < 0 {return}
+	posix.dup2(fd, 2)
+	posix.close(fd)
+}
+
 bar_main :: proc(args: []string) -> int {
 	g_bar_ctx = context
+	bar_log_to_file()
 	if !bar_lock() {
 		fmt.eprintln("wlperch bar: already running on this display")
 		return 1
