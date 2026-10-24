@@ -351,15 +351,23 @@ segmented :: proc(id: string, items: []string, active: int, accent: u32) -> int 
 // now. Live (the default) follows the newest sample; zooming or dragging into
 // the past freezes the view there until it's double-clicked.
 Graph_View :: struct {
-	span:   f64,       // seconds shown (0 = config.history_seconds)
-	back:   f64,       // age of the right edge when frozen (seconds)
-	frozen: time.Tick, // when back was set; {} = live
+	span:     f64,       // seconds shown (0 = def_span)
+	back:     f64,       // age of the right edge when frozen (seconds)
+	frozen:   time.Tick, // when back was set; {} = live
+	def_span: f64,       // span when not zoomed (0 = config.history_seconds)
+	max_span: f64,       // how far it zooms out (0 = the perf histories' reach)
 }
 perf_view: Graph_View // shared by the system panel's graphs so they stay aligned
 
 GRAPH_MIN_SPAN :: 10
 
-view_span :: proc(v: ^Graph_View) -> f64 {return v.span > 0 ? v.span : f64(config.history_seconds)}
+view_span :: proc(v: ^Graph_View) -> f64 {
+	if v.span > 0 {return v.span}
+	return v.def_span > 0 ? v.def_span : f64(config.history_seconds)
+}
+
+@(private = "file")
+view_limit :: proc(v: ^Graph_View) -> f64 {return v.max_span > 0 ? v.max_span : graph_span_limit()}
 
 // Age (in seconds) of the view's right edge; grows while frozen so the view stays put.
 view_back :: proc(v: ^Graph_View) -> f64 {
@@ -369,7 +377,7 @@ view_back :: proc(v: ^Graph_View) -> f64 {
 
 @(private = "file")
 view_set :: proc(v: ^Graph_View, span, back: f64) {
-	limit := graph_span_limit()
+	limit := view_limit(v)
 	v.span = clamp(span, GRAPH_MIN_SPAN, limit)
 	b := clamp(back, 0, limit - v.span)
 	if b < 0.5 {
@@ -379,8 +387,13 @@ view_set :: proc(v: ^Graph_View, span, back: f64) {
 	}
 }
 
+// Re-apply the view's limits (after max_span changed).
+graph_view_clamp :: proc(v: ^Graph_View) {
+	if v.span == 0 && v.frozen == {} {return}
+	view_set(v, view_span(v), view_back(v))
+}
+
 // Scroll zooms around the pointer, drag looks back, double-click returns to live.
-@(private = "file")
 graph_view_input :: proc(v: ^Graph_View, id: string, size: Vec2, right_inset: f32) {
 	p := im.GetCursorScreenPos()
 	im.InvisibleButton(cstr(id), size)
@@ -392,13 +405,13 @@ graph_view_input :: proc(v: ^Graph_View, id: string, size: Vec2, right_inset: f3
 		if wheel := im.GetIO().MouseWheel; wheel != 0 {
 			frac := f64(clamp((p.x + w - im.GetMousePos().x) / w, 0, 1))
 			anchor := back + frac * span
-			ns := clamp(span * (wheel > 0 ? 0.8 : 1.25), GRAPH_MIN_SPAN, graph_span_limit())
+			ns := clamp(span * (wheel > 0 ? 0.8 : 1.25), GRAPH_MIN_SPAN, view_limit(v))
 			view_set(v, ns, anchor - frac * ns)
 		} else if wh := im.GetIO().MouseWheelH; wh != 0 {
 			// A notch pans a tenth of the view (>0 = left, into the past).
 			view_set(v, span, back + f64(wh) * 0.1 * span)
 		}
-		if im.IsMouseDoubleClicked(.Left) {v^ = {}}
+		if im.IsMouseDoubleClicked(.Left) {v.span, v.back, v.frozen = 0, 0, {}}
 		im.SetMouseCursor(.ResizeEW)
 		if !im.IsItemActive() && im.IsItemHovered(im.HoveredFlags_DelayNormal) {
 			tip("Scroll to zoom · drag or scroll sideways to look back · double-click: live")
@@ -461,7 +474,6 @@ history_view_max :: proc(h: ^History, v: ^Graph_View) -> f32 {
 	return ok ? m : 0
 }
 
-@(private = "file")
 fmt_age :: proc(s: f64) -> string {
 	if s < 90 {return fmt.tprintf("%ds", int(s + 0.5))}
 	if s < 5400 {return fmt.tprintf("%d min", int(s / 60 + 0.5))}
@@ -626,7 +638,8 @@ sample_graph :: proc(samples: []Sensor_Sample, from, to: f64, color: u32, unit: 
 	d := dl()
 	x0, y0, x1, y1 := p.x, p.y, p.x + size.x, p.y + size.y
 	im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, col32(C_WELL), 6)
-	if len(samples) < 2 {
+	// One sample is a value held through the whole range (reported before it).
+	if len(samples) == 0 {
 		msg := "collecting history…"
 		msz := measure(fonts.ui, SZ_SMALL, msg)
 		draw_text(fonts.ui, SZ_SMALL, {x0 + (size.x - msz.x) / 2, y0 + (size.y - msz.y) / 2}, col32(C_FAINT), msg)

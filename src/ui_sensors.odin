@@ -2,6 +2,7 @@
 package main
 
 import "core:fmt"
+import "core:strings"
 import "core:sync"
 import "core:time"
 
@@ -78,14 +79,12 @@ draw_rooms :: proc(w: f32) {
 		p := im.GetCursorScreenPos()
 		h: f32 = 44
 		im.InvisibleButton(cstr(fmt.tprintf("room:%s", d.id)), {inner, h})
-		if im.IsItemHovered() {
-			im.DrawList_AddRectFilled(dl(), {p.x - 6, p.y}, {p.x + inner + 6, p.y + h}, col32(C_OVERLAY, 0.04), 8)
-			history_tip(&d, d.name, {
-				{"va_temperature", "Temperature", "°", C_ORANGE, 1},
-				{"temp_current", "Temperature", "°", C_ORANGE, 0},
-				{"humidity_value", "Humidity", "%", C_CYAN, 0},
-			})
+		if im.IsItemClicked() {toggle_expanded(d.id)}
+		open := expanded == d.id
+		if im.IsItemHovered() || open {
+			im.DrawList_AddRectFilled(dl(), {p.x - 6, p.y}, {p.x + inner + 6, p.y + h}, col32(C_OVERLAY, open ? 0.06 : 0.04), 8)
 		}
+		if im.IsItemHovered() && !open {history_tip(&d, d.name, ROOM_GRAPHS)}
 		im.SetCursorScreenPos(p)
 		stale := is_stale(d.last_t)
 		alpha: f32 = stale ? 0.45 : 1
@@ -115,6 +114,7 @@ draw_rooms :: proc(w: f32) {
 			draw_text(fonts.bold, 24, {x - tw, p.y + 6}, col32(temp_color(tv.num), alpha), tt)
 		}
 		im.Dummy({inner, h})
+		if open {expanded_graphs(&d, inner, ROOM_GRAPHS)}
 	}
 }
 
@@ -131,14 +131,9 @@ draw_air :: proc(w: f32, d: ^Sensor_Device) {
 	}
 	p := im.GetCursorScreenPos()
 	im.InvisibleButton(cstr(fmt.tprintf("airhover:%s", d.id)), {inner, 44})
-	if im.IsItemHovered() {
-		history_tip(d, d.name, {
-			{"co2_value", "CO₂", " ppm", C_GREEN, 0},
-			{"pm25_value", "PM2.5", " µg/m³", C_YELLOW, 0},
-			{"temp_current", "Temperature", "°", C_ORANGE, 0},
-			{"humidity_value", "Humidity", "%", C_CYAN, 0},
-		})
-	}
+	if im.IsItemClicked() {toggle_expanded(d.id)}
+	open := expanded == d.id
+	if im.IsItemHovered() && !open {history_tip(d, d.name, AIR_GRAPHS)}
 	im.SetCursorScreenPos(p)
 	if co2, ok := num(d, "co2_value"); ok {
 		v := fmt.tprintf("%.0f", co2.num)
@@ -173,6 +168,7 @@ draw_air :: proc(w: f32, d: ^Sensor_Device) {
 		chip({cx, cp.y}, "bat", fmt.tprintf("%.0f%%", b.num), b.num <= 20 ? C_RED : C_MUTED)
 	}
 	im.Dummy({inner, 22})
+	if open {expanded_graphs(d, inner, AIR_GRAPHS)}
 }
 
 @(private = "file")
@@ -189,12 +185,9 @@ draw_heater :: proc(w: f32, d: ^Sensor_Device) {
 	}
 	p := im.GetCursorScreenPos()
 	im.InvisibleButton(cstr(fmt.tprintf("heathover:%s", d.id)), {inner, 28})
-	if im.IsItemHovered() {
-		history_tip(d, d.name, {
-			{"temp_current", "Temperature", "°", C_ORANGE, 0},
-			{"temp_set", "Target", "°", C_MUTED, 0},
-		})
-	}
+	if im.IsItemClicked() {toggle_expanded(d.id)}
+	open := expanded == d.id
+	if im.IsItemHovered() && !open {history_tip(d, d.name, HEATER_GRAPHS)}
 	im.SetCursorScreenPos(p)
 	pill := on ? "ON" : "OFF"
 	pw := measure(fonts.bold, SZ_SMALL, pill).x + 18
@@ -214,6 +207,7 @@ draw_heater :: proc(w: f32, d: ^Sensor_Device) {
 		draw_text(fonts.ui, SZ_SMALL, {p.x + inner - mw, p.y + 8}, col32(C_MUTED), m.text)
 	}
 	im.Dummy({inner, 28})
+	if open {expanded_graphs(d, inner, HEATER_GRAPHS)}
 }
 
 @(private = "file")
@@ -223,14 +217,98 @@ no_data_yet :: proc(inner: f32) {
 }
 
 HISTORY_SPAN :: 24 * 3600.0
+// Sensor history is kept for 7 days (sensors.bin): how far the expanded
+// graphs zoom out.
+SENSOR_SPAN_MAX :: 7 * 24 * 3600.0
+// Sensors report every few minutes at most: zooming in further shows nothing.
+SENSOR_SPAN_MIN :: 30 * 60.0
+
+@(private = "file")
+Sensor_Graph :: struct {
+	code, label, unit: string,
+	color:             u32,
+	decimals:          int,
+}
+
+@(private = "file") ROOM_GRAPHS := []Sensor_Graph {
+	{"va_temperature", "Temperature", "°", C_ORANGE, 1},
+	{"temp_current", "Temperature", "°", C_ORANGE, 0},
+	{"humidity_value", "Humidity", "%", C_CYAN, 0},
+}
+@(private = "file") AIR_GRAPHS := []Sensor_Graph {
+	{"co2_value", "CO₂", " ppm", C_GREEN, 0},
+	{"pm25_value", "PM2.5", " µg/m³", C_YELLOW, 0},
+	{"temp_current", "Temperature", "°", C_ORANGE, 0},
+	{"humidity_value", "Humidity", "%", C_CYAN, 0},
+}
+@(private = "file") HEATER_GRAPHS := []Sensor_Graph {
+	{"temp_current", "Temperature", "°", C_ORANGE, 0},
+	{"temp_set", "Target", "°", C_MUTED, 0},
+}
+
+// The device whose graphs are expanded (clicked), and their shared view.
+@(private = "file") expanded: string
+@(private = "file") sensor_view: Graph_View
+
+@(private = "file")
+toggle_expanded :: proc(id: string) {
+	was := expanded == id
+	delete(expanded)
+	expanded = was ? "" : strings.clone(id)
+	sensor_view = {def_span = HISTORY_SPAN, max_span = SENSOR_SPAN_MAX}
+}
+
+// The graphs that have data, as in the tooltip.
+@(private = "file")
+graph_has_data :: proc(d: ^Sensor_Device, g: Sensor_Graph, from: f64) -> bool {
+	if len(sensor_history(d.id, g.code, from)) > 0 {return true}
+	v, ok := sensor_value(d, g.code)
+	return ok && v.is_num
+}
+
+// Expanded under a clicked sensor: full-width graphs sharing one view that
+// zooms (scroll) and looks back (drag / sideways scroll) like the system
+// panel's, from 30 minutes out to the 7 days stored. Double-click: live.
+@(private = "file")
+expanded_graphs :: proc(d: ^Sensor_Device, inner: f32, graphs: []Sensor_Graph) {
+	now := f64(time.to_unix_seconds(time.now()))
+	// Zoom out and look back only as far as this device's oldest report.
+	oldest := now
+	for g in graphs {
+		if s := sensor_history(d.id, g.code, 0); len(s) > 0 {oldest = min(oldest, s[0].t)}
+	}
+	sensor_view.max_span = clamp(now - oldest, HISTORY_SPAN, SENSOR_SPAN_MAX)
+	if sensor_view.span > 0 {sensor_view.span = max(sensor_view.span, SENSOR_SPAN_MIN)}
+	graph_view_clamp(&sensor_view)
+	span, back := view_span(&sensor_view), view_back(&sensor_view)
+	to := now - back
+	from := to - span
+	H :: 84
+	im.Dummy({inner, 4})
+	for g in graphs {
+		if !graph_has_data(d, g, now - SENSOR_SPAN_MAX) {continue}
+		label(fonts.ui, SZ_SMALL, col32(g.color), g.label)
+		all := sensor_history(d.id, g.code, from)
+		n := len(all)
+		for n > 1 && all[n - 1].t > to {n -= 1} // later than the view: not shown, not scaled for
+		p := im.GetCursorScreenPos()
+		graph_view_input(&sensor_view, fmt.tprintf("sgraph:%s:%s", d.id, g.code), {inner, H}, 0)
+		im.SetCursorScreenPos(p)
+		sample_graph(all[:n], from, to, g.color, g.unit, g.decimals, {inner, H})
+	}
+	// Time axis: the view's edges.
+	ap := im.GetCursorScreenPos()
+	left := fmt.tprintf("%s ago", fmt_age(span + back))
+	right := back < 1 ? "now" : fmt.tprintf("%s ago · double-click: live", fmt_age(back))
+	draw_text(fonts.ui, 10.5, ap, col32(C_FAINT), left)
+	rw := measure(fonts.ui, 10.5, right).x
+	draw_text(fonts.ui, 10.5, {ap.x + inner - rw, ap.y}, col32(C_FAINT), right)
+	im.Dummy({inner, 18})
+}
 
 // Hover tooltip with history graphs for the given codes of a device.
 @(private = "file")
-history_tip :: proc(d: ^Sensor_Device, title: string, graphs: []struct {
-		code, label, unit: string,
-		color:             u32,
-		decimals:          int,
-	}) {
+history_tip :: proc(d: ^Sensor_Device, title: string, graphs: []Sensor_Graph) {
 	now := f64(time.to_unix_seconds(time.now()))
 	from := now - HISTORY_SPAN
 	im.PushStyleVarImVec2(.WindowPadding, {12, 10})
@@ -253,6 +331,7 @@ history_tip :: proc(d: ^Sensor_Device, title: string, graphs: []struct {
 		nw := measure(fonts.ui, 10.5, "now").x
 		draw_text(fonts.ui, 10.5, {ap.x + 300 - nw, ap.y}, col32(C_FAINT), "now")
 		im.Dummy({300, 14})
+		label(fonts.ui, 10.5, col32(C_FAINT), "Click to expand: zoomable, scrollable")
 		note_overlay()
 		im.EndTooltip()
 	}
