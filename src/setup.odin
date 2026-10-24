@@ -6,6 +6,7 @@ package main
 import "core:fmt"
 import "core:log"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:sys/posix"
@@ -1038,10 +1039,12 @@ run_setup :: proc() {
 	im.GetIO().ConfigInputTextCursorBlink = false // frames only on input
 	if len(os.args) > 2 && os.args[2] == "settings" {setup_tab = .Settings}
 	setup_check()
-	if !platform_open_window("wlperch setup", "wlperch-setup", 1440, 880) {
+	win_w, win_h := setup_window_size()
+	if !platform_open_window("wlperch setup", "wlperch-setup", win_w, win_h, SETUP_MIN_W, SETUP_MIN_H) {
 		log.error("couldn't open the setup window")
 		os.exit(1)
 	}
+	saved_size := [2]i32{plat.win.w, plat.win.h}
 	app.show_time = time.tick_now()
 	// Follow "wlperch theme" switches live, like the bar.
 	theme_fd := theme_watch_open()
@@ -1087,9 +1090,59 @@ run_setup :: proc() {
 			plat.redraw -= 1
 			render_setup_frame()
 		}
+		// Remember the floating size once a resize has settled.
+		if size := ([2]i32{plat.win.w, plat.win.h}); size != saved_size && !plat.win.square && !plat.win.resizing {
+			saved_size = size
+			setup_save_window_size(size.x, size.y)
+		}
 		free_all(context.temp_allocator)
 	}
 	platform_hide()
+}
+
+// Two settings columns, and room for the header.
+SETUP_MIN_W :: 2 * SETTINGS_MIN_COL + 14 + 2 * 26
+SETUP_MIN_H :: 520
+// Wide enough for every settings card without scrolling (6 columns) on a
+// 1440-high screen, as far as the screen allows.
+SETUP_DEFAULT_W :: 2400
+SETUP_DEFAULT_H :: 1330
+
+@(private = "file")
+setup_size_file :: proc() -> string {
+	base := os.get_env("XDG_DATA_HOME", context.temp_allocator)
+	if base == "" {base = strings.concatenate({home(), "/.local/share"}, context.temp_allocator)}
+	return strings.concatenate({base, "/wlperch/setup-window"}, context.temp_allocator)
+}
+
+setup_save_window_size :: proc(w, h: i32) {
+	path := setup_size_file()
+	os.make_directory_all(path[:strings.last_index_byte(path, '/')])
+	_ = os.write_entire_file(path, fmt.tprintf("%d %d\n", w, h))
+}
+
+// The last size the window had (or a default), within the focused output.
+@(private = "file")
+setup_window_size :: proc() -> (w, h: i32) {
+	w, h = SETUP_DEFAULT_W, SETUP_DEFAULT_H
+	if text, ok := read_text(setup_size_file()); ok {
+		f := strings.fields(text, context.temp_allocator)
+		if len(f) == 2 {
+			sw, ok1 := strconv.parse_int(f[0])
+			sh, ok2 := strconv.parse_int(f[1])
+			if ok1 && ok2 {w, h = i32(sw), i32(sh)}
+		}
+	}
+	if sway_load_outputs() {
+		sync.guard(&sway.mu)
+		for o in sway.outputs {
+			if !o.focused || o.w <= 0 || o.h <= 0 {continue}
+			// Leave the bar and a margin around the window.
+			w = min(w, o.w - 80)
+			h = min(h, o.h - 110)
+		}
+	}
+	return max(w, SETUP_MIN_W), max(h, SETUP_MIN_H)
 }
 
 // For the array whose '[' is at `open`: the index of its ']' and the index

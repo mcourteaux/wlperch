@@ -65,6 +65,7 @@ PROTOCOLS=(
 	$P/staging/ext-image-capture-source/ext-image-capture-source-v1.xml # lock: blurred screenshot
 	$P/staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml
 	$P/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml
+	$P/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml # setup window: client-side corners
 	$WLR/wlr-layer-shell-unstable-v1.xml
 	$WLR/wlr-screencopy-unstable-v1.xml # lock: screenshot fallback
 	$WLR/wlr-virtual-pointer-unstable-v1.xml # only used by tools/vptr (UI tests)

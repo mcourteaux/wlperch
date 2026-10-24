@@ -162,16 +162,15 @@ draw_ui :: proc() -> f32 {
 // Soft drop shadow: stacked rounded rects whose alphas add up to a smooth,
 // roughly gaussian falloff. Offset a little downwards but wide enough to
 // still show above the panel.
-draw_shadow :: proc(pos, size: Vec2) {
+draw_shadow :: proc(pos, size: Vec2, spread: f32 = SHADOW - 2, offset_y: f32 = SHADOW_OFFSET_Y, radius: f32 = 18) {
 	d := im.GetBackgroundDrawList()
 	layers :: 30
-	spread :: f32(SHADOW - 2)
 	for i in 0 ..< layers {
 		t := f32(i) / layers
 		e := spread * (t + 1.0 / layers)
 		a := 0.030 * (1 - t) * (1 - t) * (1 - t * 0.5)
-		y := f32(SHADOW_OFFSET_Y) * (1 - t * 0.6)
-		im.DrawList_AddRectFilled(d, {pos.x - e, pos.y - e + y}, {pos.x + size.x + e, pos.y + size.y + e + y}, col32(0x000000, a), 18 + e)
+		y := offset_y * (1 - t * 0.6)
+		im.DrawList_AddRectFilled(d, {pos.x - e, pos.y - e + y}, {pos.x + size.x + e, pos.y + size.y + e + y}, col32(0x000000, a), radius + e)
 	}
 }
 

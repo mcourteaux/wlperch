@@ -15,6 +15,7 @@ import "core:time"
 
 import im "third_party:odin-imgui"
 
+SETTINGS_MIN_COL :: 360 // narrowest settings column
 @(private = "file") TEXT_DELAY :: 800 * time.Millisecond   // typing
 @(private = "file") NUM_DELAY :: 450 * time.Millisecond    // steppers, sliders, the colour picker
 @(private = "file") RESTART_DELAY :: 600 * time.Millisecond // after the last write
@@ -41,6 +42,7 @@ Row :: struct {
 @(private = "file")
 ss: struct {
 	rows:          [len(SETTINGS)]Row,
+	row_h:         [len(SETTINGS)]f32, // drawn height of each row, last frame
 	loaded:        bool,
 	stamp:         [2]i64, // mtime, size of config.ini when last read
 	search:        [128]u8,
@@ -604,17 +606,73 @@ draw_settings :: proc(x, y, width: f32) {
 	draw_text(fonts.ui, 17, {x + 12, y + 7}, col32(C_MUTED), ICON_MAGNIFY)
 	filter := strings.to_lower(strings.trim_space(buf_str(ss.search[:])), context.temp_allocator)
 	note := "Saved to ~/.config/wlperch/config.ini as you change them (your comments stay). Reset removes the key, so the default applies."
-	draw_text(fonts.ui, SZ_SMALL, {x + SEARCH_W + 18, y + 11}, col32(C_MUTED), note)
+	top := y + 50
+	if x + SEARCH_W + 18 + measure(fonts.ui, SZ_SMALL, note).x <= x + width {
+		draw_text(fonts.ui, SZ_SMALL, {x + SEARCH_W + 18, y + 11}, col32(C_MUTED), note)
+	} else {
+		// Narrow window: the note goes under the filter box, wrapped.
+		im.SetCursorScreenPos({x + 2, y + 46})
+		im.PushFontFloat(fonts.ui, SZ_SMALL)
+		im.PushStyleColorImVec4(.Text, rgba(C_MUTED))
+		im.PushTextWrapPos(im.GetCursorPosX() + width - 4)
+		b, e := str_range(note)
+		im.TextUnformatted(b, e)
+		im.PopTextWrapPos()
+		im.PopStyleColor()
+		im.PopFont()
+		top = im.GetItemRectMax().y + 12
+	}
 
 	// ---- Group cards, each into the shortest column ------------------------------
+	// As many columns as fit: a wide window shows everything without scrolling.
 	GAP :: 14
-	ncols := width >= 1100 ? 3 : 2
+	ncols := min(fit_columns(width, SETTINGS_MIN_COL, GAP), len(SETTINGS_GROUPS))
 	cw := (width - GAP * f32(ncols - 1)) / f32(ncols)
-	top := y + 50
 	bottoms := make([]f32, ncols, context.temp_allocator)
 	for &b in bottoms {b = top}
+	// A group that would run past the window's bottom continues in another
+	// column with room, so a wide window needs no scrolling even for the tall
+	// groups. Row heights come from the previous frame.
+	limit := im.GetWindowPos().y + im.GetWindowSize().y - im.GetStyle().WindowPadding.y - 8 - 12 - im.GetScrollY()
+	CARD_TAIL :: 20 // below the last row: padding, spacing
+	CARD_HEAD :: 60 // above the first row: padding, title
+	// Groups go in their usual order, unless that leaves a column too tall:
+	// then the tallest first, which balances the columns best.
+	order: [len(SETTINGS_GROUPS)]int
+	est: [len(SETTINGS_GROUPS)]f32
+	for g, gi in SETTINGS_GROUPS {
+		order[gi] = gi
+		n := 0
+		for s, i in SETTINGS {
+			if s.group == g && matches(s, filter) {
+				est[gi] += ss.row_h[i] + 4
+				n += 1
+			}
+		}
+		if n > 0 {est[gi] += CARD_HEAD + CARD_TAIL + GAP}
+	}
+	simulate :: proc(order: []int, est: []f32, ncols: int) -> f32 {
+		cols: [MAX_COLS]f32
+		for gi in order {
+			c := 0
+			for k in 0 ..< ncols {if cols[k] < cols[c] - 1 {c = k}}
+			cols[c] += est[gi]
+		}
+		m: f32
+		for c in cols[:ncols] {m = max(m, c)}
+		return m
+	}
+	if top + simulate(order[:], est[:], ncols) > limit {
+		// Stable insertion sort, tallest first.
+		for i in 1 ..< len(order) {
+			for j := i; j > 0 && est[order[j]] > est[order[j - 1]]; j -= 1 {
+				order[j], order[j - 1] = order[j - 1], order[j]
+			}
+		}
+	}
 	any := false
-	for g in SETTINGS_GROUPS {
+	for gi in order {
+		g := SETTINGS_GROUPS[gi]
 		rows := make([dynamic]int, context.temp_allocator)
 		for s, i in SETTINGS {
 			if s.group == g && matches(s, filter) {append(&rows, i)}
@@ -625,16 +683,40 @@ draw_settings :: proc(x, y, width: f32) {
 		for b, k in bottoms {if b < bottoms[col] - 1 {col = k}}
 		im.SetCursorScreenPos({x + f32(col) * (cw + GAP), bottoms[col]})
 		look := group_look(g)
-		card_begin(fmt.tprintf("settings:%s", g), cw)
+		part := 0
+		card_begin(fmt.tprintf("settings:%s:0", g), cw)
 		inner := im.GetContentRegionAvail().x
 		card_title(look.icon, g, look.accent, group_when(g))
 		for i, k in rows {
+			if k > 0 && im.GetCursorScreenPos().y + 4 + ss.row_h[i] + CARD_TAIL > limit {
+				to := -1
+				for b, c in bottoms {
+					if c == col || b + CARD_HEAD + ss.row_h[i] + CARD_TAIL > limit {continue}
+					if to < 0 || b < bottoms[to] {to = c}
+				}
+				if to >= 0 {
+					im.Dummy({inner, 2})
+					card_end()
+					bottoms[col] = im.GetItemRectMax().y + GAP
+					col = to
+					part += 1
+					im.SetCursorScreenPos({x + f32(col) * (cw + GAP), bottoms[col]})
+					card_begin(fmt.tprintf("settings:%s:%d", g, part), cw)
+					card_title(look.icon, g, look.accent, "continued")
+					y0 := im.GetCursorScreenPos().y
+					draw_row(i, inner, look.accent)
+					ss.row_h[i] = im.GetCursorScreenPos().y - y0
+					continue
+				}
+			}
 			if k > 0 {
 				lp := im.GetCursorScreenPos()
 				im.DrawList_AddLine(dl(), {lp.x, lp.y + 1}, {lp.x + inner, lp.y + 1}, col32(C_BORDER), 1)
 				im.Dummy({inner, 4})
 			}
+			y0 := im.GetCursorScreenPos().y
 			draw_row(i, inner, look.accent)
+			ss.row_h[i] = im.GetCursorScreenPos().y - y0
 		}
 		im.Dummy({inner, 2})
 		card_end()
@@ -644,8 +726,8 @@ draw_settings :: proc(x, y, width: f32) {
 	for b in bottoms {bottom = max(bottom, b)}
 	if !any {
 		draw_text(fonts.ui, SZ_BODY, {x + 4, top + 4}, col32(C_MUTED), "No setting matches. The rest of config.ini (panels, sensors, display presets, projects) is edited by hand: Open on the Settings file card.")
-		bottom = top + 30
+		bottom = top + 30 + GAP
 	}
-	im.SetCursorScreenPos({x, bottom})
+	im.SetCursorScreenPos({x, bottom - GAP}) // no gap after the last card
 	im.Dummy({width, 0})
 }

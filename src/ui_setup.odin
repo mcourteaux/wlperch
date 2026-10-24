@@ -2,6 +2,7 @@
 package main
 
 import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:strings"
 import "core:sync"
@@ -346,17 +347,40 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 	return
 }
 
+// Narrowest column on the Components tab; as many as fit, up to MAX_COLS.
+@(private = "file") COMP_MIN_COL :: 340
+// Gap between the visible window edge and the imgui window: the inner resize strip.
+@(private = "file") FRAME_INSET :: 6
+MAX_COLS :: 6
+
+// Columns of at least `min_col` that fit `width` (1..MAX_COLS).
+fit_columns :: proc(width, min_col, gap: f32) -> int {
+	return clamp(int((width + gap) / (min_col + gap)), 1, MAX_COLS)
+}
+
 draw_setup :: proc() {
-	io := im.GetIO()
 	// Escape leaves a text field first; only then does it close the window.
 	if im.IsKeyPressed(.Escape, false) && !im.IsAnyItemActive() {plat.closed = true}
-	im.SetNextWindowPos({0, 0})
-	im.SetNextWindowSize(io.DisplaySize)
-	im.PushStyleColorImVec4(.WindowBg, rgba(C_BG))
-	im.PushStyleVar(.WindowRounding, 0)
-	im.PushStyleVarImVec2(.WindowPadding, {26, 22})
+
+	// The window's own frame: a rounded card with a shadow while floating,
+	// a plain rectangle filling its tile otherwise.
+	fpos, fsize, rounded := platform_window_frame()
+	bg := im.GetBackgroundDrawList()
+	if rounded {
+		draw_shadow(fpos, fsize, WIN_SHADOW - 3, 3, WIN_RADIUS)
+		im.DrawList_AddRectFilled(bg, fpos, fpos + fsize, col32(C_BG), WIN_RADIUS)
+		im.DrawList_AddRect(bg, fpos, fpos + fsize, col32(C_OVERLAY, 0.07), WIN_RADIUS)
+	} else {
+		im.DrawList_AddRectFilled(bg, fpos, fpos + fsize, col32(C_BG))
+	}
+	im.SetNextWindowPos(fpos + FRAME_INSET)
+	im.SetNextWindowSize(fsize - 2 * FRAME_INSET)
+	im.PushStyleColorImVec4(.WindowBg, rgba(C_BG, 0))
+	im.PushStyleVar(.WindowRounding, rounded ? WIN_RADIUS - FRAME_INSET : 0)
+	im.PushStyleVar(.WindowBorderSize, 0)
+	im.PushStyleVarImVec2(.WindowPadding, {26 - FRAME_INSET, 22 - FRAME_INSET})
 	im.Begin("setup", nil, {.NoTitleBar, .NoResize, .NoMove, .NoCollapse, .NoSavedSettings})
-	im.PopStyleVar(2)
+	im.PopStyleVar(3)
 	im.PopStyleColor()
 
 	width := im.GetContentRegionAvail().x
@@ -365,20 +389,25 @@ draw_setup :: proc() {
 	im.DrawList_AddCircleFilled(dl(), {p.x + 22, p.y + 22}, 22, col32(C_BLUE, 0.16))
 	draw_text(fonts.ui, 24, {p.x + 10, p.y + 9}, col32(C_BLUE), ICON_TUNE_BAR)
 	draw_text(fonts.bold, 26, {p.x + 58, p.y - 2}, col32(C_TEXT), "wlperch")
-	sub := setup_tab == .Settings ? "Change wlperch's settings here instead of in config.ini." : "Pick the parts you want. Run `wlperch setup` any time to change them."
-	draw_text(fonts.ui, SZ_BODY, {p.x + 58, p.y + 28}, col32(C_MUTED), sub)
 	// Components | Settings, right-aligned; the recommended install left of it.
 	tabs := []string{"Components", "Settings"}
 	tw := f32(4)
 	for t in tabs {tw += measure(fonts.ui, SZ_SMALL + 1, t).x + 24}
-	im.SetCursorScreenPos({p.x + width - tw, p.y + 9})
+	right := p.x + width - tw
+	im.SetCursorScreenPos({right, p.y + 9})
 	if k := segmented("##tabs", tabs, int(setup_tab), C_BLUE); k >= 0 {
 		setup_tab = Setup_Tab(k)
 	}
 	if setup_tab == .Components {
 		rec := "Install recommended"
-		im.SetCursorScreenPos({p.x + width - tw - 14 - pill_width(rec), p.y + 10})
+		right -= 14 + pill_width(rec)
+		im.SetCursorScreenPos({right, p.y + 10})
 		if pill_button("##recommended", rec, C_BLUE, true) {setup_install_recommended(); setup_check()}
+	}
+	// The subtitle only where it fits next to the buttons.
+	sub := setup_tab == .Settings ? "Change wlperch's settings here instead of in config.ini." : "Pick the parts you want. Run `wlperch setup` any time to change them."
+	if p.x + 58 + measure(fonts.ui, SZ_BODY, sub).x + 16 <= right {
+		draw_text(fonts.ui, SZ_BODY, {p.x + 58, p.y + 28}, col32(C_MUTED), sub)
 	}
 	im.SetCursorScreenPos(p)
 	im.Dummy({width, 56})
@@ -387,6 +416,7 @@ draw_setup :: proc() {
 		q := im.GetCursorScreenPos()
 		draw_settings(q.x, q.y, width)
 		im.Dummy({1, 8})
+		log_content_height()
 		im.End()
 		return
 	}
@@ -396,7 +426,7 @@ draw_setup :: proc() {
 	{
 		sync.guard(&setup.mu)
 
-		// ---- Summary tiles ----------------------------------------------------
+		// ---- Summary tiles: one row of four, or two rows of two ----------------
 		done, applicable, attention, missing := 0, 0, 0, 0
 		for id in Comp_Id {
 			s := setup.comps[id].state
@@ -406,7 +436,8 @@ draw_setup :: proc() {
 			if needs_attention(s) {attention += 1}
 			if s == .Missing {missing += 1}
 		}
-		tw := (width - GAP * 3) / 4
+		per_row := width >= 4 * 210 + 3 * GAP ? 4 : 2
+		tw := (width - GAP * f32(per_row - 1)) / f32(per_row)
 		ty := im.GetCursorScreenPos().y
 		svc_text, svc_col := state_pill(setup.comps[.Service].state)
 		ntf_text, ntf_col := state_pill(setup.comps[.Notifications].state)
@@ -422,38 +453,80 @@ draw_setup :: proc() {
 		}
 		tile_h: f32 = 0
 		for t, i in tiles {
-			im.SetCursorScreenPos({p.x + f32(i) * (tw + GAP), ty})
+			if i > 0 && i % per_row == 0 {ty += tile_h + GAP}
+			im.SetCursorScreenPos({p.x + f32(i % per_row) * (tw + GAP), ty})
 			stat_tile(fmt.tprintf("tile:%d", i), tw, t.icon, t.caption, t.value, t.sub, t.accent, t.progress)
 			tile_h = max(tile_h, im.GetItemRectSize().y)
 		}
-		im.SetCursorScreenPos({p.x, ty + tile_h + 18})
+		top := ty + tile_h + 18
 
 		// ---- Component columns ------------------------------------------------
-		// A card ends with its own 6px spacing; the empty Dummy after each adds the rest.
-		im.PushStyleVarImVec2(.ItemSpacing, {10, GAP - 6})
-		cw := (width - GAP * f32(len(COLUMNS) - 1)) / f32(len(COLUMNS))
-		cy := im.GetCursorScreenPos().y
-		bottom := cy
-		for col, ci in COLUMNS {
-			x := p.x + f32(ci) * (cw + GAP)
-			im.SetCursorScreenPos({x, cy})
-			im.BeginGroup()
-			draw_text(fonts.bold, SZ_SMALL, {x + 2, cy}, col32(C_FAINT), strings.to_upper(col.title, context.temp_allocator))
-			im.Dummy({cw, 14})
-			for id in col.ids {
-				if r := comp_card(id, &setup.comps[id], cw); r != nil {run = r}
-				im.Dummy({cw, 0})
+		// As many columns as fit. With four or more, every group gets its own
+		// columns (the groups with the most cards get a second one) and its
+		// cards go into the shorter of them; with fewer, whole groups go into
+		// the shortest column.
+		HEAD_H :: 22
+		ncols := fit_columns(width, COMP_MIN_COL, GAP)
+		cw := (width - GAP * f32(ncols - 1)) / f32(ncols)
+		bottoms := make([]f32, ncols, context.temp_allocator)
+		for &b in bottoms {b = top}
+		spans: [len(COLUMNS)]int
+		if ncols >= len(COLUMNS) {
+			for &s in spans {s = 1}
+			for _ in len(COLUMNS) ..< ncols {
+				best := -1
+				for g, i in COLUMNS {
+					if spans[i] >= len(g.ids) {continue}
+					if best < 0 || len(g.ids) * spans[best] > len(COLUMNS[best].ids) * spans[i] {best = i}
+				}
+				if best < 0 {break}
+				spans[best] += 1
 			}
-			im.EndGroup()
-			bottom = max(bottom, im.GetItemRectMax().y)
 		}
-		im.PopStyleVar()
-		im.SetCursorScreenPos({p.x, bottom})
+		next := 0
+		for g, gi in COLUMNS {
+			first, span := 0, 1
+			if ncols >= len(COLUMNS) {
+				first, span = next, spans[gi]
+				next += span
+			} else {
+				for b, k in bottoms {if b < bottoms[first] - 1 {first = k}}
+			}
+			cols := bottoms[first:first + span]
+			y := cols[0]
+			for b in cols {y = max(y, b)}
+			x0 := p.x + f32(first) * (cw + GAP)
+			draw_text(fonts.bold, SZ_SMALL, {x0 + 2, y}, col32(C_FAINT), strings.to_upper(g.title, context.temp_allocator))
+			for &b in cols {b = y + HEAD_H}
+			for id in g.ids {
+				k := 0
+				for b, j in cols {if b < cols[k] - 1 {k = j}}
+				im.SetCursorScreenPos({x0 + f32(k) * (cw + GAP), cols[k]})
+				if r := comp_card(id, &setup.comps[id], cw); r != nil {run = r}
+				cols[k] = im.GetItemRectMax().y + GAP
+			}
+		}
+		bottom := top
+		for b in bottoms {bottom = max(bottom, b)}
+		im.SetCursorScreenPos({p.x, bottom - GAP})
+		im.Dummy({width, 0})
 	}
 	if run != nil {
 		run()
 		setup_check()
 	}
 	im.Dummy({1, 8})
+	log_content_height()
 	im.End()
+}
+
+// Debug: how tall the content is against the window (does it scroll?).
+@(private = "file")
+log_content_height :: proc() {
+	@(static) last: [4]f32
+	cur := [4]f32{im.GetCursorPosY(), im.GetWindowSize().y, im.GetScrollMaxY(), f32(plat.win.w)}
+	if cur != last {
+		last = cur
+		log.debugf("setup %v: content %.0f, scrolls %.0f (window %dx%d)", setup_tab, cur.x, cur.z, plat.win.w, plat.win.h)
+	}
 }

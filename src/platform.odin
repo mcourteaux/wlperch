@@ -35,6 +35,7 @@ Platform :: struct {
 	frac_scale_mgr:   ^wl.Wp_Fractional_Scale_Manager_V1,
 	idle_notifier:    ^wl.Ext_Idle_Notifier_V1,
 	xdg_wm_base:      ^wl.Xdg_Wm_Base, // for placeholder windows
+	deco_mgr:         ^wl.Zxdg_Decoration_Manager_V1,
 	shm:              ^wl.Shm,
 	subcompositor:    ^wl.Subcompositor,
 	idle_note:        ^wl.Ext_Idle_Notification_V1,
@@ -53,6 +54,8 @@ Platform :: struct {
 	layer_surface:    ^wl.Zwlr_Layer_Surface_V1,
 	win_xdg:          ^wl.Xdg_Surface,  // window mode (setup) instead of a layer surface
 	win_toplevel:     ^wl.Xdg_Toplevel,
+	win_deco:         ^wl.Zxdg_Toplevel_Decoration_V1,
+	win:              Window_State,
 	egl_window:       ^wl.Egl_Window,
 	egl_surface:      egl.Surface,
 	configured:       bool,
@@ -83,6 +86,8 @@ Platform :: struct {
 
 	// Input state
 	pointer_serial:   u32,
+	pointer_pos:      [2]f32, // on our surface, logical
+	win_edge:         u32,    // setup window: resize edge under the pointer (xdg edges)
 	pointer_inside:   bool,
 	cursor:           im.MouseCursor,
 	xkb_ctx:          ^xkb.Context,
@@ -128,8 +133,11 @@ registry_listener := wl.Registry_Listener {
 		case "wl_subcompositor":
 			plat.subcompositor = cast(^wl.Subcompositor)wl.registry_bind(registry, name, &wl.subcompositor_interface, 1)
 		case "xdg_wm_base":
-			plat.xdg_wm_base = cast(^wl.Xdg_Wm_Base)wl.registry_bind(registry, name, &wl.xdg_wm_base_interface, 1)
+			// v2+: the toplevel hears tiled_* states (square corners when tiled).
+			plat.xdg_wm_base = cast(^wl.Xdg_Wm_Base)wl.registry_bind(registry, name, &wl.xdg_wm_base_interface, min(version, 5))
 			wl.xdg_wm_base_add_listener(plat.xdg_wm_base, &wm_base_listener, nil)
+		case "zxdg_decoration_manager_v1":
+			plat.deco_mgr = cast(^wl.Zxdg_Decoration_Manager_V1)wl.registry_bind(registry, name, &wl.zxdg_decoration_manager_v1_interface, 1)
 		case "ext_idle_notifier_v1":
 			plat.idle_notifier = cast(^wl.Ext_Idle_Notifier_V1)wl.registry_bind(registry, name, &wl.ext_idle_notifier_v1_interface, 1)
 		case "wp_single_pixel_buffer_manager_v1":
@@ -221,6 +229,20 @@ seat_listener := wl.Seat_Listener {
 apply_cursor :: proc() {
 	if plat.cursor_device == nil || !plat.pointer_inside {return}
 	shape: u32 = wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT
+	if plat.win_edge != 0 {
+		switch plat.win_edge {
+		case wl.XDG_TOPLEVEL_RESIZE_EDGE_TOP:          shape = wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_N_RESIZE
+		case wl.XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM:       shape = wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_S_RESIZE
+		case wl.XDG_TOPLEVEL_RESIZE_EDGE_LEFT:         shape = wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_W_RESIZE
+		case wl.XDG_TOPLEVEL_RESIZE_EDGE_RIGHT:        shape = wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_E_RESIZE
+		case wl.XDG_TOPLEVEL_RESIZE_EDGE_TOP_LEFT:     shape = wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NW_RESIZE
+		case wl.XDG_TOPLEVEL_RESIZE_EDGE_TOP_RIGHT:    shape = wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NE_RESIZE
+		case wl.XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM_LEFT:  shape = wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SW_RESIZE
+		case wl.XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM_RIGHT: shape = wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SE_RESIZE
+		}
+		wl.wp_cursor_shape_device_v1_set_shape(plat.cursor_device, plat.pointer_serial, shape)
+		return
+	}
 	#partial switch plat.cursor {
 	case .Hand:       shape = wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER
 	case .TextInput:  shape = wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT
@@ -242,6 +264,16 @@ platform_set_cursor :: proc(c: im.MouseCursor) {
 	apply_cursor()
 }
 
+// The setup window's resize edge under the pointer: show its cursor.
+@(private = "file")
+track_edge :: proc(x, y: f32) {
+	plat.pointer_pos = {x, y}
+	e := platform_window_edge(x, y)
+	if e == plat.win_edge {return}
+	plat.win_edge = e
+	apply_cursor()
+}
+
 @(private = "file")
 pointer_listener := wl.Pointer_Listener {
 	enter = proc "c" (data: rawptr, self: ^wl.Pointer, serial: u32, surface: ^wl.Surface, x, y: wl.Fixed) {
@@ -259,6 +291,8 @@ pointer_listener := wl.Pointer_Listener {
 		}
 		plat.pointer_inside = true
 		plat.cursor = .Arrow
+		plat.win_edge = 0
+		track_edge(f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y)))
 		apply_cursor()
 		im.IO_AddMousePosEvent(im.GetIO(), f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y)))
 		request_redraw()
@@ -281,6 +315,7 @@ pointer_listener := wl.Pointer_Listener {
 		if notify_on_motion(plat.pointer_surface, f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y))) {return}
 		if memwarn_on_motion(plat.pointer_surface, f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y))) {return}
 		if plat.pointer_surface != plat.surface {return}
+		track_edge(f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y)))
 		im.IO_AddMousePosEvent(im.GetIO(), f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y)))
 		request_redraw()
 	},
@@ -294,6 +329,13 @@ pointer_listener := wl.Pointer_Listener {
 				plat.outside_click = true
 			}
 			return
+		}
+		// The setup window draws its own frame: its edges resize it.
+		if plat.win_toplevel != nil && plat.seat != nil && button == 0x110 && state == wl.POINTER_BUTTON_STATE_PRESSED {
+			if e := platform_window_edge(plat.pointer_pos.x, plat.pointer_pos.y); e != 0 {
+				wl.xdg_toplevel_resize(plat.win_toplevel, plat.seat, serial, e)
+				return
+			}
 		}
 		// The setup window (an xdg toplevel) drags by any empty spot, as if it
 		// had a title bar. Not forwarded to imgui: the compositor's move grab
@@ -890,12 +932,13 @@ platform_hide :: proc() {
 	if plat.viewport != nil {wl.wp_viewport_destroy(plat.viewport)}
 	plat.frac_scale, plat.viewport = nil, nil
 	if plat.layer_surface != nil {wl.zwlr_layer_surface_v1_destroy(plat.layer_surface)}
+	if plat.win_deco != nil {wl.zxdg_toplevel_decoration_v1_destroy(plat.win_deco)}
 	if plat.win_toplevel != nil {wl.xdg_toplevel_destroy(plat.win_toplevel)}
 	if plat.win_xdg != nil {wl.xdg_surface_destroy(plat.win_xdg)}
 	wl.surface_destroy(plat.surface)
 	catcher_destroy()
 	plat.layer_surface, plat.surface = nil, nil
-	plat.win_xdg, plat.win_toplevel = nil, nil
+	plat.win_xdg, plat.win_toplevel, plat.win_deco = nil, nil, nil
 	plat.frame_pending = false
 	plat.pointer_inside = false
 	plat.keyboard_focus = false
@@ -903,12 +946,51 @@ platform_hide :: proc() {
 	wl.display_flush(plat.display)
 }
 
+// ---------------------------------------------------------------------------
+// Setup window (xdg toplevel). It draws its own frame: a rounded card with a
+// soft shadow in a transparent margin (outside the window geometry), and
+// resizes from its edges. Tiled, maximized or fullscreen it is a plain square
+// rectangle filling its tile.
+
+Window_State :: struct {
+	w, h:          i32,  // window geometry: the visible window (logical)
+	margin:        i32,  // transparent shadow margin around it (0 when square)
+	square:        bool, // tiled / maximized / fullscreen, or the compositor decorates
+	resizing:      bool, // an interactive resize is going on
+	csd:           bool, // the compositor agreed to client-side decorations
+	min_w, min_h:  i32,
+	lock_frames:   int,  // frames until the map-time size lock is lifted
+	// From the latest toplevel configure; applied on xdg_surface.configure.
+	pend_w, pend_h: i32,
+	pend_square:   bool,
+	pend_resizing: bool,
+}
+
+WIN_SHADOW :: 22   // shadow margin around the floating window
+WIN_GRAB_OUT :: 10 // resize zone outside the visible edge (in the shadow)
+WIN_GRAB_IN :: 6   // ... and inside it
+WIN_CORNER :: 24   // corner zones reach this far along each edge
+WIN_RADIUS :: 18   // as the popup
+
 @(private = "file")
 win_toplevel_listener := wl.Xdg_Toplevel_Listener {
 	configure = proc "c" (data: rawptr, self: ^wl.Xdg_Toplevel, width, height: i32, states: ^wl.Array) {
-		if width > 0 && height > 0 {
-			plat.width, plat.height = width, height
+		plat.win.pend_w, plat.win.pend_h = width, height
+		sq, rs := false, false
+		if states != nil && states.data != nil {
+			arr := ([^]u32)(states.data)
+			for i in 0 ..< int(states.size / 4) {
+				switch arr[i] {
+				case wl.XDG_TOPLEVEL_STATE_MAXIMIZED, wl.XDG_TOPLEVEL_STATE_FULLSCREEN,
+				     wl.XDG_TOPLEVEL_STATE_TILED_LEFT, wl.XDG_TOPLEVEL_STATE_TILED_RIGHT,
+				     wl.XDG_TOPLEVEL_STATE_TILED_TOP, wl.XDG_TOPLEVEL_STATE_TILED_BOTTOM:
+					sq = true
+				case wl.XDG_TOPLEVEL_STATE_RESIZING:
+					rs = true
+				}
+			}
 		}
+		plat.win.pend_square, plat.win.pend_resizing = sq, rs
 	},
 	close = proc "c" (data: rawptr, self: ^wl.Xdg_Toplevel) {
 		plat.closed = true
@@ -918,22 +1000,67 @@ win_toplevel_listener := wl.Xdg_Toplevel_Listener {
 }
 
 @(private = "file")
+win_deco_listener := wl.Zxdg_Toplevel_Decoration_V1_Listener {
+	configure = proc "c" (data: rawptr, self: ^wl.Zxdg_Toplevel_Decoration_V1, mode: u32) {
+		plat.win.csd = mode == wl.ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
+	},
+}
+
+@(private = "file")
 win_xdg_listener := wl.Xdg_Surface_Listener {
 	configure = proc "c" (data: rawptr, self: ^wl.Xdg_Surface, serial: u32) {
 		context = g_ctx
 		wl.xdg_surface_ack_configure(self, serial)
+		w := &plat.win
+		if w.pend_w > 0 && w.pend_h > 0 {w.w, w.h = w.pend_w, w.pend_h}
+		w.square = w.pend_square || !w.csd
+		w.resizing = w.pend_resizing
+		w.margin = w.square ? 0 : WIN_SHADOW
+		plat.width, plat.height = w.w + 2 * w.margin, w.h + 2 * w.margin
+		wl.xdg_surface_set_window_geometry(self, w.margin, w.margin, w.w, w.h)
+		// Clicks reach us on the window and its outer grab strip, not the rest of the shadow.
+		g := w.margin > 0 ? w.margin - WIN_GRAB_OUT : 0
+		platform_set_input_rect(g, g, plat.width - 2 * g, plat.height - 2 * g)
+		log.debugf("window configure %dx%d margin %d%s", w.w, w.h, w.margin, w.resizing ? " (resizing)" : "")
 		plat.configured = true
 		resize_buffers()
 		request_redraw()
 	},
 }
 
+// The xdg resize edges for a point on the surface (0: none). Only a floating
+// window with our own frame has them.
+platform_window_edge :: proc(x, y: f32) -> u32 {
+	w := &plat.win
+	if plat.win_toplevel == nil || w.margin == 0 {return 0}
+	x0, y0 := f32(w.margin), f32(w.margin)
+	x1, y1 := x0 + f32(w.w), y0 + f32(w.h)
+	if x < x0 - WIN_GRAB_OUT || x > x1 + WIN_GRAB_OUT || y < y0 - WIN_GRAB_OUT || y > y1 + WIN_GRAB_OUT {return 0}
+	e: u32
+	if x < x0 + WIN_GRAB_IN {e |= wl.XDG_TOPLEVEL_RESIZE_EDGE_LEFT} else if x > x1 - WIN_GRAB_IN {e |= wl.XDG_TOPLEVEL_RESIZE_EDGE_RIGHT}
+	if y < y0 + WIN_GRAB_IN {e |= wl.XDG_TOPLEVEL_RESIZE_EDGE_TOP} else if y > y1 - WIN_GRAB_IN {e |= wl.XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM}
+	// Near a corner an edge grab takes both directions.
+	if e == wl.XDG_TOPLEVEL_RESIZE_EDGE_LEFT || e == wl.XDG_TOPLEVEL_RESIZE_EDGE_RIGHT {
+		if y < y0 + WIN_CORNER {e |= wl.XDG_TOPLEVEL_RESIZE_EDGE_TOP} else if y > y1 - WIN_CORNER {e |= wl.XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM}
+	} else if e == wl.XDG_TOPLEVEL_RESIZE_EDGE_TOP || e == wl.XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM {
+		if x < x0 + WIN_CORNER {e |= wl.XDG_TOPLEVEL_RESIZE_EDGE_LEFT} else if x > x1 - WIN_CORNER {e |= wl.XDG_TOPLEVEL_RESIZE_EDGE_RIGHT}
+	}
+	return e
+}
+
+// The visible window on the surface, and whether it is a floating rounded card.
+platform_window_frame :: proc() -> (pos, size: [2]f32, rounded: bool) {
+	m := f32(plat.win.margin)
+	return {m, m}, {f32(plat.win.w), f32(plat.win.h)}, plat.win.margin > 0
+}
+
 // A regular application window (used by `wlperch setup`), rendered with the
-// same EGL/ImGui path as the popup.
-platform_open_window :: proc(title, app_id: string, width, height: i32) -> bool {
+// same EGL/ImGui path as the popup. width/height: the visible window.
+platform_open_window :: proc(title, app_id: string, width, height, min_w, min_h: i32) -> bool {
 	if plat.surface != nil || plat.xdg_wm_base == nil {return false}
 	plat.configured = false
 	plat.closed = false
+	plat.win = {w = width, h = height, min_w = min_w, min_h = min_h}
 	plat.width, plat.height = width, height
 	plat.surface = wl.compositor_create_surface(plat.compositor)
 	wl.surface_add_listener(plat.surface, &surface_listener, nil)
@@ -948,9 +1075,18 @@ platform_open_window :: proc(title, app_id: string, width, height: i32) -> bool 
 	wl.xdg_toplevel_add_listener(plat.win_toplevel, &win_toplevel_listener, nil)
 	wl.xdg_toplevel_set_title(plat.win_toplevel, strings.clone_to_cstring(title, context.temp_allocator))
 	wl.xdg_toplevel_set_app_id(plat.win_toplevel, strings.clone_to_cstring(app_id, context.temp_allocator))
-	// A fixed width makes sway float the window (like a dialog); height stays resizable.
-	wl.xdg_toplevel_set_min_size(plat.win_toplevel, width, 420)
-	wl.xdg_toplevel_set_max_size(plat.win_toplevel, width, 0)
+	// We draw the frame (rounded corners, edges to resize): sway then draws
+	// no border or title bar on the floating window.
+	if plat.deco_mgr != nil {
+		plat.win_deco = wl.zxdg_decoration_manager_v1_get_toplevel_decoration(plat.deco_mgr, plat.win_toplevel)
+		wl.zxdg_toplevel_decoration_v1_add_listener(plat.win_deco, &win_deco_listener, nil)
+		wl.zxdg_toplevel_decoration_v1_set_mode(plat.win_deco, wl.ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE)
+	}
+	// A fixed size makes sway float the window (like a dialog) when it maps;
+	// the lock is lifted with the next frame (platform_end_frame).
+	wl.xdg_toplevel_set_min_size(plat.win_toplevel, width, height)
+	wl.xdg_toplevel_set_max_size(plat.win_toplevel, width, height)
+	plat.win.lock_frames = 1
 	wl.surface_commit(plat.surface)
 	for !plat.configured && !plat.closed {
 		if wl.display_dispatch(plat.display) < 0 {return false}
@@ -1008,6 +1144,16 @@ platform_end_frame :: proc() {
 	plat.frame_pending = true
 	if !egl.SwapBuffers(plat.egl_display, plat.egl_surface) {
 		log.errorf("eglSwapBuffers failed: 0x%x", egl.GetError())
+	}
+	if plat.win.lock_frames > 0 {
+		// The size lock made sway float the window when it mapped (the first
+		// buffer); lift it with the next commit so the edges resize it.
+		plat.win.lock_frames -= 1
+		if plat.win.lock_frames == 0 {
+			wl.xdg_toplevel_set_min_size(plat.win_toplevel, plat.win.min_w, plat.win.min_h)
+			wl.xdg_toplevel_set_max_size(plat.win_toplevel, 0, 0)
+			request_redraw(1)
+		}
 	}
 }
 
