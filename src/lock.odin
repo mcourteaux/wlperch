@@ -54,6 +54,8 @@ Lock_Output :: struct {
 	frame_pending: bool,
 	bg:            []u32, // background at buffer size
 	bg_w, bg_h:    i32,
+	transform:     i32,
+	blur:          Blur_Image, // background_mode = blur: the screen before locking
 }
 
 @(private = "file")
@@ -155,6 +157,9 @@ registry_listener := wl.Registry_Listener {
 				lk.seat = cast(^wl.Seat)wl.registry_bind(registry, name, &wl.seat_interface, min(version, 5))
 				wl.seat_add_listener(lk.seat, &seat_listener, nil)
 			}
+		case "ext_image_copy_capture_manager_v1", "ext_output_image_capture_source_manager_v1", "zwlr_screencopy_manager_v1":
+			// Only bound (and used) with the blurred-screenshot background.
+			if config.lock_mode == .Blur {capture_bind(registry, name, iface, version)}
 		case "wl_output":
 			o := new(Lock_Output)
 			o.name = name
@@ -172,6 +177,7 @@ registry_listener := wl.Registry_Listener {
 		if o.surface != nil {wl.surface_destroy(o.surface)}
 		if wl.output_get_version(o.output) >= 3 {wl.output_release(o.output)} else {wl.output_destroy(o.output)}
 		delete(o.bg)
+		delete(o.blur.px)
 		delete(o.conn)
 		free(o)
 		ordered_remove(&lk.outputs, i)
@@ -180,7 +186,9 @@ registry_listener := wl.Registry_Listener {
 
 @(private = "file")
 output_listener := wl.Output_Listener {
-	geometry = proc "c" (data: rawptr, self: ^wl.Output, x, y, pw, ph, subpixel: i32, make, model: cstring, transform: i32) {},
+	geometry = proc "c" (data: rawptr, self: ^wl.Output, x, y, pw, ph, subpixel: i32, make, model: cstring, transform: i32) {
+		(^Lock_Output)(data).transform = transform
+	},
 	mode = proc "c" (data: rawptr, self: ^wl.Output, flags: u32, width, height, refresh: i32) {},
 	done = proc "c" (data: rawptr, self: ^wl.Output) {
 		context = g_lock_ctx
@@ -267,6 +275,17 @@ seat_listener := wl.Seat_Listener {
 		if caps & wl.SEAT_CAPABILITY_POINTER != 0 && lk.pointer == nil {
 			lk.pointer = wl.seat_get_pointer(seat)
 			wl.pointer_add_listener(lk.pointer, &pointer_listener, nil)
+		}
+		// wlroots makes the old objects inert once the last device is gone:
+		// drop them so a replugged (or virtual) keyboard gets a fresh one.
+		if caps & wl.SEAT_CAPABILITY_KEYBOARD == 0 && lk.keyboard != nil {
+			if wl.keyboard_get_version(lk.keyboard) >= 3 {wl.keyboard_release(lk.keyboard)} else {wl.keyboard_destroy(lk.keyboard)}
+			lk.keyboard = nil
+			lk.repeat_key = 0
+		}
+		if caps & wl.SEAT_CAPABILITY_POINTER == 0 && lk.pointer != nil {
+			if wl.pointer_get_version(lk.pointer) >= 3 {wl.pointer_release(lk.pointer)} else {wl.pointer_destroy(lk.pointer)}
+			lk.pointer = nil
 		}
 	},
 	name = proc "c" (data: rawptr, seat: ^wl.Seat, name: cstring) {},
@@ -658,14 +677,20 @@ text_c :: proc(cv: ^Cv, f: ^Soft_Font, size, cx, baseline: f32, s: string, rgb: 
 	text(cv, f, size, cx - text_w(cv, f, size, s) / 2, baseline, s, rgb, alpha)
 }
 
-// Solid colour with a soft vignette, or the configured picture (cover-fit,
-// optionally blurred by sampling a smaller copy), darkened by dim.
+// Solid colour with a soft vignette, the configured picture (cover-fit,
+// optionally blurred by sampling a smaller copy) darkened by dim, or the
+// frosted screenshot tinted toward the theme's background colour.
 @(private = "file")
 build_background :: proc(o: ^Lock_Output, bw, bh: i32) {
 	delete(o.bg)
 	o.bg = make([]u32, int(bw * bh))
 	o.bg_w, o.bg_h = bw, bh
 	W, H := int(bw), int(bh)
+	if o.blur.px != nil {
+		tint := theme_light ? config.lock_background_light : config.lock_background
+		blur_draw(o.bg, W, H, o.blur, tint, clamp(0.3 + config.lock_dim, 0, 0.9))
+		return
+	}
 	if lk.image != nil {
 		// Source rectangle that covers the output with the image's aspect.
 		iw, ih := f32(lk.img_w), f32(lk.img_h)
@@ -714,7 +739,7 @@ build_background :: proc(o: ^Lock_Output, bw, bh: i32) {
 		}
 		return
 	}
-	c := theme_light && config.lock_image == "" ? config.lock_background_light : config.lock_background
+	c := theme_light ? config.lock_background_light : config.lock_background
 	cr, cg, cb := f32((c >> 16) & 0xff), f32((c >> 8) & 0xff), f32(c & 0xff)
 	for y in 0 ..< H {
 		dy := (f32(y) / f32(H) - 0.45) * 1.6
@@ -901,6 +926,23 @@ load_image :: proc(path: string) {
 	}
 }
 
+// background_mode = blur: copy every output and blur it, before locking
+// (afterwards only the lock surfaces are visible). Bounded by the capture
+// timeout; outputs that fail keep the solid colour.
+@(private = "file")
+capture_outputs :: proc() {
+	t0 := time.tick_now()
+	targets := make([]^Capture_Target, len(lk.outputs), context.temp_allocator)
+	for o, i in lk.outputs {
+		targets[i] = new(Capture_Target, context.temp_allocator)
+		targets[i]^ = {output = o.output, transform = o.transform, scale = o.scale}
+	}
+	n := capture_and_blur(lk.display, lk.shm, targets, config.lock_screenshot_blur)
+	for o, i in lk.outputs {o.blur = targets[i].result}
+	log.infof("lock: screen blurred on %d/%d output(s) in %.1f ms", n, len(targets), time.duration_milliseconds(time.tick_since(t0)))
+	free_all(context.temp_allocator)
+}
+
 LOCK_USAGE :: `usage: wlperch lock [-f|--daemonize]
   Lock the session (ext-session-lock-v1) until the password is entered.
   -f  fork once the screen is locked (for swayidle's before-sleep)
@@ -912,10 +954,11 @@ LOCK_USAGE :: `usage: wlperch lock [-f|--daemonize]
 @(private = "file") lock_fg: u32 = 0xffffff
 @(private = "file") lock_fg2: u32 = 0xd6dbe6
 
-// Light theme: dark text on a light background, unless a picture (dimmed) is set.
+// Light theme: dark text on a light background (or the screenshot frosted
+// light), unless the picture (dimmed) is shown.
 @(private = "file")
 lock_set_theme :: proc(light: bool) {
-	light := light && config.lock_image == ""
+	light := light && config.lock_mode != .Image
 	theme_light = light
 	lock_fg, lock_fg2 = light ? PALETTE_LIGHT.text : 0xffffff, light ? PALETTE_LIGHT.muted : 0xd6dbe6
 }
@@ -967,7 +1010,7 @@ lock_main :: proc(args: []string) -> int {
 	}
 	clocks_init()
 	soft_fonts_init()
-	load_image(config.lock_image)
+	if config.lock_mode == .Image {load_image(config.lock_image)}
 	lk.primary = focused_output_name()
 
 	lk.display = wl.display_connect(nil)
@@ -983,6 +1026,7 @@ lock_main :: proc(args: []string) -> int {
 		fmt.eprintln("wlperch lock: the compositor doesn't support ext-session-lock-v1")
 		return 1
 	}
+	if config.lock_mode == .Blur {capture_outputs()}
 
 	fds: [2]posix.FD
 	posix.pipe(&fds)

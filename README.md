@@ -359,6 +359,16 @@ locked, which is what swayidle's `before-sleep` needs.
 - **Keys:** Enter submits, Escape or Ctrl+U clears, Backspace deletes.
 - **Background:** a colour, or a picture from `[lock] image`, which can be
   blurred and darkened (see [Configuration](#configuration)).
+  `[lock] background_mode = blur` instead shows the screen as it was when
+  it locked, as frosted glass, at `screenshot_blur` strength (0–100). It's
+  off by default, and **Setup → Lock screen** can switch it on with a
+  strength slider.
+  - **Privacy:** even strength 0 blurs by a 20 px radius, so no text stays
+    readable. The copy stays in memory and is never written to disk.
+  - **Capture:** uses ext-image-copy-capture, or wlr-screencopy if the
+    compositor lacks it. When the mode is off, neither protocol is touched.
+  - **Fallback:** if the capture fails or takes over 300 ms, the lock goes
+    ahead with the plain colour.
 - **Rendering:** in software, like the notification popups.
 
 It runs as its own process, never inside the daemon, and appears as

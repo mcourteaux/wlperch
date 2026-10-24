@@ -65,6 +65,8 @@ Config :: struct {
 	lock_pam_service:   string, // "" = swaylock's PAM file when present, else login
 	lock_background:    u32,    // 0xRRGGBB
 	lock_image:         string,
+	lock_mode:          Lock_Bg_Mode,
+	lock_screenshot_blur: int, // 0..100, see LOCK_BLUR_MIN_SIGMA
 	lock_blur:          int,
 	lock_dim:           f32,
 	lock_notifications: bool,
@@ -176,6 +178,11 @@ refresh_minutes = 5
 # PAM service used to check the password. Empty = "swaylock" when
 # /etc/pam.d/swaylock exists, else "login".
 pam_service =
+# What's behind the clock: color (the colour below), image (the picture
+# below) or blur (a frosted-glass copy of the screen as it was when it
+# locked; it is captured in memory only, never written to disk). Empty =
+# image when one is set, else color.
+background_mode =
 # Background colour, and optionally a picture (PNG/JPEG) drawn over it,
 # blurred by this much (0 = sharp) and darkened by dim (0..1).
 background = #14161b
@@ -184,6 +191,9 @@ background_light = #e9ebf0
 image =
 blur = 0
 dim = 0.35
+# How strongly the screenshot is blurred with background_mode = blur
+# (0..100). Even 0 blurs by a ~20 px radius so no text stays readable.
+screenshot_blur = 60
 # Show the unread notification count (and which apps) / the playing track.
 # Notification text is never shown on the lock screen.
 show_notifications = true
@@ -514,6 +524,8 @@ config_load :: proc() {
 	c.lock_pam_service = strings.clone(get(m, defaults, "lock", "pam_service"))
 	c.lock_background = parse_hex_color(get(m, defaults, "lock", "background"), 0x14161b)
 	c.lock_image = expand_home(get(m, defaults, "lock", "image"))
+	c.lock_mode = lock_bg_mode_parse(get(m, defaults, "lock", "background_mode"), c.lock_image)
+	c.lock_screenshot_blur = clamp(strconv.parse_int(get(m, defaults, "lock", "screenshot_blur")) or_else 60, 0, 100)
 	c.lock_blur = clamp(strconv.parse_int(get(m, defaults, "lock", "blur")) or_else 0, 0, 64)
 	c.lock_dim = clamp(f32(strconv.parse_f64(get(m, defaults, "lock", "dim")) or_else 0.35), 0, 1)
 	c.lock_notifications = parse_bool(get(m, defaults, "lock", "show_notifications"), true)
@@ -561,6 +573,18 @@ config_load :: proc() {
 }
 
 // `location = "Ghent, Belgium"` -> Ghent, Belgium
+Lock_Bg_Mode :: enum {Color, Image, Blur}
+
+// [lock] background_mode: "" picks the picture when one is set.
+lock_bg_mode_parse :: proc(s: string, image: string) -> Lock_Bg_Mode {
+	switch strings.to_lower(strings.trim_space(s), context.temp_allocator) {
+	case "blur", "screenshot": return .Blur
+	case "color", "colour", "solid": return .Color
+	case "image", "picture": return image != "" ? .Image : .Color
+	}
+	return image != "" ? .Image : .Color
+}
+
 unquote :: proc(s: string) -> string {
 	if len(s) >= 2 && ((s[0] == '"' && s[len(s) - 1] == '"') || (s[0] == '\'' && s[len(s) - 1] == '\'')) {
 		return s[1:len(s) - 1]

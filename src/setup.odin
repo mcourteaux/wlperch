@@ -999,8 +999,7 @@ setup_enable_notifications :: proc() {
 }
 
 // Set `key = value` in [section] of the config file, keeping everything else
-// (creates the file with defaults first).
-@(private = "file")
+// (comments, order; creates the file with defaults first).
 config_set_value :: proc(section, key, value: string) -> bool {
 	path := config_path()
 	text, ok := read_text(path)
@@ -1069,6 +1068,7 @@ run_setup :: proc() {
 		for wl.display_prepare_read(d) != 0 {wl.display_dispatch_pending(d)}
 		wl.display_flush(d)
 		timeout := plat.redraw > 0 && !plat.frame_pending ? 0 : 1000
+		if wait := lock_settings_tick(); wait >= 0 {timeout = min(timeout, wait)}
 		pfds := [3]posix.pollfd {
 			{fd = platform_fd(), events = {.IN}},
 			{fd = app.wake_r, events = {.IN}},

@@ -62,8 +62,11 @@ PROTOCOLS=(
 	$P/staging/single-pixel-buffer/single-pixel-buffer-v1.xml
 	$P/staging/ext-idle-notify/ext-idle-notify-v1.xml
 	$P/staging/ext-session-lock/ext-session-lock-v1.xml
+	$P/staging/ext-image-capture-source/ext-image-capture-source-v1.xml # lock: blurred screenshot
+	$P/staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml
 	$P/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml
 	$WLR/wlr-layer-shell-unstable-v1.xml
+	$WLR/wlr-screencopy-unstable-v1.xml # lock: screenshot fallback
 	$WLR/wlr-virtual-pointer-unstable-v1.xml # only used by tools/vptr (UI tests)
 )
 odin build tools/wlscan -out:build/wlscan -o:speed

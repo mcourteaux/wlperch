@@ -283,6 +283,7 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 	if c.message != "" {
 		wrapped(fonts.ui, SZ_SMALL, c.msg_ok ? C_GREEN : C_RED, fmt.tprintf("%s %s", c.msg_ok ? ICON_CHECK : ICON_ALERT, c.message), inner)
 	}
+	if id == .Lock {lock_settings_ui(inner, inf.accent)}
 	if inf.preview != "" && show_preview[id] {
 		text := strings.trim_space(inf.preview)
 		im.PushStyleColorImVec4(.ChildBg, rgba(C_WELL))

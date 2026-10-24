@@ -8,13 +8,17 @@
 // key binding is written instead.
 package main
 
+import "core:encoding/ini"
 import "core:fmt"
 import "core:log"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:sys/posix"
 import "core:time"
+
+import im "third_party:odin-imgui"
 
 LOCK_CONF_NAME :: "wlperch-lock.conf"
 
@@ -231,4 +235,124 @@ swayidle_exec_line :: proc() -> string {
 		}
 	}
 	return ""
+}
+
+// ---- Lock screen settings in the card ------------------------------------------
+// [lock] background_mode and screenshot_blur, read from config.ini and
+// written back with config_set_value (comments and layout kept). The strength
+// slider writes once the value has rested for LOCK_WRITE_DELAY and the slider
+// is released, not on every drag frame.
+
+@(private = "file") LOCK_WRITE_DELAY :: 400 * time.Millisecond
+
+@(private = "file")
+lock_ui: struct {
+	loaded:     bool,
+	loaded_at:  time.Tick,
+	mode:       Lock_Bg_Mode,
+	has_image:  bool,
+	strength:   f32, // 0..1 (slider), screenshot_blur / 100
+	pending:    bool, // strength changed, not written yet
+	changed_at: time.Tick,
+	dragging:   bool,
+	err:        bool,
+}
+
+// Re-read from the file (also picks up hand edits); skipped while a write is pending.
+@(private = "file")
+lock_settings_load :: proc() {
+	lock_ui.loaded = true
+	lock_ui.loaded_at = time.tick_now()
+	defaults, _ := ini.load_map_from_string(DEFAULT_CONFIG, context.temp_allocator)
+	m, _, ok := ini.load_map_from_path(config_path(), context.temp_allocator)
+	if !ok {m = defaults}
+	get :: proc(m, d: ini.Map, key: string) -> string {
+		if s, sok := m["lock"]; sok {
+			if v, vok := s[key]; vok {return unquote(strings.trim_space(v))}
+		}
+		return unquote(strings.trim_space(d["lock"][key]))
+	}
+	image := get(m, defaults, "image")
+	lock_ui.has_image = image != ""
+	lock_ui.mode = lock_bg_mode_parse(get(m, defaults, "background_mode"), image)
+	lock_ui.strength = f32(clamp(strconv.parse_int(get(m, defaults, "screenshot_blur")) or_else 60, 0, 100)) / 100
+}
+
+@(private = "file")
+lock_strength_value :: proc() -> int {return int(lock_ui.strength * 100 + 0.5)}
+
+@(private = "file")
+lock_write :: proc(key, value: string) {
+	ok := config_set_value("lock", key, value)
+	lock_ui.err = !ok
+	if ok {log.infof("setup lock: [lock] %s = %s", key, value)}
+}
+
+// From the setup loop: flushes a due strength write; returns ms until the
+// next one is due (-1: nothing pending).
+lock_settings_tick :: proc() -> int {
+	if !lock_ui.pending {
+		if lock_ui.loaded && time.tick_since(lock_ui.loaded_at) > 2 * time.Second && !lock_ui.dragging {lock_settings_load()}
+		return -1
+	}
+	if lock_ui.dragging {return 100} // the release redraws anyway
+	left := LOCK_WRITE_DELAY - time.tick_since(lock_ui.changed_at)
+	if left > 0 {return int(time.duration_milliseconds(left)) + 1}
+	lock_ui.pending = false
+	lock_write("screenshot_blur", fmt.tprintf("%d", lock_strength_value()))
+	request_redraw(1)
+	return -1
+}
+
+lock_settings_ui :: proc(width: f32, accent: u32) {
+	if !lock_ui.loaded {lock_settings_load()}
+	im.Dummy({1, 4})
+	p := im.GetCursorScreenPos()
+	draw_text(fonts.bold, SZ_SMALL, {p.x, p.y + 6}, col32(C_MUTED), "Background")
+	im.SetCursorScreenPos({p.x + 84, p.y})
+	Opt :: struct {label: string, mode: Lock_Bg_Mode, value: string}
+	opts := make([dynamic]Opt, context.temp_allocator)
+	append(&opts, Opt{"Colour", .Color, "color"})
+	if lock_ui.has_image {append(&opts, Opt{"Picture", .Image, "image"})}
+	append(&opts, Opt{"Blurred screen", .Blur, "blur"})
+	labels := make([]string, len(opts), context.temp_allocator)
+	active := 0
+	for o, i in opts {
+		labels[i] = o.label
+		if o.mode == lock_ui.mode {active = i}
+	}
+	if i := segmented("##lockbg", labels, active, accent); i >= 0 && i != active {
+		lock_ui.mode = opts[i].mode
+		lock_write("background_mode", opts[i].value)
+	}
+	lock_ui.dragging = false
+	if lock_ui.mode == .Blur {
+		im.Dummy({1, 2})
+		q := im.GetCursorScreenPos()
+		val := fmt.tprintf("%d", lock_strength_value())
+		draw_text(fonts.bold, SZ_SMALL, {q.x, q.y + 4}, col32(C_MUTED), "Blur strength")
+		draw_text(fonts.ui, SZ_SMALL, {q.x + width - measure(fonts.ui, SZ_SMALL, val).x, q.y + 4}, col32(C_TEXT), val)
+		im.SetCursorScreenPos({q.x + 84, q.y})
+		if slider("##lockblur", &lock_ui.strength, 1, accent, width - 84 - 34) {
+			lock_ui.strength = f32(lock_strength_value()) / 100 // whole steps, like the ini
+			lock_ui.pending = true
+			lock_ui.changed_at = time.tick_now()
+		}
+		lock_ui.dragging = im.IsItemActive()
+		wrapped_hint(fmt.tprintf("The screen as it was, frosted. Kept in memory only, never saved. Even 0 blurs by %d px: no text stays readable.", LOCK_BLUR_MIN_SIGMA), width)
+	}
+	if lock_ui.err {wrapped_hint("couldn't write the config file", width, C_RED)}
+	im.Dummy({1, 2})
+}
+
+@(private = "file")
+wrapped_hint :: proc(text: string, width: f32, col: u32 = C_FAINT) {
+	im.PushFontFloat(fonts.ui, SZ_SMALL)
+	im.PushStyleColorImVec4(.Text, rgba(col & 0xffffff))
+	im.PushTextWrapPos(im.GetCursorPosX() + width)
+	b, e := str_range(text)
+	im.TextUnformatted(b, e)
+	im.PopTextWrapPos()
+	im.PopStyleColor()
+	im.PopFont()
 }
