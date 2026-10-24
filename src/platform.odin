@@ -88,6 +88,8 @@ Platform :: struct {
 	xkb_ctx:          ^xkb.Context,
 	xkb_keymap:       ^xkb.Keymap,
 	xkb_state:        ^xkb.State,
+	compose:          xkb.Compose,
+	compose_eaten:    u32, // key whose press compose swallowed: drop its release too
 	repeat_rate:      i32,
 	repeat_delay:     i32,
 	repeat_key:       u32,
@@ -365,18 +367,41 @@ keysym_to_imgui :: proc(sym: u32) -> im.Key {
 	return .None
 }
 
-// Called on press and on key repeat.
+// Called on press and on key repeat. Returns false when compose swallowed the
+// key (a dead key, or the key finishing/cancelling a sequence): no key event,
+// and it must not repeat.
 @(private = "file")
-key_press :: proc(key: u32, repeat: bool) {
+key_press :: proc(key: u32, repeat: bool) -> bool {
 	io := im.GetIO()
 	code := key + 8
 	sym := xkb.state_key_get_one_sym(plat.xkb_state, code)
+	ctrl := xkb.state_mod_name_is_active(plat.xkb_state, xkb.MOD_NAME_CTRL, xkb.STATE_MODS_EFFECTIVE) > 0
+	// Dead keys / compose: a dead ^ then space types "^", then e types "ê".
+	// Escape (or any non-matching key) cancels the sequence and is eaten, so it
+	// doesn't also close the panel. Ctrl shortcuts bypass compose.
+	if !repeat {
+		if ctrl {
+			xkb.compose_reset(&plat.compose)
+		} else {
+			buf: [64]u8
+			switch action, n := xkb.compose_key(&plat.compose, sym, buf[:]); action {
+			case .Pass:
+			case .Swallow:
+				return false
+			case .Text:
+				if buf[0] >= 0x20 && buf[0] != 0x7f {
+					buf[n] = 0
+					im.IO_AddInputCharactersUTF8(io, cstring(&buf[0]))
+				}
+				return false
+			}
+		}
+	}
 	if k := keysym_to_imgui(sym); k != .None {
 		im.IO_AddKeyEvent(io, k, true)
 		if repeat {im.IO_AddKeyEvent(io, k, false)}
 	}
 	// Text input (skip when ctrl is held so shortcuts don't type).
-	ctrl := xkb.state_mod_name_is_active(plat.xkb_state, xkb.MOD_NAME_CTRL, xkb.STATE_MODS_EFFECTIVE) > 0
 	if !ctrl {
 		buf: [16]u8
 		n := xkb.state_key_get_utf8(plat.xkb_state, code, &buf[0], len(buf))
@@ -384,6 +409,7 @@ key_press :: proc(key: u32, repeat: bool) {
 			im.IO_AddInputCharactersUTF8(io, cstring(&buf[0]))
 		}
 	}
+	return true
 }
 
 @(private = "file")
@@ -402,6 +428,8 @@ keyboard_listener := wl.Keyboard_Listener {
 		if plat.xkb_keymap != nil {xkb.keymap_unref(plat.xkb_keymap)}
 		plat.xkb_keymap = keymap
 		plat.xkb_state = xkb.state_new(keymap)
+		xkb.compose_init(&plat.compose, plat.xkb_ctx)
+		plat.compose_eaten = 0
 	},
 	enter = proc "c" (data: rawptr, self: ^wl.Keyboard, serial: u32, surface: ^wl.Surface, keys: ^wl.Array) {
 		context = g_ctx
@@ -413,6 +441,7 @@ keyboard_listener := wl.Keyboard_Listener {
 		context = g_ctx
 		plat.keyboard_focus = false
 		plat.repeat_key = 0
+		xkb.compose_reset(&plat.compose)
 		im.IO_AddFocusEvent(im.GetIO(), false)
 		request_redraw()
 	},
@@ -420,11 +449,16 @@ keyboard_listener := wl.Keyboard_Listener {
 		context = g_ctx
 		if plat.xkb_state == nil {return}
 		if state == wl.KEYBOARD_KEY_STATE_PRESSED {
-			key_press(key, false)
-			if plat.repeat_rate > 0 && xkb.keymap_key_repeats(plat.xkb_keymap, key + 8) != 0 {
+			if !key_press(key, false) {
+				plat.compose_eaten = key
+				plat.repeat_key = 0
+			} else if plat.repeat_rate > 0 && xkb.keymap_key_repeats(plat.xkb_keymap, key + 8) != 0 {
 				plat.repeat_key = key
 				plat.repeat_at = time.tick_add(time.tick_now(), time.Duration(plat.repeat_delay) * time.Millisecond)
 			}
+		} else if plat.compose_eaten == key {
+			plat.compose_eaten = 0
+			if plat.repeat_key == key {plat.repeat_key = 0}
 		} else {
 			sym := xkb.state_key_get_one_sym(plat.xkb_state, key + 8)
 			if k := keysym_to_imgui(sym); k != .None {

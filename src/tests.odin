@@ -12,6 +12,9 @@ import "core:strings"
 import "core:sys/posix"
 import "core:testing"
 import "core:time"
+import "core:log"
+
+import "xkb"
 
 PRESET_SAMPLE :: `[popup]
 width = 860
@@ -1276,4 +1279,65 @@ test_portal_parse_scheme :: proc(t: ^testing.T) {
 	testing.expect_value(t, portal_parse_scheme("v u 0"), "no preference")
 	testing.expect_value(t, portal_parse_scheme(""), "")
 	testing.expect_value(t, portal_parse_scheme("Call failed: Could not activate remote peer"), "")
+}
+
+@(test)
+test_compose_dead_keys :: proc(t: ^testing.T) {
+	ctx := xkb.context_new(xkb.CONTEXT_NO_FLAGS)
+	defer xkb.context_unref(ctx)
+	c: xkb.Compose
+	c.table = xkb.compose_table_new_from_locale(ctx, "en_US.UTF-8", xkb.COMPOSE_COMPILE_NO_FLAGS)
+	if c.table == nil {
+		log.warn("no compose table for en_US.UTF-8; skipping")
+		return
+	}
+	xkb.compose_init(&c, ctx)
+	defer xkb.compose_destroy(&c)
+
+	sym :: proc(name: cstring) -> xkb.Keysym {return xkb.keysym_from_name(name, 0)}
+	buf: [64]u8
+	feed :: proc(c: ^xkb.Compose, s: xkb.Keysym, buf: []u8) -> (xkb.Compose_Action, string) {
+		a, n := xkb.compose_key(c, s, buf)
+		return a, string(buf[:n])
+	}
+
+	// Plain keys pass straight through.
+	a, txt := feed(&c, sym("e"), buf[:])
+	testing.expect_value(t, a, xkb.Compose_Action.Pass)
+
+	// dead ^ + space -> "^"; dead ^ + e -> "ê".
+	a, _ = feed(&c, sym("dead_circumflex"), buf[:])
+	testing.expect_value(t, a, xkb.Compose_Action.Swallow)
+	testing.expect(t, xkb.compose_active(&c))
+	a, txt = feed(&c, sym("space"), buf[:])
+	testing.expect_value(t, a, xkb.Compose_Action.Text)
+	testing.expect_value(t, txt, "^")
+	testing.expect(t, !xkb.compose_active(&c))
+
+	feed(&c, sym("dead_circumflex"), buf[:])
+	a, txt = feed(&c, sym("e"), buf[:])
+	testing.expect_value(t, a, xkb.Compose_Action.Text)
+	testing.expect_value(t, txt, "ê")
+
+	// Modifiers don't disturb a pending sequence: dead ^ + Shift + E -> "Ê".
+	feed(&c, sym("dead_circumflex"), buf[:])
+	a, _ = feed(&c, sym("Shift_L"), buf[:])
+	testing.expect_value(t, a, xkb.Compose_Action.Pass)
+	a, txt = feed(&c, sym("E"), buf[:])
+	testing.expect_value(t, txt, "Ê")
+
+	// Escape cancels (eaten, so it doesn't close the panel); the next key is normal.
+	feed(&c, sym("dead_circumflex"), buf[:])
+	a, _ = feed(&c, sym("Escape"), buf[:])
+	testing.expect_value(t, a, xkb.Compose_Action.Swallow)
+	testing.expect(t, !xkb.compose_active(&c))
+	a, _ = feed(&c, sym("x"), buf[:])
+	testing.expect_value(t, a, xkb.Compose_Action.Pass)
+
+	// Recreating the state (new keymap) drops a half-typed sequence.
+	feed(&c, sym("dead_circumflex"), buf[:])
+	xkb.compose_init(&c, ctx)
+	testing.expect(t, !xkb.compose_active(&c))
+	a, _ = feed(&c, sym("space"), buf[:])
+	testing.expect_value(t, a, xkb.Compose_Action.Pass)
 }

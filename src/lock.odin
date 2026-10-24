@@ -91,6 +91,7 @@ Locker :: struct {
 	xkb_ctx:        ^xkb.Context,
 	xkb_keymap:     ^xkb.Keymap,
 	xkb_state:      ^xkb.State,
+	compose:        xkb.Compose,
 	repeat_rate:    i32,
 	repeat_delay:   i32,
 	repeat_key:     u32,
@@ -314,20 +315,39 @@ submit :: proc() {
 	sync.sema_post(&auth_sema)
 }
 
+// Returns false when compose swallowed the key (dead key, or the key that
+// finished/cancelled a sequence), so it must not repeat.
 @(private = "file")
-key_press :: proc(key: u32) {
+key_press :: proc(key: u32, repeat := false) -> bool {
 	code := key + 8
 	sym := xkb.state_key_get_one_sym(lk.xkb_state, code)
 	ctrl := xkb.state_mod_name_is_active(lk.xkb_state, xkb.MOD_NAME_CTRL, xkb.STATE_MODS_EFFECTIVE) > 0
 	primary_dirty()
-	if lk.auth == .Checking {return}
+	if lk.auth == .Checking {return true}
+	// Dead keys (AZERTY ^ then e -> ê). Escape/Enter/Backspace while composing
+	// only cancel the sequence. The composed text is password material: it is
+	// copied in and wiped, never logged.
+	if ctrl {
+		xkb.compose_reset(&lk.compose)
+	} else if !repeat {
+		buf: [64]u8
+		defer mem.zero_explicit(&buf[0], len(buf))
+		switch action, n := xkb.compose_key(&lk.compose, sym, buf[:]); action {
+		case .Pass:
+		case .Swallow:
+			return false
+		case .Text:
+			add_password_text(buf[:n])
+			return false
+		}
+	}
 	switch sym {
 	case xkb.KEY_Return, xkb.KEY_KP_Enter:
 		submit()
-		return
+		return true
 	case xkb.KEY_Escape:
 		clear_password()
-		return
+		return true
 	case xkb.KEY_BackSpace:
 		if ctrl {
 			clear_password()
@@ -336,20 +356,27 @@ key_press :: proc(key: u32) {
 			mem.zero_explicit(&lk.pw[lk.pw_len - sz], sz)
 			lk.pw_len -= sz
 		}
-		return
+		return true
 	}
 	if ctrl {
 		if sym == xkb.KEY_u {clear_password()}
-		return
+		return true
 	}
 	buf: [16]u8
 	n := int(xkb.state_key_get_utf8(lk.xkb_state, code, &buf[0], len(buf)))
-	if n > 0 && buf[0] >= 0x20 && buf[0] != 0x7f && lk.pw_len + n < len(lk.pw) {
-		copy(lk.pw[lk.pw_len:], buf[:n])
+	if n > 0 {add_password_text(buf[:n])}
+	mem.zero_explicit(&buf[0], len(buf))
+	return true
+}
+
+@(private = "file")
+add_password_text :: proc(text: []u8) {
+	n := len(text)
+	if n > 0 && text[0] >= 0x20 && text[0] != 0x7f && lk.pw_len + n < len(lk.pw) {
+		copy(lk.pw[lk.pw_len:], text)
 		lk.pw_len += n
 		if lk.auth == .Wrong {lk.auth = .Idle}
 	}
-	mem.zero_explicit(&buf[0], len(buf))
 }
 
 // Caps Lock and the active layout's name (when the keymap has several).
@@ -384,20 +411,25 @@ keyboard_listener := wl.Keyboard_Listener {
 		if lk.xkb_keymap != nil {xkb.keymap_unref(lk.xkb_keymap)}
 		lk.xkb_keymap = keymap
 		lk.xkb_state = xkb.state_new(keymap)
+		xkb.compose_init(&lk.compose, lk.xkb_ctx)
 		update_layout()
 	},
 	enter = proc "c" (data: rawptr, self: ^wl.Keyboard, serial: u32, surface: ^wl.Surface, keys: ^wl.Array) {},
 	leave = proc "c" (data: rawptr, self: ^wl.Keyboard, serial: u32, surface: ^wl.Surface) {
+		context = g_lock_ctx
 		lk.repeat_key = 0
+		xkb.compose_reset(&lk.compose)
 	},
 	key = proc "c" (data: rawptr, self: ^wl.Keyboard, serial, t, key, state: u32) {
 		context = g_lock_ctx
 		if lk.xkb_state == nil {return}
 		if state == wl.KEYBOARD_KEY_STATE_PRESSED {
-			key_press(key)
+			eaten := !key_press(key)
 			// Only Backspace repeats: a held letter must not type a password.
 			sym := xkb.state_key_get_one_sym(lk.xkb_state, key + 8)
-			if sym == xkb.KEY_BackSpace && lk.repeat_rate > 0 {
+			if eaten {
+				lk.repeat_key = 0
+			} else if sym == xkb.KEY_BackSpace && lk.repeat_rate > 0 {
 				lk.repeat_key = key
 				lk.repeat_at = time.tick_add(time.tick_now(), time.Duration(lk.repeat_delay) * time.Millisecond)
 			}
@@ -1032,7 +1064,7 @@ lock_main :: proc(args: []string) -> int {
 		if lk.repeat_key != 0 && lk.repeat_rate > 0 {
 			interval := time.Second / time.Duration(lk.repeat_rate)
 			for time.tick_diff(lk.repeat_at, time.tick_now()) >= 0 {
-				key_press(lk.repeat_key)
+				key_press(lk.repeat_key, true)
 				lk.repeat_at = time.tick_add(lk.repeat_at, interval)
 			}
 		}
