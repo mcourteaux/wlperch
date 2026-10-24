@@ -184,6 +184,7 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 		case .Outdated:  append(&out, Action{"Switch the rest", true, setup_install_bar, false})
 		case .Installed, .Custom, .Running, .Stopped, .Unavailable, .Partial:
 		}
+		if s == .Installed || s == .Outdated || s == .Custom {append(&out, Action{"Restart bar", false, setup_restart_bar, false})}
 		if s == .Installed || s == .Outdated {append(&out, Action{"Switch back", false, setup_remove_bar, true})}
 	case .Lock:
 		switch s {

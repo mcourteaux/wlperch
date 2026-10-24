@@ -52,6 +52,7 @@ commands:
                    IEEE-754 (hex float, f64/f32 bits); "toggle calc" opens the popup
   bar              the status bar (instead of waybar); run it from sway:
                    bar { swaybar_command wlperch-bar }
+  bar restart      start a fresh bar; it takes over from the running one
   lock [-f]        lock the screen (clock, notification count, media, battery);
                    -f forks once locked, for swayidle before-sleep
   sensors scan [seconds]  list the Tuya devices announcing themselves on the LAN
@@ -333,6 +334,11 @@ main :: proc() {
 	case "calc":
 		os.exit(calc_cli(os.args[2:]))
 	case "bar":
+		if len(os.args) > 2 && os.args[2] == "restart" {
+			ok, msg := bar_restart()
+			fmt.println(msg)
+			os.exit(ok ? 0 : 1)
+		}
 		// Its own process too: see bar.odin.
 		config_load()
 		os.exit(bar_main(os.args[2:]))

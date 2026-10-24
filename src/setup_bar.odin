@@ -216,6 +216,32 @@ bar_switch :: proc(apply: bool) {
 }
 
 setup_install_bar :: proc() {bar_switch(apply = true)}
+
+setup_restart_bar :: proc() {
+	ok, msg := bar_restart()
+	bar_done(ok, msg)
+}
+
+// Start a fresh bar with the running one's arguments (sway's "-b <id>"); it
+// takes over from the old one (see bar_lock). The installed binary is
+// preferred, so a restart also picks up a new build.
+bar_restart :: proc() -> (ok: bool, msg: string) {
+	args: [dynamic]string
+	args.allocator = context.temp_allocator
+	exe := fmt.tprintf("%s/.local/bin/wlperch", os.get_env("HOME", context.temp_allocator))
+	if !os.exists(exe) {exe = self_exe()}
+	append(&args, exe, "bar")
+	old := session_pids("wlperch-bar")
+	if len(old) > 0 {
+		cmdline, _ := os.read_entire_file(fmt.tprintf("/proc/%d/cmdline", old[0]), context.temp_allocator)
+		parts := strings.split(strings.trim_right(string(cmdline), "\x00"), "\x00", context.temp_allocator)
+		for p, i in parts {
+			if p == "-b" && i + 1 < len(parts) {append(&args, "-b", parts[i + 1])}
+		}
+	}
+	if !launch_detached(args[:]) {return false, "couldn't start wlperch bar"}
+	return true, len(old) > 0 ? "bar restarted" : "bar started"
+}
 setup_remove_bar :: proc() {bar_switch_back(apply = true)}
 
 // apply: reload sway and swap the running bars (not in tests).
