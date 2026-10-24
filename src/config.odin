@@ -55,6 +55,7 @@ Config :: struct {
 
 	// [notifications]
 	notifications:      bool, // serve org.freedesktop.Notifications
+	notif_hold_idle:    time.Duration, // popups wait while there's no input this long (0 = off)
 
 	// [github]
 	github:             bool,
@@ -164,6 +165,10 @@ critical_percent = 90
 # dunst/mako. Only one program can do this: wlperch takes over as soon as the
 # other one stops ("wlperch setup" can switch dunst off for you).
 enabled = true
+# Popups don't time out while you're away: after this many seconds without
+# input they stay put, and get their full time again once you're back
+# (0 = off). A playing video counts as activity, like for the screen lock.
+hold_when_idle = 5
 
 [github]
 # GitHub at a glance through the gh command line tool (log in once with
@@ -551,6 +556,7 @@ config_load :: proc() {
 	config_load_memory(m, defaults)
 
 	c.notifications = parse_bool(get(m, defaults, "notifications", "enabled"), true)
+	c.notif_hold_idle = time.Duration(parse_int_lim(get(m, defaults, "notifications", "hold_when_idle"), LIM_NOTIF_HOLD_IDLE)) * time.Second
 
 	c.github = parse_bool(get(m, defaults, "github", "enabled"), false)
 	c.github_repo = strings.clone(get(m, defaults, "github", "repo"))
@@ -757,6 +763,7 @@ LIM_LOCK_BLUR_ANIMATE_FROM :: Int_Limits{0, 100, 10}
 LIM_LOCK_BLUR :: Int_Limits{0, 64, 0}
 LIM_LOCK_DIM :: Float_Limits{0, 1, 0.35}
 LIM_IDLE_SECONDS :: Int_Limits{5, 86400, 300}
+LIM_NOTIF_HOLD_IDLE :: Int_Limits{0, 3600, 5}
 LIM_BAR_HEIGHT :: Int_Limits{20, 80, 34}
 LIM_BAR_TRAY :: Int_Limits{12, 48, 20}
 LIM_BAR_VOLSTEP :: Int_Limits{1, 25, 5}

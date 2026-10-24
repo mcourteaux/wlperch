@@ -56,6 +56,7 @@ Notification :: struct {
 Notifs :: struct {
 	bus:      ^Sd_Bus,
 	owner:    bool, // we own org.freedesktop.Notifications
+	was_away: bool, // plat.away as last seen by notifications_tick
 	other:    string, // who does, when it's not us
 	next_id:  u32,
 	list:     [dynamic]^Notification, // oldest first
@@ -511,6 +512,7 @@ notifications_start :: proc() {
 	notifs.path = strings.concatenate({data_dir(), "/notifications.bin"})
 	notifications_load()
 	if !config.notifications {return}
+	if config.notif_hold_idle > 0 {platform_watch_away(config.notif_hold_idle)}
 	g_ctx_notify = context
 	if r := sd_bus_open_user(&notifs.bus); r < 0 {
 		log.warnf("notifications: no session bus (%d)", r)
@@ -576,7 +578,7 @@ notifications_timeout :: proc() -> time.Duration {
 		}
 	}
 	for n in notifs.list {
-		if n.popup && n.expires != {} && !n.hover {pick(&best, time.tick_diff(time.tick_now(), n.expires))}
+		if n.popup && n.expires != {} && !n.hover && !plat.away {pick(&best, time.tick_diff(time.tick_now(), n.expires))}
 	}
 	if f := notify_popups_next_frame(); f >= 0 {pick(&best, f)}
 	if notifs.dirty {pick(&best, 2 * time.Second - time.tick_since(notifs.dirty_at))}
@@ -593,9 +595,19 @@ notifications_tick :: proc() {
 		sd_bus_flush(notifs.bus)
 	}
 	now := time.tick_now()
+	// Away (no input for a while): popups don't time out unseen. Back again:
+	// each one gets its full time to be read.
+	if plat.away != notifs.was_away {
+		notifs.was_away = plat.away
+		if !plat.away {
+			for n in notifs.list {
+				if n.popup && n.expires != {} && n.timeout > 0 {n.expires = time.tick_add(now, n.timeout)}
+			}
+		}
+	}
 	for i := len(notifs.list) - 1; i >= 0; i -= 1 {
 		n := notifs.list[i]
-		if n.popup && n.expires != {} && !n.hover && time.tick_diff(n.expires, now) >= 0 {
+		if n.popup && n.expires != {} && !n.hover && !plat.away && time.tick_diff(n.expires, now) >= 0 {
 			// The popup goes; the notification stays in the center (unread),
 			// like dunst's history. Transient ones are gone for good.
 			n.popup = false

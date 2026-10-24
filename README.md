@@ -272,6 +272,11 @@ graphs of each value.
 
 ### Notifications
 
+Popups don't time out while you're away: after `[notifications]
+hold_when_idle` seconds without input (default 5) they stay on screen, and
+once you're back each gets its full time again. Idle inhibitors (a playing
+video) count as activity, so they time out normally while you watch.
+
 wlperch serves `org.freedesktop.Notifications`, so apps' notifications
 (`notify-send`, browsers, chat apps…) show as its own popups instead of
 dunst's or mako's. Only one program can hold that name. wlperch queues for
@@ -850,6 +855,7 @@ bar_room =                    # room shown by "wlperch status sensors" (empty = 
 
 [notifications]
 enabled = true                # serve desktop notifications (takes over from dunst/mako)
+hold_when_idle = 5            # popups wait after this many s without input (0 = off)
 
 [github]
 enabled = false               # GitHub panel via the gh CLI (run "gh auth login" first)

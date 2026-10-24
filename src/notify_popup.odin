@@ -576,6 +576,7 @@ notify_popups_next_frame :: proc() -> time.Duration {
 	for p in popups {
 		n, _ := notif_find(p.id)
 		if n == nil || !p.configured || n.timeout <= 0 || n.expires == {} {continue}
+		if plat.away && !n.hover {continue} // held while away: the line stands still
 		left := time.tick_diff(now, n.expires)
 		wait := BAR_FRAME - time.tick_diff(p.bar_at, now)
 		if n.hover {

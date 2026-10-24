@@ -41,6 +41,8 @@ Platform :: struct {
 	idle_note:        ^wl.Ext_Idle_Notification_V1,
 	idle:             bool,      // no user input for the configured time
 	idle_since:       time.Time, // when input actually stopped
+	away_note:        ^wl.Ext_Idle_Notification_V1, // notifications' own, shorter
+	away:             bool,      // no input for [notifications] hold_when_idle
 	single_pixel:     ^wl.Wp_Single_Pixel_Buffer_Manager_V1,
 	seat:             ^wl.Seat,
 	pointer:          ^wl.Pointer,
@@ -688,6 +690,27 @@ platform_watch_idle :: proc(timeout: time.Duration) -> bool {
 	idle_timeout = timeout
 	plat.idle_note = wl.ext_idle_notifier_v1_get_idle_notification(plat.idle_notifier, u32(time.duration_milliseconds(timeout)), plat.seat)
 	wl.ext_idle_notification_v1_add_listener(plat.idle_note, &idle_listener, nil)
+	return true
+}
+
+@(private = "file")
+away_listener := wl.Ext_Idle_Notification_V1_Listener {
+	idled = proc "c" (data: rawptr, self: ^wl.Ext_Idle_Notification_V1) {
+		plat.away = true
+	},
+	resumed = proc "c" (data: rawptr, self: ^wl.Ext_Idle_Notification_V1) {
+		plat.away = false
+	},
+}
+
+// A second, independent idle watch for notification popups (plat.away),
+// shorter than the time tracker's.
+platform_watch_away :: proc(timeout: time.Duration) -> bool {
+	if plat.idle_notifier == nil || plat.seat == nil {return false}
+	if plat.away_note != nil {wl.ext_idle_notification_v1_destroy(plat.away_note)}
+	plat.away = false
+	plat.away_note = wl.ext_idle_notifier_v1_get_idle_notification(plat.idle_notifier, u32(time.duration_milliseconds(timeout)), plat.seat)
+	wl.ext_idle_notification_v1_add_listener(plat.away_note, &away_listener, nil)
 	return true
 }
 
