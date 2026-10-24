@@ -102,7 +102,7 @@ bar_font :: proc(f: Bar_Font) -> ^Soft_Font {
 	switch f {
 	case .Bold: return &soft_bold
 	case .Mono:
-		if !bar_mono.ok {bar_mono.ok = bool(stbtt.InitFont(&bar_mono.info, raw_data(FONT_MONO), 0))}
+		if !bar_mono.ok {soft_font_init(&bar_mono, FONT_MONO)}
 		return &bar_mono
 	case .Regular:
 	}
@@ -182,13 +182,14 @@ bar_stroke :: proc(cv: ^Bar_Canvas, r: Bar_Rect, radii: [4]f32, rgb: u32, alpha:
 	}
 }
 
-// Text with its baseline at `baseline` (logical).
-bar_text :: proc(cv: ^Bar_Canvas, f: Bar_Font, px, x, baseline: f32, s: string, rgb: u32, alpha: f32 = 1) {
-	soft_draw_text(cv.px, cv.w, cv.h, bar_font(f), px * cv.s, x * cv.s, baseline * cv.s, s, rgb, alpha)
+// Text with its baseline at `baseline` (logical). tnum: tabular digits, for
+// numbers that change (what follows them doesn't jiggle).
+bar_text :: proc(cv: ^Bar_Canvas, f: Bar_Font, px, x, baseline: f32, s: string, rgb: u32, alpha: f32 = 1, tnum := false) {
+	soft_draw_text(cv.px, cv.w, cv.h, bar_font(f), px * cv.s, x * cv.s, baseline * cv.s, s, rgb, alpha, tnum)
 }
 
-bar_text_width :: proc(f: Bar_Font, px: f32, s: string) -> f32 {
-	return soft_text_width(bar_font(f), px, s)
+bar_text_width :: proc(f: Bar_Font, px: f32, s: string, tnum := false) -> f32 {
+	return soft_text_width(bar_font(f), px, s, tnum)
 }
 
 // Icon thumbnail (ICON_PX²) scaled into a size×size box, bilinear.
