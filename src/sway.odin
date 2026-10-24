@@ -406,3 +406,24 @@ sway_start :: proc() {
 		}
 	})
 }
+
+// A connection of its own subscribed to `events` (a JSON list), for a poll
+// loop that reads it with sway_read_event. -1 when sway isn't there.
+sway_subscribe :: proc(events: string) -> posix.FD {
+	fd := sway_connect()
+	if fd < 0 {return -1}
+	if !ipc_write(fd, IPC_SUBSCRIBE, events) {
+		posix.close(fd)
+		return -1
+	}
+	if _, reply, ok := ipc_read(fd); !ok || !strings.contains(reply, "true") {
+		posix.close(fd)
+		return -1
+	}
+	return fd
+}
+
+// One message from a sway_subscribe connection (call when it's readable).
+sway_read_event :: proc(fd: posix.FD) -> (type: u32, payload: string, ok: bool) {
+	return ipc_read(fd)
+}

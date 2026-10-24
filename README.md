@@ -669,7 +669,7 @@ panel (close on click outside, position, width, GPU release), clocks and weather
 memory thresholds, the lock screen (background, colours, picture, blur, what it
 shows), the time tracker's break timeout, GitHub, the launcher's terminal and
 the per-mode dark / light targets (wallpaper, GTK / icon / kitty / nvim / VS Code
-/ Kvantum themes). Each has its help line and a filter box finds them. Changes
+/ Kvantum themes) and the setup window's own dim. Each has its help line and a filter box finds them. Changes
 are written into `config.ini` as you make them (typing and dragging are
 debounced), one key at a time with your comments and layout kept; "reset"
 removes the key so the default applies again. They take effect by themselves:
@@ -677,6 +677,18 @@ the daemon restarts (keeping its state), the bar re-reads the file, the lock
 screen uses them the next time it locks and a dark / light target for the other
 mode at the next switch. Panels, sensors, display presets, projects and theme
 commands stay in the file.
+
+While the setup window floats and has focus, the rest of the screen (other
+windows and the bar, on every output) is dimmed around it, fading in and out.
+The dim is a layer surface of the setup process with a hole shaped like the
+window's rounded card; it follows the window while it is dragged or resized
+(polling sway's tree at frame rate only while something moves) and goes away
+when the window is tiled, fullscreen, on a hidden workspace or loses focus to
+another window. A click on the dim closes setup, like Escape; the window and
+the resize strip around its edges work as before. Being part of the setup
+process, the dim also disappears if that process crashes. `[setup]
+dim_background = false` (or the Settings tab) turns it off, `dim_strength`
+sets how dark it is; both apply to an open window right away.
 
 "Replace whole bar" is the aggressive option: your config and `style.css` are
 renamed to `*.before-wlperch-full` (with a timestamp when that name is taken;
@@ -861,6 +873,10 @@ show_bluetooth = true         # connected Bluetooth devices and their battery
 [launcher]
 terminal =                    # for Terminal=true apps, e.g. "alacritty -e"; empty: $TERMINAL, sway's $term, …
 
+[setup]
+dim_background = true         # dim the rest of the screen while "wlperch setup" is open and focused
+dim_strength = 40             # how dark, in % (5..90; the light theme uses 3/4 of it)
+
 # Panels: the first is the default. columns: modules per column, separated by |
 [panel.main]
 header = true                 # big clock and date
@@ -966,6 +982,7 @@ src/bar_tray.odin        StatusNotifierWatcher/Host and dbusmenu
 src/setup_bar.odin       setup component: switch sway's bar from waybar/swaybar to wlperch bar and back
 src/config_edit.odin     config.ini edits that keep comments; the settings table, validated with config.odin's limits
 src/setup_settings.odin  setup's Settings tab: controls, debounced writes, restarting the daemon to apply
+src/setup_dim.odin       setup's dim around its window: layer surfaces with a rounded hole that follow sway's tree
 ```
 
 ## Licenses

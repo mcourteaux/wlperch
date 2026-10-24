@@ -233,6 +233,14 @@ idle_lock_seconds = 0
 # terminal installed.
 terminal =
 
+[setup]
+# While the "wlperch setup" window is open and focused, the rest of the
+# screen is dimmed around it (not while it is tiled). A click on the dim
+# closes the window, like Escape.
+dim_background = true
+# How dark the dim is, in percent (the light theme uses a bit less).
+dim_strength = 40
+
 [theme]
 # Dark / light: "wlperch theme dark|light|toggle" or the quick settings tile.
 # Switches wlperch itself and the rest of the desktop as far as set up here.
@@ -754,6 +762,7 @@ LIM_BAR_TRAY :: Int_Limits{12, 48, 20}
 LIM_BAR_VOLSTEP :: Int_Limits{1, 25, 5}
 LIM_LOCK_COUNTDOWN :: Int_Limits{0, 120, 15}
 LIM_LOCK_IDLE :: Int_Limits{0, 86400, 0}
+LIM_SETUP_DIM :: Int_Limits{5, 90, 40}
 
 parse_int_lim :: proc(s: string, l: Int_Limits) -> int {
 	return clamp(strconv.parse_int(strings.trim_space(s)) or_else l.fallback, l.lo, l.hi)

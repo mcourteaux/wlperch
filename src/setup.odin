@@ -1048,17 +1048,26 @@ run_setup :: proc() {
 	app.show_time = time.tick_now()
 	// Follow "wlperch theme" switches live, like the bar.
 	theme_fd := theme_watch_open()
-	for !plat.closed {
+	setup_dim_init()
+	for {
+		if plat.closed {
+			// The dim fades out first, with the window still in its hole.
+			setup_dim_close()
+			setup_dim_tick()
+			if !setup_dim_busy() {break}
+		}
 		d := plat.display
 		for wl.display_prepare_read(d) != 0 {wl.display_dispatch_pending(d)}
 		wl.display_flush(d)
 		timeout := plat.redraw > 0 && !plat.frame_pending ? 0 : 1000
 		if wait := lock_settings_tick(); wait >= 0 {timeout = min(timeout, wait)}
 		if wait := settings_tick(); wait >= 0 {timeout = min(timeout, wait)}
-		pfds := [3]posix.pollfd {
+		if wait := setup_dim_timeout(); wait >= 0 {timeout = min(timeout, wait)}
+		pfds := [4]posix.pollfd {
 			{fd = platform_fd(), events = {.IN}},
 			{fd = app.wake_r, events = {.IN}},
 			{fd = posix.FD(theme_fd), events = {.IN}},
+			{fd = setup_dim_fd(), events = {.IN}},
 		}
 		n := posix.poll(&pfds[0], len(pfds), i32(timeout))
 		if n > 0 && .IN in pfds[0].revents {
@@ -1079,17 +1088,22 @@ run_setup :: proc() {
 				request_redraw(2)
 			}
 		}
+		if pfds[3].revents != {} {setup_dim_on_event()}
 		if time.tick_since(setup.checked) > 2 * time.Second {
 			// Only what changed is drawn again.
 			before := setup_fingerprint()
 			setup_check()
 			if setup_fingerprint() != before {request_redraw(1)}
-			if settings_poll() {request_redraw(1)}
+			if settings_poll() {
+				setup_dim_load_config() // config.ini changed elsewhere
+				request_redraw(1)
+			}
 		}
 		if plat.redraw > 0 && platform_can_render() {
 			plat.redraw -= 1
 			render_setup_frame()
 		}
+		setup_dim_tick()
 		// Remember the floating size once a resize has settled.
 		if size := ([2]i32{plat.win.w, plat.win.h}); size != saved_size && !plat.win.square && !plat.win.resizing {
 			saved_size = size

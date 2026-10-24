@@ -88,6 +88,8 @@ Platform :: struct {
 	pointer_serial:   u32,
 	pointer_pos:      [2]f32, // on our surface, logical
 	win_edge:         u32,    // setup window: resize edge under the pointer (xdg edges)
+	win_grab:         bool,   // setup window: we started a move / resize; ends with our next pointer event
+	mods_held:        bool,   // Super or Alt held (sway's floating modifier drags windows)
 	pointer_inside:   bool,
 	cursor:           im.MouseCursor,
 	xkb_ctx:          ^xkb.Context,
@@ -220,6 +222,7 @@ seat_listener := wl.Seat_Listener {
 			plat.keyboard = nil
 			plat.repeat_key = 0
 			plat.keyboard_focus = false
+			plat.mods_held = false
 		}
 	},
 	name = proc "c" (data: rawptr, seat: ^wl.Seat, name: cstring) {},
@@ -280,6 +283,7 @@ pointer_listener := wl.Pointer_Listener {
 		context = g_ctx
 		plat.pointer_serial = serial
 		plat.pointer_surface = surface
+		plat.win_grab = false // the compositor's grab is over: input reaches us again
 		log.debugf("pointer enter %.0f,%.0f", wl.fixed_to_f64(x), wl.fixed_to_f64(y))
 		if notify_on_enter(surface, f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y))) {return}
 		if memwarn_on_enter(surface, f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y))) {return}
@@ -312,6 +316,7 @@ pointer_listener := wl.Pointer_Listener {
 	},
 	motion = proc "c" (data: rawptr, self: ^wl.Pointer, t: u32, x, y: wl.Fixed) {
 		context = g_ctx
+		plat.win_grab = false
 		if notify_on_motion(plat.pointer_surface, f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y))) {return}
 		if memwarn_on_motion(plat.pointer_surface, f32(wl.fixed_to_f64(x)), f32(wl.fixed_to_f64(y))) {return}
 		if plat.pointer_surface != plat.surface {return}
@@ -321,8 +326,10 @@ pointer_listener := wl.Pointer_Listener {
 	},
 	button = proc "c" (data: rawptr, self: ^wl.Pointer, serial, t, button, state: u32) {
 		context = g_ctx
+		plat.win_grab = false
 		if notify_on_button(plat.pointer_surface, button, state) {return}
 		if memwarn_on_button(plat.pointer_surface, button, state) {return}
+		if setup_dim_on_button(plat.pointer_surface, button, state) {return}
 		log.debugf("pointer button %x state %d on %s", button, state, plat.pointer_surface == plat.surface ? "popup" : plat.pointer_surface == plat.catcher && plat.catcher != nil ? "backdrop" : "other")
 		if plat.pointer_surface != plat.surface {
 			if plat.pointer_surface != nil && plat.pointer_surface == plat.catcher && state == wl.POINTER_BUTTON_STATE_PRESSED {
@@ -334,6 +341,7 @@ pointer_listener := wl.Pointer_Listener {
 		if plat.win_toplevel != nil && plat.seat != nil && button == 0x110 && state == wl.POINTER_BUTTON_STATE_PRESSED {
 			if e := platform_window_edge(plat.pointer_pos.x, plat.pointer_pos.y); e != 0 {
 				wl.xdg_toplevel_resize(plat.win_toplevel, plat.seat, serial, e)
+				plat.win_grab = true
 				return
 			}
 		}
@@ -342,6 +350,7 @@ pointer_listener := wl.Pointer_Listener {
 		// swallows the release.
 		if plat.win_toplevel != nil && plat.seat != nil && button == 0x110 && state == wl.POINTER_BUTTON_STATE_PRESSED && !im.IsAnyItemHovered() && !im.IsAnyItemActive() {
 			wl.xdg_toplevel_move(plat.win_toplevel, plat.seat, serial)
+			plat.win_grab = true
 			return
 		}
 		b: i32 = -1
@@ -485,6 +494,7 @@ keyboard_listener := wl.Keyboard_Listener {
 	leave = proc "c" (data: rawptr, self: ^wl.Keyboard, serial: u32, surface: ^wl.Surface) {
 		context = g_ctx
 		plat.keyboard_focus = false
+		plat.mods_held = false
 		plat.repeat_key = 0
 		xkb.compose_reset(&plat.compose)
 		im.IO_AddFocusEvent(im.GetIO(), false)
@@ -527,6 +537,7 @@ keyboard_listener := wl.Keyboard_Listener {
 		im.IO_AddKeyEvent(io, .ImGuiMod_Shift, active(xkb.MOD_NAME_SHIFT))
 		im.IO_AddKeyEvent(io, .ImGuiMod_Alt, active(xkb.MOD_NAME_ALT))
 		im.IO_AddKeyEvent(io, .ImGuiMod_Super, active(xkb.MOD_NAME_LOGO))
+		plat.mods_held = active(xkb.MOD_NAME_LOGO) || active(xkb.MOD_NAME_ALT)
 	},
 	repeat_info = proc "c" (data: rawptr, self: ^wl.Keyboard, rate, delay: i32) {
 		plat.repeat_rate = rate

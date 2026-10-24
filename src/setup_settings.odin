@@ -232,6 +232,9 @@ applied :: proc(i: int) {
 		}
 	case .Lock:
 		r.note = "saved; used the next time the screen locks"
+	case .Setup:
+		setup_dim_load_config()
+		r.note, r.note_ok = "applied", true
 	}
 }
 
