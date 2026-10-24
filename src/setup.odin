@@ -321,6 +321,16 @@ backup :: proc(path: string) {
 	}
 }
 
+// ~/.local/bin/wlperch-bar -> wlperch: sway runs swaybar_command as a single
+// program name, so the bar needs one (main dispatches on it).
+bar_link_path :: proc() -> string {return strings.concatenate({home(), "/.local/bin/wlperch-bar"}, context.temp_allocator)}
+
+bar_link_install :: proc() {
+	link := bar_link_path()
+	os.remove(link)
+	posix.symlink("wlperch", strings.clone_to_cstring(link, context.temp_allocator))
+}
+
 setup_install_program :: proc() {
 	data, err := os.read_entire_file(setup.self_path, context.temp_allocator)
 	if err != nil {
@@ -328,6 +338,7 @@ setup_install_program :: proc() {
 		return
 	}
 	ok := write_file(setup.bin_path, string(data), os.Permissions_Read_All + os.Permissions_Execute_All + {.Write_User})
+	if ok {bar_link_install()}
 	done(.Program, ok, ok ? "installed to ~/.local/bin" : "couldn't write ~/.local/bin/wlperch")
 }
 
@@ -631,6 +642,7 @@ setup_install_recommended :: proc() {
 
 setup_remove_program :: proc() {
 	ok := os.remove(setup.bin_path) == nil
+	if ok {os.remove(bar_link_path())}
 	done(.Program, ok, ok ? "removed from ~/.local/bin (the sway file and launcher entry still point at it)" : "couldn't remove ~/.local/bin/wlperch")
 }
 

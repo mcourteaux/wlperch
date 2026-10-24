@@ -462,7 +462,7 @@ one with the modules on the right. Sway runs it from a bar block:
 
 ```
 bar {
-    swaybar_command wlperch bar
+    swaybar_command wlperch-bar
 }
 ```
 

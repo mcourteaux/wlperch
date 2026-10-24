@@ -1119,16 +1119,18 @@ test_theme_switch_keys :: proc(t: ^testing.T) {
 @(test)
 test_bar_rewrite :: proc(t: ^testing.T) {
 	cases := [][2]string{
-		{"bar {\n    swaybar_command waybar\n}\n", "bar {\n    swaybar_command wlperch bar\n}\n"},
-		{"exec_always waybar -c ~/.config/waybar/top.jsonc\n", "exec_always wlperch bar\n"},
-		{"exec /usr/bin/waybar\n", "exec wlperch bar\n"},
+		{"bar {\n    swaybar_command waybar\n}\n", "bar {\n    swaybar_command wlperch-bar\n}\n"},
+		{"exec_always waybar -c ~/.config/waybar/top.jsonc\n", "exec_always wlperch-bar\n"},
+		{"exec /usr/bin/waybar\n", "exec wlperch-bar\n"},
+		// sway execs swaybar_command as one program name: "wlperch bar" never ran.
+		{"bar {\n    swaybar_command wlperch bar\n}\n", "bar {\n    swaybar_command wlperch-bar\n}\n"},
 		{"    bindsym $mod+Shift+c exec killall waybar && swaymsg reload\n", "    bindsym $mod+Shift+c exec swaymsg reload\n"},
 		// swaybar (no program named): ours goes into the block.
-		{"bar {\n    position top\n    colors {\n        statusline #ffffff\n    }\n}\n", "bar {\n    swaybar_command wlperch bar\n    position top\n    colors {\n        statusline #ffffff\n    }\n}\n"},
+		{"bar {\n    position top\n    colors {\n        statusline #ffffff\n    }\n}\n", "bar {\n    swaybar_command wlperch-bar\n    position top\n    colors {\n        statusline #ffffff\n    }\n}\n"},
 		// Left alone: comments, rules, a block already running something else.
 		{"# exec waybar\n", "# exec waybar\n"},
 		{"for_window [app_id=\"waybar\"] floating enable\n", "for_window [app_id=\"waybar\"] floating enable\n"},
-		{"bar {\n    swaybar_command wlperch bar\n}\n", "bar {\n    swaybar_command wlperch bar\n}\n"},
+		{"bar {\n    swaybar_command wlperch-bar\n}\n", "bar {\n    swaybar_command wlperch-bar\n}\n"},
 	}
 	for c in cases {
 		got, _ := bar_rewrite(c[0])
@@ -1174,7 +1176,7 @@ test_bar_setup_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, c.state, Comp_State.Missing)
 	bar_switch(apply = false)
 	testing.expect_value(t, read(main_dots), "set $mod Mod4\nbindsym $mod+Shift+c exec swaymsg reload\ninclude config.d/*\n")
-	testing.expect_value(t, read(bar_dots), "# Status Bar: waybar\nbar {\n    swaybar_command wlperch bar\n}\n")
+	testing.expect_value(t, read(bar_dots), "# Status Bar: waybar\nbar {\n    swaybar_command wlperch-bar\n}\n")
 	bar_setup_check(&c, proc(c: ^Component, line: string) {})
 	testing.expect_value(t, c.state, Comp_State.Installed)
 	bar_switch_back(apply = false)

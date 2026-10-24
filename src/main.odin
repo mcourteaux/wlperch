@@ -5,6 +5,7 @@ import "core:log"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:path/filepath"
 import "core:sys/posix"
 import "core:time"
 
@@ -50,7 +51,7 @@ commands:
   calc <expression>  evaluate and print it as decimal, hex, octal, binary and
                    IEEE-754 (hex float, f64/f32 bits); "toggle calc" opens the popup
   bar              the status bar (instead of waybar); run it from sway:
-                   bar { swaybar_command wlperch bar }
+                   bar { swaybar_command wlperch-bar }
   lock [-f]        lock the screen (clock, notification count, media, battery);
                    -f forks once locked, for swayidle before-sleep
   sensors scan [seconds]  list the Tuya devices announcing themselves on the LAN
@@ -311,6 +312,11 @@ main :: proc() {
 	context.logger = log.create_console_logger(level, {.Level, .Terminal_Color, .Time})
 
 	migrate_old_name()
+	// sway runs swaybar_command as one program name: "wlperch-bar" is the bar.
+	if filepath.base(os.args[0]) == "wlperch-bar" {
+		config_load()
+		os.exit(bar_main(os.args[1:]))
+	}
 	cmd := len(os.args) > 1 ? os.args[1] : "toggle"
 	// Full command line for the daemon, e.g. "toggle perf".
 	full := len(os.args) > 1 ? strings.join(os.args[1:], " ") : "toggle"

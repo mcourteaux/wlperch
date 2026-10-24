@@ -90,6 +90,7 @@ if [[ $MODE == install ]]; then
 	# Replace atomically: a running daemon keeps its (now unlinked) binary.
 	install -m 755 build/wlperch "$HOME/.local/bin/.wlperch.new"
 	mv -f "$HOME/.local/bin/.wlperch.new" "$HOME/.local/bin/wlperch"
+	ln -sfn wlperch "$HOME/.local/bin/wlperch-bar" # sway's swaybar_command takes one program name
 	echo ">> installed ~/.local/bin/wlperch (restart a running daemon with: wlperch restart)"
 	# The sway side lives in one file; install it unless some config already has it.
 	SWAYD="${XDG_CONFIG_HOME:-$HOME/.config}/sway/config.d"

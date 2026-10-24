@@ -225,7 +225,7 @@ command =
 
 [bar]
 # wlperch's own bar ("wlperch bar"), a waybar replacement: run it from sway
-# with  bar { swaybar_command wlperch bar }  ("wlperch setup" can switch).
+# with  bar { swaybar_command wlperch-bar }  ("wlperch setup" can switch).
 # top | bottom
 position = top
 height = 34

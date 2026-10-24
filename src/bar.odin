@@ -1,5 +1,5 @@
 // `wlperch bar`: a status bar that replaces waybar. Run it from sway with
-//     bar { swaybar_command wlperch bar }
+//     bar { swaybar_command wlperch-bar }
 // (sway then starts it, restarts it on reload and passes "-b bar-0", which
 // we ignore; "wlperch setup" can switch a waybar setup over).
 //
@@ -1003,10 +1003,13 @@ bar_lock :: proc() -> bool {
 	return false
 }
 
-// Started by sway, stderr goes nowhere visible: keep it in a log file.
+// Started by sway (-b <bar id>), stderr is sway's: a tty nobody looks at, or
+// nothing. Keep it in a log file instead.
 @(private = "file")
-bar_log_to_file :: proc() {
-	if posix.isatty(2) {return}
+bar_log_to_file :: proc(args: []string) {
+	from_sway := false
+	for a in args {if a == "-b" {from_sway = true}}
+	if !from_sway && posix.isatty(2) {return}
 	dir := posix_getenv("XDG_RUNTIME_DIR")
 	if dir == "" {dir = "/tmp"}
 	path := fmt.ctprintf("%s/wlperch-bar-%s.log", dir, posix_getenv("WAYLAND_DISPLAY"))
@@ -1018,7 +1021,7 @@ bar_log_to_file :: proc() {
 
 bar_main :: proc(args: []string) -> int {
 	g_bar_ctx = context
-	bar_log_to_file()
+	bar_log_to_file(args)
 	if !bar_lock() {
 		fmt.eprintln("wlperch bar: already running on this display")
 		return 1

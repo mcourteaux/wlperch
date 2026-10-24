@@ -3,9 +3,9 @@
 //
 // The sway config and config.d/* are rewritten with backups in
 // ~/.local/share/wlperch/bar-backup/ (see config_switch.odin):
-//   swaybar_command waybar          -> swaybar_command wlperch bar
-//   exec[_always] waybar …          -> exec[_always] wlperch bar
-//   bar { … } without a command     -> gets "swaybar_command wlperch bar"
+//   swaybar_command waybar          -> swaybar_command wlperch-bar
+//   exec[_always] waybar …          -> exec[_always] wlperch-bar
+//   bar { … } without a command     -> gets "swaybar_command wlperch-bar"
 //   killall waybar && swaymsg reload -> swaymsg reload (sway restarts its bar)
 // With no bar anywhere, a config.d/wlperch-bar.conf is written instead.
 package main
@@ -23,7 +23,7 @@ BAR_CONF_NAME :: "wlperch-bar.conf"
 
 BAR_CONF :: `# wlperch bar (written by wlperch setup; "Switch back" removes it).
 bar {
-    swaybar_command wlperch bar
+    swaybar_command wlperch-bar
 }
 `
 
@@ -84,7 +84,7 @@ bar_rewrite :: proc(text: string, allocator := context.temp_allocator) -> (out: 
 			}
 			strings.write_string(&b, line)
 			if closed && !has_cmd {
-				fmt.sbprintf(&b, "%s    swaybar_command wlperch bar\n", indent)
+				fmt.sbprintf(&b, "%s    swaybar_command wlperch-bar\n", indent)
 				changes += 1
 			}
 			continue
@@ -95,11 +95,17 @@ bar_rewrite :: proc(text: string, allocator := context.temp_allocator) -> (out: 
 		}
 		switch {
 		case len(f) >= 2 && f[0] == "swaybar_command" && is_waybar(f[1]):
-			fmt.sbprintf(&b, "%sswaybar_command wlperch bar\n", indent)
+			fmt.sbprintf(&b, "%sswaybar_command wlperch-bar\n", indent)
+			changes += 1
+			continue
+		case len(f) == 3 && f[0] == "swaybar_command" && f[1] == "wlperch" && f[2] == "bar":
+			// Written by an earlier setup: sway execs the whole string as one
+			// program name, so it never started.
+			fmt.sbprintf(&b, "%sswaybar_command wlperch-bar\n", indent)
 			changes += 1
 			continue
 		case len(f) >= 2 && (f[0] == "exec" || f[0] == "exec_always") && is_waybar(f[1]):
-			fmt.sbprintf(&b, "%s%s wlperch bar\n", indent, f[0])
+			fmt.sbprintf(&b, "%s%s wlperch-bar\n", indent, f[0])
 			changes += 1
 			continue
 		}
@@ -120,7 +126,7 @@ bar_rewrite :: proc(text: string, allocator := context.temp_allocator) -> (out: 
 bar_setup_check :: proc(p: ^Component, add_detail: proc(c: ^Component, line: string)) {
 	spec := bar_switch_spec()
 	entries, installed := switch_manifest(spec)
-	uses, ours := switch_uses(spec, "wlperch bar")
+	uses, ours := switch_uses(spec, "wlperch-bar")
 	switch {
 	case installed:
 		p.state = len(uses) > 0 ? .Outdated : .Installed
@@ -186,7 +192,7 @@ stop_all :: proc(name: string) {
 
 bar_switch :: proc(apply: bool) {
 	spec := bar_switch_spec()
-	_, ours := switch_uses(spec, "wlperch bar")
+	_, ours := switch_uses(spec, "wlperch-bar")
 	changed, err := switch_apply(spec, allow_new = !ours)
 	if err != "" {
 		bar_done(false, err)
@@ -227,7 +233,7 @@ bar_switch_back :: proc(apply: bool) {
 		stop_all("wlperch-bar")
 		// A waybar started with exec (not a bar block) doesn't come back by itself.
 		if len(session_pids("waybar")) == 0 && len(session_pids("swaybar")) == 0 {
-			uses, _ := switch_uses(spec, "wlperch bar")
+			uses, _ := switch_uses(spec, "wlperch-bar")
 			if len(uses) > 0 {launch_detached({"waybar"})}
 		}
 	}
