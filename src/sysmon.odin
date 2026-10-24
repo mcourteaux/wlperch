@@ -335,7 +335,7 @@ sysmon_start :: proc() {
 				if nvml.lib != nil {nvml_sample()} else {drm_sample()}
 			}
 			thermals_sample()
-			wake_ui()
+			wake_ui_lazy()
 			free_all(context.temp_allocator)
 			// Align samples to whole seconds so graph steps line up with the clock tick.
 			now := time.to_unix_nanoseconds(time.now())

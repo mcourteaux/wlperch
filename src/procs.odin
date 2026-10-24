@@ -168,7 +168,7 @@ procs_start :: proc() {
 				continue
 			}
 			sample()
-			wake_ui()
+			wake_ui_lazy()
 			free_all(context.temp_allocator)
 			// Drop "active" so sampling stops once the module is no longer drawn.
 			procs.active = false

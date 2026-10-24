@@ -312,7 +312,9 @@ media_start :: proc() {
 					}
 				}
 			}
-			wake_ui()
+			// After a button press, show the result now; the once-a-second
+			// poll is drawn by the main loop's tick (see wake_ui_lazy).
+			if member != "" {wake_ui()} else {wake_ui_lazy()}
 			free_all(context.temp_allocator)
 		}
 	})

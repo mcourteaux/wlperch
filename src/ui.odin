@@ -82,7 +82,7 @@ draw_ui :: proc() -> f32 {
 	if time.tick_since(ui.nightlight_at) > 2 * time.Second {
 		ui.nightlight_at = time.tick_now()
 		nightlight_poll()
-	dnd_poll_async()
+		dnd_poll_async()
 	}
 
 	if im.IsKeyPressed(.Escape, false) {

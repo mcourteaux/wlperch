@@ -32,14 +32,16 @@ dnd_poll_async :: proc() {
 	if notifs.owner || dunstctl_path() == "" {return}
 	thread.create_and_start(proc() {
 		out, ok := run({"dunstctl", "is-paused"}, allocator = context.temp_allocator)
+		changed: bool
 		{
 			sync.guard(&dnd.mu)
-			dnd.ok = ok
-			dnd.paused = ok && strings.trim_space(out) == "true"
-			dnd.pending = false
+			paused := ok && strings.trim_space(out) == "true"
+			changed = dnd.ok != ok || dnd.paused != paused || dnd.pending
+			dnd.ok, dnd.paused, dnd.pending = ok, paused, false
 		}
 		free_all(context.temp_allocator)
-		request_redraw()
+		// Polled every 2 s while visible: only a change is worth a frame.
+		if changed {request_redraw()}
 	}, self_cleanup = true)
 }
 

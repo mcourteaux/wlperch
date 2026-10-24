@@ -82,6 +82,11 @@ wake_ui :: proc "contextless" () {
 	posix.write(app.wake_w, &b, 1)
 }
 
+// For samplers that refresh about once a second: no wake of its own. The
+// main loop's once-per-second tick draws the new values, so the samples
+// don't each cost a frame of their own out of phase with the tick.
+wake_ui_lazy :: proc "contextless" () {}
+
 // Wake the main loop regardless of visibility (e.g. the time tracker).
 wake_main :: proc "contextless" () {
 	b := u8(1)
@@ -536,6 +541,10 @@ render_frame :: proc() {
 	}
 }
 
+// New data from worker threads is drawn once this long after the first wake.
+DATA_COALESCE :: 60 * time.Millisecond
+@(private = "file") data_due: time.Tick
+
 loop_iteration :: proc() {
 	d := plat.display
 	for wl.display_prepare_read(d) != 0 {wl.display_dispatch_pending(d)}
@@ -559,6 +568,10 @@ loop_iteration :: proc() {
 		// Wake up to release GPU resources once we've been hidden long enough.
 		left := config.release_gpu_after - time.tick_since(hidden_since)
 		timeout = max(int(time.duration_milliseconds(left)), 0) + 1
+	}
+	if data_due != {} && platform_visible() {
+		ms := max(int(time.duration_milliseconds(time.tick_diff(time.tick_now(), data_due))), 0) + 1
+		timeout = timeout < 0 ? ms : min(timeout, ms)
 	}
 	if hb := tracker_timeout(); hb >= 0 {
 		ms := int(time.duration_milliseconds(hb)) + 1
@@ -600,6 +613,12 @@ loop_iteration :: proc() {
 	if .IN in pfds[1].revents {
 		buf: [64]u8
 		for posix.read(app.wake_r, &buf[0], len(buf)) > 0 {}
+		// The samplers (cpu, procs, network, audio…) each wake us about once a
+		// second, a few ms apart: one frame for the whole burst, not one each.
+		if data_due == {} {data_due = time.tick_add(time.tick_now(), DATA_COALESCE)}
+	}
+	if data_due != {} && time.tick_diff(data_due, time.tick_now()) >= 0 {
+		data_due = {}
 		request_redraw(1)
 	}
 	if .IN in pfds[2].revents {

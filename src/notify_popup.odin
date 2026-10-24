@@ -29,7 +29,7 @@ import "wl"
 @(private = "file") TOP_MARGIN :: 8
 @(private = "file") RIGHT_MARGIN :: 10
 @(private = "file") BAR_H :: 3 // timeout line along the bottom edge
-@(private = "file") BAR_FRAME :: 33 * time.Millisecond // at most ~30 bar redraws a second
+@(private = "file") BAR_FRAME :: 66 * time.Millisecond // at most ~15 line redraws a second
 @(private = "file") BAR_REFILL :: 2 * time.Second // hovering refills an empty bar in this long
 
 @(private = "file") PX_APP :: 12.0
