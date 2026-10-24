@@ -15,12 +15,14 @@
 package main
 
 import "base:runtime"
+import "core:encoding/ini"
 import "core:fmt"
 import "core:log"
 import "core:math"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:sync"
 import "core:sys/linux"
 import "core:sys/posix"
 import "core:time"
@@ -1034,6 +1036,7 @@ bar_main :: proc(args: []string) -> int {
 	sensors_read_only = true
 	soft_fonts_init()
 	theme_watch_start()
+	config_fd = config_watch_open()
 
 	fds: [2]posix.FD
 	posix.pipe(&fds)
@@ -1090,6 +1093,49 @@ theme_watch_read :: proc() {
 	for p in popups {p.dirty = true}
 }
 
+// ---- config.ini -----------------------------------------------------------------------------
+// The setup window's settings (and hand edits) apply without a restart: the
+// [bar] keys, the memory thresholds and the sensor room are read again.
+
+@(private = "file") config_fd: linux.Fd = -1
+
+@(private = "file")
+config_reload :: proc() {
+	path := config_path()
+	defer delete(path)
+	defaults, _ := ini.load_map_from_string(DEFAULT_CONFIG, context.temp_allocator)
+	m, _, ok := ini.load_map_from_path(path, context.temp_allocator)
+	if !ok {return}
+	old := bar_cfg
+	{
+		// The data worker reads the module list and thresholds under this lock.
+		sync.guard(&bar_data.mu)
+		bar_cfg = {}
+		bar_config_load(m, defaults)
+		config_load_memory(m, defaults)
+		// The old string may still be in use on the worker: let it be.
+		config.sensors_bar_room = strings.clone(config_value(m, defaults, "sensors", "bar_room"))
+	}
+	same_outputs := len(old.outputs) == len(bar_cfg.outputs)
+	if same_outputs {for o, i in old.outputs {if o != bar_cfg.outputs[i] {same_outputs = false}}}
+	if old.bottom != bar_cfg.bottom || old.height != bar_cfg.height || !same_outputs {
+		log.infof("wlperch bar: config changed: %s, %d px", bar_cfg.bottom ? "bottom" : "top", bar_cfg.height)
+		for o in bar.outputs {
+			close_popups_on(o)
+			destroy_surface(o)
+			o.frame_pending = false
+			if o.ready && wanted(o.conn) {create_surface(o)}
+		}
+	}
+	for o in old.outputs {delete(o)}
+	delete(old.outputs)
+	for side in old.sides {delete(side)}
+	delete(old.clock)
+	bar.last_minute = -1 // the clock format may have gained or lost seconds
+	mark_all_dirty()
+	for p in popups {p.dirty = true}
+}
+
 @(private = "file") pulse_at: time.Tick
 
 // Until the clock text changes.
@@ -1140,12 +1186,13 @@ bar_iteration :: proc() -> bool {
 
 	sway_fd := bar_sway_fd()
 	bus_fd, bus_ev := tray_fd()
-	pfds := [5]posix.pollfd {
+	pfds := [6]posix.pollfd {
 		{fd = posix.FD(wl.display_get_fd(d)), events = {.IN}},
 		{fd = bar.wake_r, events = {.IN}},
 		{fd = sway_fd, events = {.IN}},
 		{fd = bus_fd, events = bus_ev},
 		{fd = posix.FD(theme_fd), events = {.IN}},
+		{fd = posix.FD(config_fd), events = {.IN}},
 	}
 	n := posix.poll(&pfds[0], len(pfds), i32(time.duration_milliseconds(timeout)) + 1)
 	if n < 0 {
@@ -1165,6 +1212,7 @@ bar_iteration :: proc() -> bool {
 	}
 	if sway_fd >= 0 && pfds[2].revents != {} {bar_sway_read()}
 	if theme_fd >= 0 && .IN in pfds[4].revents {theme_watch_read()}
+	if config_fd >= 0 && .IN in pfds[5].revents && config_watch_changed(config_fd) {config_reload()}
 	bar_sway_tick()
 	tray_process()
 	if bar.tip_at != {} && time.tick_diff(time.tick_now(), bar.tip_at) <= 0 {show_tooltip()}

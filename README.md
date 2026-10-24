@@ -587,6 +587,7 @@ it:
 ```sh
 ./wlperch          # not installed yet and nothing running -> opens setup
 wlperch setup      # later: the same window (or the ⚙ button in a panel)
+wlperch setup settings  # straight to the Settings tab
 ```
 
 The setup window lists each component with its status (installed, update
@@ -611,6 +612,23 @@ edits: the include line in your sway config, and the include, our modules and
 the `@import` in your waybar config (with `*.before-wlperch` backups). A removed
 settings file is kept as `config.ini.before-wlperch`. Destructive actions ask
 for a second click.
+
+The **Settings** tab (top right, or "Edit settings" on the Settings file card)
+edits the config keys you're likely to change without opening the file: the
+panel (close on click outside, position, width, GPU release), clocks and weather
+(24-hour clock, world clocks, location, units, night light command), the bar
+(position, height, clock format, tray icon size, outputs, sensor room), the
+memory thresholds, the lock screen (background, colours, picture, blur, what it
+shows), the time tracker's break timeout, GitHub, the launcher's terminal and
+the per-mode dark / light targets (wallpaper, GTK / icon / kitty / nvim / VS Code
+/ Kvantum themes). Each has its help line and a filter box finds them. Changes
+are written into `config.ini` as you make them (typing and dragging are
+debounced), one key at a time with your comments and layout kept; "reset"
+removes the key so the default applies again. They take effect by themselves:
+the daemon restarts (keeping its state), the bar re-reads the file, the lock
+screen uses them the next time it locks and a dark / light target for the other
+mode at the next switch. Panels, sensors, display presets, projects and theme
+commands stay in the file.
 
 "Replace whole bar" is the aggressive option: your config and `style.css` are
 renamed to `*.before-wlperch-full` (with a timestamp when that name is taken;
@@ -832,7 +850,7 @@ width = 1120
 columns = github | github-repo github-inbox
 
 [timetracker]
-idle_minutes = 5
+idle_seconds = 300            # no input this long = a break (idle_minutes still works)
 
 [project.acme]                # one section per project
 name = ACME                   # workspaces "ACME 1", "ACME 2", ...
@@ -893,6 +911,8 @@ src/bar_modules.odin     the bar's modules: data worker, items, clicks and scrol
 src/bar_sway.odin        the bar's sway subscription: workspaces (and project groups), mode, scratchpad, titles
 src/bar_tray.odin        StatusNotifierWatcher/Host and dbusmenu
 src/setup_bar.odin       setup component: switch sway's bar from waybar/swaybar to wlperch bar and back
+src/config_edit.odin     config.ini edits that keep comments; the settings table, validated with config.odin's limits
+src/setup_settings.odin  setup's Settings tab: controls, debounced writes, restarting the daemon to apply
 ```
 
 ## Licenses

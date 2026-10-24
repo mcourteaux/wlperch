@@ -275,7 +275,7 @@ lock_settings_load :: proc() {
 	image := get(m, defaults, "image")
 	lock_ui.has_image = image != ""
 	lock_ui.mode = lock_bg_mode_parse(get(m, defaults, "background_mode"), image)
-	lock_ui.strength = f32(clamp(strconv.parse_int(get(m, defaults, "screenshot_blur")) or_else 60, 0, 100)) / 100
+	lock_ui.strength = f32(parse_int_lim(get(m, defaults, "screenshot_blur"), LIM_LOCK_SCREENSHOT_BLUR)) / 100
 }
 
 @(private = "file")

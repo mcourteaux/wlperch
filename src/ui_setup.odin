@@ -21,7 +21,7 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	switch id {
 	case .Program:  return {ICON_DESKTOP, "Program", "Copies this binary to ~/.local/bin so `wlperch` works from anywhere. Run setup again from a newer download to update.", C_BLUE, ""}
 	case .Service:  return {ICON_POWER, "Background service", "The daemon samples CPU/GPU history, tracks time and serves the panels. Sway starts it at login (see Sway integration).", C_GREEN, ""}
-	case .Config:   return {ICON_TUNE, "Settings file", "Panels, weather location, clocks, projects, sensors… Created with defaults; edit it, then use the restart button in a panel.", C_TEAL, ""}
+	case .Config:   return {ICON_TUNE, "Settings file", "Panels, weather location, clocks, projects, sensors… Created with defaults. The common settings are on the Settings tab; the rest you edit in the file, then use the restart button in a panel.", C_TEAL, ""}
 	case .Sway:     return {ICON_KEYBOARD, "Sway integration", "One file in sway/config.d: starts the daemon, binds Mod+O (panel), Mod+P / Mod+Shift+P / Mod+Ctrl+P (project workspaces) and styles placeholder windows.", C_PURPLE, SWAY_FILE}
 	case .Waybar:   return {ICON_MONITOR, "Waybar buttons", "Panel button, timer, sensors, media and notification pills. Adds them to your bar (with backups), or replaces the whole bar with wlperch's own; Restore puts yours back.", C_CYAN, WAYBAR_JSONC}
 	case .Rapl:     return {ICON_LIGHTNING, "CPU power reading", "A udev rule that makes the CPU energy counter readable, so the Temperatures & power module can show CPU watts. Needs your password (root).", C_ORANGE, RAPL_RULE}
@@ -120,6 +120,7 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 			append(&out, Action{"Stop", false, setup_stop_service, false})
 		} else {append(&out, Action{"Start", true, proc() {setup_start_service(false)}, false})}
 	case .Config:
+		if s != .Missing {append(&out, Action{"Edit settings", true, proc() {setup_tab = .Settings}, false})}
 		append(&out, Action{s == .Missing ? "Create" : "Open", s == .Missing, setup_create_config, false})
 		if s != .Missing {append(&out, Action{"Remove", false, setup_remove_config, true})}
 	case .Sway:
@@ -347,7 +348,8 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 
 draw_setup :: proc() {
 	io := im.GetIO()
-	if im.IsKeyPressed(.Escape, false) {plat.closed = true}
+	// Escape leaves a text field first; only then does it close the window.
+	if im.IsKeyPressed(.Escape, false) && !im.IsAnyItemActive() {plat.closed = true}
 	im.SetNextWindowPos({0, 0})
 	im.SetNextWindowSize(io.DisplaySize)
 	im.PushStyleColorImVec4(.WindowBg, rgba(C_BG))
@@ -363,13 +365,31 @@ draw_setup :: proc() {
 	im.DrawList_AddCircleFilled(dl(), {p.x + 22, p.y + 22}, 22, col32(C_BLUE, 0.16))
 	draw_text(fonts.ui, 24, {p.x + 10, p.y + 9}, col32(C_BLUE), ICON_TUNE_BAR)
 	draw_text(fonts.bold, 26, {p.x + 58, p.y - 2}, col32(C_TEXT), "wlperch")
-	draw_text(fonts.ui, SZ_BODY, {p.x + 58, p.y + 28}, col32(C_MUTED), "Pick the parts you want. Run `wlperch setup` any time to change them.")
-	rec := "Install recommended"
-	im.SetCursorScreenPos({p.x + width - pill_width(rec), p.y + 8})
-	if pill_button("##recommended", rec, C_BLUE, true) {setup_install_recommended(); setup_check()}
+	sub := setup_tab == .Settings ? "Change wlperch's settings here instead of in config.ini." : "Pick the parts you want. Run `wlperch setup` any time to change them."
+	draw_text(fonts.ui, SZ_BODY, {p.x + 58, p.y + 28}, col32(C_MUTED), sub)
+	// Components | Settings, right-aligned; the recommended install left of it.
+	tabs := []string{"Components", "Settings"}
+	tw := f32(4)
+	for t in tabs {tw += measure(fonts.ui, SZ_SMALL + 1, t).x + 24}
+	im.SetCursorScreenPos({p.x + width - tw, p.y + 9})
+	if k := segmented("##tabs", tabs, int(setup_tab), C_BLUE); k >= 0 {
+		setup_tab = Setup_Tab(k)
+	}
+	if setup_tab == .Components {
+		rec := "Install recommended"
+		im.SetCursorScreenPos({p.x + width - tw - 14 - pill_width(rec), p.y + 10})
+		if pill_button("##recommended", rec, C_BLUE, true) {setup_install_recommended(); setup_check()}
+	}
 	im.SetCursorScreenPos(p)
 	im.Dummy({width, 56})
 	im.Dummy({1, 6})
+	if setup_tab == .Settings {
+		q := im.GetCursorScreenPos()
+		draw_settings(q.x, q.y, width)
+		im.Dummy({1, 8})
+		im.End()
+		return
+	}
 
 	GAP :: 14
 	run: proc() = nil

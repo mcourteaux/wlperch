@@ -13,6 +13,7 @@ import "core:thread"
 import "core:time"
 
 import "wl"
+import im "third_party:odin-imgui"
 
 SWAY_FILE :: #load("../contrib/sway/wlperch.conf", string)
 WAYBAR_JSONC :: #load("../contrib/waybar/wlperch.jsonc", string)
@@ -293,6 +294,23 @@ setup_check :: proc() {
 		detail(p, launcher_file())
 		p.state = os.exists(launcher_file()) ? .Installed : .Missing
 	}
+}
+
+// Everything the dashboard shows of the checks, hashed.
+@(private = "file")
+setup_fingerprint :: proc() -> u64 {
+	sync.guard(&setup.mu)
+	h: u64 = 14695981039346656037
+	mix :: proc(h: ^u64, s: string) {
+		for i in 0 ..< len(s) {h^ = (h^ ~ u64(s[i])) * 1099511628211}
+		h^ = (h^ ~ 0xff) * 1099511628211
+	}
+	for c in setup.comps {
+		mix(&h, fmt.tprintf("%v|%v|%v|%s", c.state, c.busy, c.msg_ok, c.message))
+		for d in c.detail {mix(&h, d)}
+	}
+	mix(&h, setup.waybar_full ? "full" : "")
+	return h
 }
 
 // ---- Actions ----------------------------------------------------------------
@@ -998,44 +1016,6 @@ setup_enable_notifications :: proc() {
 	done(.Notifications, ok, ok ? "turned on; take over from the other daemon if one still runs" : "couldn't write the config")
 }
 
-// Set `key = value` in [section] of the config file, keeping everything else
-// (comments, order; creates the file with defaults first).
-config_set_value :: proc(section, key, value: string) -> bool {
-	path := config_path()
-	text, ok := read_text(path)
-	if !ok {text = default_config_text()}
-	lines := strings.split_after(text, "\n", context.temp_allocator)
-	b := strings.builder_make(context.temp_allocator)
-	cur := ""
-	set := false
-	for line, i in lines {
-		l := strings.trim_space(line)
-		if strings.has_prefix(l, "[") {
-			if cur == section && !set {
-				fmt.sbprintf(&b, "%s = %s\n", key, value)
-				set = true
-			}
-			cur = strings.trim(l, "[] ")
-		}
-		if !set && cur == section && strings.has_prefix(l, key) {
-			rest := strings.trim_left_space(l[len(key):])
-			if strings.has_prefix(rest, "=") {
-				fmt.sbprintf(&b, "%s = %s\n", key, value)
-				set = true
-				continue
-			}
-		}
-		strings.write_string(&b, line)
-		if i == len(lines) - 1 && cur == section && !set {
-			if !strings.has_suffix(line, "\n") {strings.write_string(&b, "\n")}
-			fmt.sbprintf(&b, "%s = %s\n", key, value)
-			set = true
-		}
-	}
-	if !set {fmt.sbprintf(&b, "\n[%s]\n%s = %s\n", section, key, value)}
-	return write_file(path, strings.to_string(b))
-}
-
 // Open the setup window as its own process (from a panel's ⚙ button).
 setup_launch :: proc() {
 	exe := setup_self_path()
@@ -1055,6 +1035,8 @@ run_setup :: proc() {
 	set_cloexec_nonblock(app.wake_w)
 	if !platform_init() {os.exit(1)}
 	im_init()
+	im.GetIO().ConfigInputTextCursorBlink = false // frames only on input
+	if len(os.args) > 2 && os.args[2] == "settings" {setup_tab = .Settings}
 	setup_check()
 	if !platform_open_window("wlperch setup", "wlperch-setup", 1440, 880) {
 		log.error("couldn't open the setup window")
@@ -1069,6 +1051,7 @@ run_setup :: proc() {
 		wl.display_flush(d)
 		timeout := plat.redraw > 0 && !plat.frame_pending ? 0 : 1000
 		if wait := lock_settings_tick(); wait >= 0 {timeout = min(timeout, wait)}
+		if wait := settings_tick(); wait >= 0 {timeout = min(timeout, wait)}
 		pfds := [3]posix.pollfd {
 			{fd = platform_fd(), events = {.IN}},
 			{fd = app.wake_r, events = {.IN}},
@@ -1094,8 +1077,11 @@ run_setup :: proc() {
 			}
 		}
 		if time.tick_since(setup.checked) > 2 * time.Second {
+			// Only what changed is drawn again.
+			before := setup_fingerprint()
 			setup_check()
-			request_redraw(1)
+			if setup_fingerprint() != before {request_redraw(1)}
+			if settings_poll() {request_redraw(1)}
 		}
 		if plat.redraw > 0 && platform_can_render() {
 			plat.redraw -= 1

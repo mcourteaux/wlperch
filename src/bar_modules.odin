@@ -50,7 +50,7 @@ bar_config_load :: proc(m, defaults: ini.Map) {
 	}
 	b := &bar_cfg
 	b.bottom = get(m, defaults, "position") == "bottom"
-	b.height = i32(clamp(strconv.parse_int(get(m, defaults, "height")) or_else 34, 20, 80))
+	b.height = i32(parse_int_lim(get(m, defaults, "height"), LIM_BAR_HEIGHT))
 	for o in strings.fields(get(m, defaults, "outputs"), context.temp_allocator) {append(&b.outputs, strings.clone(o))}
 	for side, i in ([]string{"left", "center", "right"}) {
 		for name in strings.fields(get(m, defaults, side), context.temp_allocator) {
@@ -74,7 +74,7 @@ bar_config_load :: proc(m, defaults: ini.Map) {
 		}
 	}
 	b.clock = strings.clone(get(m, defaults, "clock_format"))
-	b.tray_size = f32(clamp(strconv.parse_int(get(m, defaults, "tray_icon_size")) or_else 20, 12, 48))
+	b.tray_size = f32(parse_int_lim(get(m, defaults, "tray_icon_size"), LIM_BAR_TRAY))
 }
 
 // ---- Data gathered off the main thread ----------------------------------------------

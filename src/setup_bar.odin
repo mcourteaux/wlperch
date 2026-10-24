@@ -158,7 +158,6 @@ bar_done :: proc(ok: bool, msg: string) {
 
 // Our processes with this name in this Wayland session (another session's
 // bar is none of our business).
-@(private = "file")
 session_pids :: proc(name: string) -> []posix.pid_t {
 	out: [dynamic]posix.pid_t
 	out.allocator = context.temp_allocator

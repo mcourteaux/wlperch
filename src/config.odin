@@ -418,11 +418,8 @@ split_list :: proc(s: string, sep: string) -> [dynamic]string {
 
 @(private = "file")
 parse_bool :: proc(s: string, def: bool) -> bool {
-	switch strings.to_lower(strings.trim_space(s), context.temp_allocator) {
-	case "true", "yes", "1", "on":  return true
-	case "false", "no", "0", "off": return false
-	}
-	return def
+	v, ok := parse_bool_value(s)
+	return ok ? v : def
 }
 
 @(private = "file")
@@ -459,8 +456,7 @@ config_load :: proc() {
 	}
 
 	c := &config
-	c.width = i32(strconv.parse_int(get(m, defaults, "popup", "width")) or_else 860)
-	c.width = clamp(c.width, 480, 2000)
+	c.width = i32(parse_int_lim(get(m, defaults, "popup", "width"), LIM_POPUP_WIDTH))
 	c.anchor = 0
 	for a in strings.fields(get(m, defaults, "popup", "anchor"), context.temp_allocator) {
 		switch a {
@@ -475,8 +471,8 @@ config_load :: proc() {
 	}
 	c.output = strings.clone(get(m, defaults, "popup", "output"))
 	c.close_on_click_outside = parse_bool(get(m, defaults, "popup", "close_on_click_outside"), true)
-	c.max_height = i32(strconv.parse_int(get(m, defaults, "popup", "max_height")) or_else 0)
-	c.release_gpu_after = time.Duration(max(strconv.parse_int(get(m, defaults, "popup", "release_gpu_after")) or_else 30, 0)) * time.Second
+	c.max_height = i32(parse_int_lim(get(m, defaults, "popup", "max_height"), LIM_POPUP_MAX_HEIGHT))
+	c.release_gpu_after = time.Duration(parse_int_lim(get(m, defaults, "popup", "release_gpu_after"), LIM_RELEASE_GPU)) * time.Second
 
 	c.location = strings.clone(get(m, defaults, "weather", "location"))
 	c.units = strings.clone(get(m, defaults, "weather", "units"))
@@ -501,33 +497,22 @@ config_load :: proc() {
 
 	c.nightlight_cmd = strings.clone(get(m, defaults, "nightlight", "command"))
 
-	c.history_seconds = clamp(strconv.parse_int(get(m, defaults, "system", "history_seconds")) or_else 120, 30, 600)
-	// critical_percent used to be [system] memory_warn_percent: still honoured.
-	crit := get(m, defaults, "memory", "critical_percent")
-	crit_set := false
-	if sec, ok := m["memory"]; ok {_, crit_set = sec["critical_percent"]}
-	if !crit_set {
-		if sec, ok := m["system"]; ok {
-			if old, has := sec["memory_warn_percent"]; has {crit = unquote(strings.trim_space(old))}
-		}
-	}
-	c.memory_warn_pct = clamp(strconv.parse_int(crit) or_else 90, 1, 100)
-	c.memory_free_warn_pct = clamp(strconv.parse_int(get(m, defaults, "memory", "warn_free_percent")) or_else 15, 0, 99)
-	c.memory_bar_warn_pct = clamp(strconv.parse_int(get(m, defaults, "memory", "bar_warn_percent")) or_else 75, 1, 100)
+	c.history_seconds = parse_int_lim(get(m, defaults, "system", "history_seconds"), LIM_HISTORY)
+	config_load_memory(m, defaults)
 
 	c.notifications = parse_bool(get(m, defaults, "notifications", "enabled"), true)
 
 	c.github = parse_bool(get(m, defaults, "github", "enabled"), false)
 	c.github_repo = strings.clone(get(m, defaults, "github", "repo"))
-	c.github_refresh = time.Duration(max(strconv.parse_int(get(m, defaults, "github", "refresh_minutes")) or_else 5, 1)) * time.Minute
+	c.github_refresh = time.Duration(parse_int_lim(get(m, defaults, "github", "refresh_minutes"), LIM_GITHUB_REFRESH)) * time.Minute
 
 	c.lock_pam_service = strings.clone(get(m, defaults, "lock", "pam_service"))
 	c.lock_background = parse_hex_color(get(m, defaults, "lock", "background"), 0x14161b)
 	c.lock_image = expand_home(get(m, defaults, "lock", "image"))
 	c.lock_mode = lock_bg_mode_parse(get(m, defaults, "lock", "background_mode"), c.lock_image)
-	c.lock_screenshot_blur = clamp(strconv.parse_int(get(m, defaults, "lock", "screenshot_blur")) or_else 60, 0, 100)
-	c.lock_blur = clamp(strconv.parse_int(get(m, defaults, "lock", "blur")) or_else 0, 0, 64)
-	c.lock_dim = clamp(f32(strconv.parse_f64(get(m, defaults, "lock", "dim")) or_else 0.35), 0, 1)
+	c.lock_screenshot_blur = parse_int_lim(get(m, defaults, "lock", "screenshot_blur"), LIM_LOCK_SCREENSHOT_BLUR)
+	c.lock_blur = parse_int_lim(get(m, defaults, "lock", "blur"), LIM_LOCK_BLUR)
+	c.lock_dim = f32(parse_float_lim(get(m, defaults, "lock", "dim"), LIM_LOCK_DIM))
 	c.lock_notifications = parse_bool(get(m, defaults, "lock", "show_notifications"), true)
 	c.lock_media = parse_bool(get(m, defaults, "lock", "show_media"), true)
 
@@ -630,5 +615,75 @@ tracker_idle_timeout :: proc(m, defaults: ini.Map) -> time.Duration {
 	} else if v, ok := val(m, "idle_minutes"); ok {
 		if mins, mok := strconv.parse_int(v); mok {idle_s = mins * 60}
 	}
-	return time.Duration(clamp(idle_s, 5, 86400)) * time.Second
+	return time.Duration(clamp(idle_s, LIM_IDLE_SECONDS.lo, LIM_IDLE_SECONDS.hi)) * time.Second
+}
+
+// [memory]: also re-read by the bar when config.ini changes.
+config_load_memory :: proc(m, defaults: ini.Map) {
+	c := &config
+	// critical_percent used to be [system] memory_warn_percent: still honoured.
+	crit, _ := config_value_legacy(m, defaults, "memory", "critical_percent", "system", "memory_warn_percent")
+	c.memory_warn_pct = parse_int_lim(crit, LIM_MEM_CRITICAL)
+	c.memory_free_warn_pct = parse_int_lim(config_value(m, defaults, "memory", "warn_free_percent"), LIM_MEM_FREE_WARN)
+	c.memory_bar_warn_pct = parse_int_lim(config_value(m, defaults, "memory", "bar_warn_percent"), LIM_MEM_BAR_WARN)
+}
+
+// The value config_load sees for [section] key: the user's, else the default.
+config_value :: proc(m, defaults: ini.Map, section, key: string) -> string {
+	if s, ok := m[section]; ok {
+		if v, vok := s[key]; vok {return unquote(strings.trim_space(v))}
+	}
+	if s, ok := defaults[section]; ok {return unquote(strings.trim_space(s[key]))}
+	return ""
+}
+
+// Like config_value, but a key that was renamed: the old [old_section]
+// old_key still counts while the new one isn't set. `legacy` says it did.
+config_value_legacy :: proc(m, defaults: ini.Map, section, key, old_section, old_key: string) -> (v: string, legacy: bool) {
+	if s, ok := m[section]; ok {
+		if _, has := s[key]; has {return config_value(m, defaults, section, key), false}
+	}
+	if s, ok := m[old_section]; ok {
+		if old, has := s[old_key]; has {return unquote(strings.trim_space(old)), true}
+	}
+	return config_value(m, defaults, section, key), false
+}
+
+// ---- Limits --------------------------------------------------------------------
+// Shared by config_load and the setup window's settings, so both clamp alike.
+// `fallback` is used when the text isn't a number (the template's default).
+
+Int_Limits :: struct {lo, hi, fallback: int}
+Float_Limits :: struct {lo, hi, fallback: f64}
+
+LIM_POPUP_WIDTH :: Int_Limits{480, 2000, 860}
+LIM_POPUP_MAX_HEIGHT :: Int_Limits{0, 8192, 0}
+LIM_RELEASE_GPU :: Int_Limits{0, 86400, 30}
+LIM_HISTORY :: Int_Limits{30, 600, 120}
+LIM_MEM_CRITICAL :: Int_Limits{1, 100, 90}
+LIM_MEM_FREE_WARN :: Int_Limits{0, 99, 15}
+LIM_MEM_BAR_WARN :: Int_Limits{1, 100, 75}
+LIM_GITHUB_REFRESH :: Int_Limits{1, 1440, 5}
+LIM_LOCK_SCREENSHOT_BLUR :: Int_Limits{0, 100, 60}
+LIM_LOCK_BLUR :: Int_Limits{0, 64, 0}
+LIM_LOCK_DIM :: Float_Limits{0, 1, 0.35}
+LIM_IDLE_SECONDS :: Int_Limits{5, 86400, 300}
+LIM_BAR_HEIGHT :: Int_Limits{20, 80, 34}
+LIM_BAR_TRAY :: Int_Limits{12, 48, 20}
+
+parse_int_lim :: proc(s: string, l: Int_Limits) -> int {
+	return clamp(strconv.parse_int(strings.trim_space(s)) or_else l.fallback, l.lo, l.hi)
+}
+
+parse_float_lim :: proc(s: string, l: Float_Limits) -> f64 {
+	return clamp(strconv.parse_f64(strings.trim_space(s)) or_else l.fallback, l.lo, l.hi)
+}
+
+// true / yes / 1 / on and false / no / 0 / off; ok = false for anything else.
+parse_bool_value :: proc(s: string) -> (v: bool, ok: bool) {
+	switch strings.to_lower(strings.trim_space(s), context.temp_allocator) {
+	case "true", "yes", "1", "on":  return true, true
+	case "false", "no", "0", "off": return false, true
+	}
+	return false, false
 }
