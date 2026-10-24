@@ -6,8 +6,8 @@
 // twins (waybar / wofi colors.css, reloading waybar), sway's wallpaper, kitty,
 // an nvim colour file, Kvantum, VS Code and a free-form command.
 //
-// The mode is kept in ~/.local/share/wlperch/theme; the lock screen reads it
-// at start. Without a saved mode the gsettings color-scheme decides.
+// The mode is kept in ~/.local/share/wlperch/theme; the bar, the setup window
+// and the lock screen (own processes) watch it with theme_watch_open. Without a saved mode the gsettings color-scheme decides.
 package main
 
 import "core:fmt"
@@ -16,6 +16,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:sync"
+import "core:sys/linux"
 import "core:sys/posix"
 import "core:thread"
 import "core:time"
@@ -65,6 +66,39 @@ theme_mode_save :: proc(m: Theme_Mode) {
 	defer delete(dir)
 	os.make_directory_all(dir)
 	_ = os.write_entire_file(theme_mode_path(), fmt.tprintf("%s\n", theme_mode_name(m)))
+}
+
+// For the other processes (bar, setup, lock): an inotify fd on the data dir,
+// which sees the mode file written in place or renamed over (-1 on failure).
+// Poll it for .IN, then call theme_watch_changed.
+theme_watch_open :: proc() -> linux.Fd {
+	dir := data_dir()
+	defer delete(dir)
+	os.make_directory_all(dir)
+	fd, err := linux.inotify_init1({.NONBLOCK, .CLOEXEC})
+	if err != .NONE {return -1}
+	if _, werr := linux.inotify_add_watch(fd, strings.clone_to_cstring(dir, context.temp_allocator), {.CLOSE_WRITE, .MOVED_TO, .CREATE}); werr != .NONE {
+		linux.close(fd)
+		return -1
+	}
+	return fd
+}
+
+// Drains the watch: true when the mode file was written or replaced.
+theme_watch_changed :: proc(fd: linux.Fd) -> bool {
+	buf: [4096]u8
+	hit := false
+	for {
+		n, err := linux.read(fd, buf[:])
+		if err != .NONE || n <= 0 {break}
+		for off := 0; off + size_of(linux.Inotify_Event) <= n; {
+			ev := (^linux.Inotify_Event)(&buf[off])
+			name := string(cstring(&buf[off + size_of(linux.Inotify_Event)])) if ev.len > 0 else ""
+			if name == "theme" {hit = true}
+			off += size_of(linux.Inotify_Event) + int(ev.len)
+		}
+	}
+	return hit
 }
 
 // Daemon start: wlperch's own colours, from the saved mode.

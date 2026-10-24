@@ -1076,33 +1076,12 @@ bar_main :: proc(args: []string) -> int {
 @(private = "file")
 theme_watch_start :: proc() {
 	bar_set_theme(theme_mode_load() == .Light)
-	dir := data_dir()
-	defer delete(dir)
-	os.make_directory_all(dir)
-	fd, err := linux.inotify_init1({.NONBLOCK, .CLOEXEC})
-	if err != .NONE {return}
-	if _, werr := linux.inotify_add_watch(fd, strings.clone_to_cstring(dir, context.temp_allocator), {.CLOSE_WRITE, .MOVED_TO, .CREATE}); werr != .NONE {
-		linux.close(fd)
-		return
-	}
-	theme_fd = fd
+	theme_fd = theme_watch_open()
 }
 
 @(private = "file")
 theme_watch_read :: proc() {
-	buf: [4096]u8
-	hit := false
-	for {
-		n, err := linux.read(theme_fd, buf[:])
-		if err != .NONE || n <= 0 {break}
-		for off := 0; off + size_of(linux.Inotify_Event) <= n; {
-			ev := (^linux.Inotify_Event)(&buf[off])
-			name := string(cstring(&buf[off + size_of(linux.Inotify_Event)])) if ev.len > 0 else ""
-			if name == "theme" {hit = true}
-			off += size_of(linux.Inotify_Event) + int(ev.len)
-		}
-	}
-	if !hit {return}
+	if !theme_watch_changed(theme_fd) {return}
 	light := theme_mode_load() == .Light
 	if light == theme_light {return}
 	bar_set_theme(light)

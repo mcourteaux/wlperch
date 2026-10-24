@@ -1062,13 +1062,19 @@ run_setup :: proc() {
 		os.exit(1)
 	}
 	app.show_time = time.tick_now()
+	// Follow "wlperch theme" switches live, like the bar.
+	theme_fd := theme_watch_open()
 	for !plat.closed {
 		d := plat.display
 		for wl.display_prepare_read(d) != 0 {wl.display_dispatch_pending(d)}
 		wl.display_flush(d)
 		timeout := plat.redraw > 0 && !plat.frame_pending ? 0 : 1000
-		pfds := [2]posix.pollfd{{fd = platform_fd(), events = {.IN}}, {fd = app.wake_r, events = {.IN}}}
-		n := posix.poll(&pfds[0], 2, i32(timeout))
+		pfds := [3]posix.pollfd {
+			{fd = platform_fd(), events = {.IN}},
+			{fd = app.wake_r, events = {.IN}},
+			{fd = posix.FD(theme_fd), events = {.IN}},
+		}
+		n := posix.poll(&pfds[0], len(pfds), i32(timeout))
 		if n > 0 && .IN in pfds[0].revents {
 			wl.display_read_events(d)
 		} else {
@@ -1079,6 +1085,13 @@ run_setup :: proc() {
 			buf: [64]u8
 			for posix.read(app.wake_r, &buf[0], len(buf)) > 0 {}
 			request_redraw(2)
+		}
+		if theme_fd >= 0 && .IN in pfds[2].revents && theme_watch_changed(theme_fd) {
+			if light := theme_mode_load() == .Light; light != theme_light {
+				theme_set_palette(light)
+				icons_retint()
+				request_redraw(2)
+			}
 		}
 		if time.tick_since(setup.checked) > 2 * time.Second {
 			setup_check()

@@ -912,6 +912,14 @@ LOCK_USAGE :: `usage: wlperch lock [-f|--daemonize]
 @(private = "file") lock_fg: u32 = 0xffffff
 @(private = "file") lock_fg2: u32 = 0xd6dbe6
 
+// Light theme: dark text on a light background, unless a picture (dimmed) is set.
+@(private = "file")
+lock_set_theme :: proc(light: bool) {
+	light := light && config.lock_image == ""
+	theme_light = light
+	lock_fg, lock_fg2 = light ? PALETTE_LIGHT.text : 0xffffff, light ? PALETTE_LIGHT.muted : 0xd6dbe6
+}
+
 lock_main :: proc(args: []string) -> int {
 	daemonize := false
 	for a in args {
@@ -927,11 +935,7 @@ lock_main :: proc(args: []string) -> int {
 	}
 	g_lock_ctx = context
 	lk.daemon_w = -1
-	// Light theme: dark text on a light background, unless a picture (dimmed) is set.
-	if theme_mode_load() == .Light && config.lock_image == "" {
-		theme_light = true
-		lock_fg, lock_fg2 = PALETTE_LIGHT.text, PALETTE_LIGHT.muted
-	}
+	lock_set_theme(theme_mode_load() == .Light)
 	lk.repeat_rate, lk.repeat_delay = 25, 600
 	if daemonize {
 		// The parent returns once the child reports the lock is in place.
@@ -999,6 +1003,8 @@ lock_main :: proc(args: []string) -> int {
 	thread.create_and_start(auth_thread)
 	thread.create_and_start(info_thread)
 
+	// Follow "wlperch theme" switches while locked (colours only).
+	theme_fd := theme_watch_open()
 	d := lk.display
 	last_sec, last_min := i64(-1), i64(-1)
 	for {
@@ -1013,8 +1019,12 @@ lock_main :: proc(args: []string) -> int {
 			left := time.tick_diff(time.tick_now(), lk.repeat_at)
 			timeout = min(timeout, max(int(time.duration_milliseconds(left)), 0) + 1)
 		}
-		pfds := [2]posix.pollfd{{fd = posix.FD(wl.display_get_fd(d)), events = {.IN}}, {fd = lk.wake_r, events = {.IN}}}
-		if posix.poll(&pfds[0], 2, i32(timeout)) < 0 {
+		pfds := [3]posix.pollfd {
+			{fd = posix.FD(wl.display_get_fd(d)), events = {.IN}},
+			{fd = lk.wake_r, events = {.IN}},
+			{fd = posix.FD(theme_fd), events = {.IN}},
+		}
+		if posix.poll(&pfds[0], len(pfds), i32(timeout)) < 0 {
 			wl.display_cancel_read(d)
 			continue
 		}
@@ -1059,6 +1069,16 @@ lock_main :: proc(args: []string) -> int {
 				}
 			}
 			for o in lk.outputs {o.dirty = true}
+		}
+		if theme_fd >= 0 && .IN in pfds[2].revents && theme_watch_changed(theme_fd) {
+			was := theme_light
+			lock_set_theme(theme_mode_load() == .Light)
+			if theme_light != was {
+				for o in lk.outputs {
+					o.bg_w = 0 // the solid background follows the mode: rebuild it
+					o.dirty = true
+				}
+			}
 		}
 
 		if lk.repeat_key != 0 && lk.repeat_rate > 0 {
