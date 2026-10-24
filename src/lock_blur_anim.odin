@@ -11,6 +11,9 @@
 // passes in a row add up to a Gaussian. Once the blur is wide enough the copy
 // is halved (variance / 4), so the later frames get cheaper.
 //
+// The R, G and B planes are independent: with a Blur_Gang each step blurs
+// them on three threads at once (and blur_draw_fast splits its rows).
+//
 // The effective blur is tracked in native pixels²: a D x D box reduction
 // adds (D²-1)/12, the passes D²·v, and the bilinear upscale about D²/6.
 // The animation eases that sigma from the start to what the static copy
@@ -18,6 +21,9 @@
 package main
 
 import "core:math"
+import "core:sync"
+import "core:sys/linux"
+import "core:thread"
 
 Blur_Anim :: struct {
 	planes: [2][]u16, // R, G and B planes of w*h each, value << 8
@@ -30,6 +36,75 @@ Blur_Anim :: struct {
 	s:      f64, // effective sigma now
 	bias:   [3]f64, // static copy's mean minus the source's, per channel (levels)
 	small:  []u32, // packed 0x00RRGGBB copy, for drawing
+	gang:   ^Blur_Gang, // optional: the threads a step is split over
+}
+
+// The calling thread plus BLUR_GANG-1 helpers that each run a share of a
+// job (part i of BLUR_GANG); kept for the animation's length.
+BLUR_GANG :: 3
+
+Blur_Gang :: struct {
+	helpers: [BLUR_GANG - 1]^thread.Thread,
+	go:      [BLUR_GANG - 1]sync.Sema,
+	done:    sync.Sema,
+	quit:    bool,
+	fn:      proc(data: rawptr, part: int),
+	data:    rawptr,
+	cpu_ns:  u64, // atomic: CPU time the helpers spent (timing log)
+}
+
+@(private = "file")
+Gang_Helper :: struct {
+	g: ^Blur_Gang,
+	i: int,
+}
+
+// nil when the threads can't be made (everything then runs on the caller).
+blur_gang_start :: proc() -> ^Blur_Gang {
+	g := new(Blur_Gang)
+	for &h, i in g.helpers {
+		h = thread.create_and_start_with_poly_data2(g, i, proc(g: ^Blur_Gang, i: int) {
+			for {
+				sync.sema_wait(&g.go[i])
+				if sync.atomic_load(&g.quit) {return}
+				c0, _ := linux.clock_gettime(.THREAD_CPUTIME_ID)
+				g.fn(g.data, i + 1)
+				free_all(context.temp_allocator)
+				c1, _ := linux.clock_gettime(.THREAD_CPUTIME_ID)
+				sync.atomic_add(&g.cpu_ns, u64(c1.time_sec - c0.time_sec) * 1e9 + u64(c1.time_nsec) - u64(c0.time_nsec))
+				sync.sema_post(&g.done)
+			}
+		})
+		if h == nil {
+			blur_gang_stop(g)
+			return nil
+		}
+	}
+	return g
+}
+
+blur_gang_stop :: proc(g: ^Blur_Gang) {
+	if g == nil {return}
+	sync.atomic_store(&g.quit, true)
+	for h, i in g.helpers {
+		if h == nil {continue}
+		sync.sema_post(&g.go[i])
+		thread.destroy(h)
+	}
+	free(g)
+}
+
+// fn(data, part) for every part 0 ..< BLUR_GANG, part 0 on this thread;
+// returns when all are done. Without a gang, one after the other.
+blur_gang_run :: proc(g: ^Blur_Gang, data: rawptr, fn: proc(data: rawptr, part: int)) {
+	if g == nil {
+		for i in 0 ..< BLUR_GANG {fn(data, i)}
+		return
+	}
+	g.fn, g.data = fn, data
+	for i in 0 ..< BLUR_GANG - 1 {sync.sema_post(&g.go[i])}
+	fn(data, 0)
+	for _ in 0 ..< BLUR_GANG - 1 {sync.sema_wait(&g.done)}
 }
 
 // What lock_reduce_and_blur hands the animation: the unblurred reduction and
@@ -51,10 +126,11 @@ blur_anim_shown_var :: proc(D: int, v: f64) -> f64 {
 }
 
 // Takes over src.img's pixels (and frees them).
-blur_anim_init :: proc(src: Blur_Anim_Source) -> (a: Blur_Anim) {
+blur_anim_init :: proc(src: Blur_Anim_Source, gang: ^Blur_Gang = nil) -> (a: Blur_Anim) {
 	img := src.img
 	defer delete(img.px)
 	n := img.w * img.h
+	a.gang = gang
 	a.w, a.h, a.D, a.D_max = img.w, img.h, src.D, max(src.D_static, src.D)
 	a.planes = {make([]u16, 3 * n), make([]u16, 3 * n)}
 	a.small = make([]u32, n)
@@ -89,9 +165,11 @@ blur_anim_step :: proc(a: ^Blur_Anim, s: f64) {
 	// Halve once the blur spans a few working pixels: a 2x2 average then
 	// loses nothing visible, and v scales by exactly 1/4.
 	for a.D * 2 <= a.D_max && a.v >= 9 && a.w >= 8 && a.h >= 8 {
-		src, dst := a.planes[a.cur], a.planes[1 - a.cur]
 		w2, h2 := a.w / 2, a.h / 2
-		for c in 0 ..< 3 {
+		blur_gang_run(a.gang, a, proc(data: rawptr, c: int) {
+			a := (^Blur_Anim)(data)
+			src, dst := a.planes[a.cur], a.planes[1 - a.cur]
+			w2, h2 := a.w / 2, a.h / 2
 			sp, dp := src[c * a.w * a.h:], dst[c * w2 * h2:]
 			for y in 0 ..< h2 {
 				r0, r1 := sp[2 * y * a.w:], sp[(2 * y + 1) * a.w:]
@@ -100,7 +178,7 @@ blur_anim_step :: proc(a: ^Blur_Anim, s: f64) {
 					o[x] = u16((u32(r0[2 * x]) + u32(r0[2 * x + 1]) + u32(r1[2 * x]) + u32(r1[2 * x + 1]) + 2) >> 2)
 				}
 			}
-		}
+		})
 		a.cur = 1 - a.cur
 		a.w, a.h, a.D, a.v = w2, h2, a.D * 2, a.v / 4
 	}
@@ -126,15 +204,19 @@ blur_anim_pass :: proc(a: ^Blur_Anim, dv: f64) {
 	f := (2 * rf + 1) * (dv - rf * (rf + 1) / 3) / (2 * (rf + 1) * (rf + 1) - 2 * dv)
 	fq := u64(clamp(math.round(f * 256), 0, 256))
 	wq := u64(2 * r + 1) * 256 + 2 * fq
-	rec := ((u64(1) << 32) + wq / 2) / wq
-	n := a.w * a.h
-	src, dst := a.planes[a.cur], a.planes[1 - a.cur]
-	pad := make([]u16, a.w + 2 * r + 2, context.temp_allocator)
-	sum := make([]u32, a.w, context.temp_allocator)
-	for c in 0 ..< 3 {
+	Pass :: struct {a: ^Blur_Anim, r: int, fq, rec: u64}
+	ps := Pass{a, r, fq, ((u64(1) << 32) + wq / 2) / wq}
+	#assert(BLUR_GANG == 3) // one channel per part
+	blur_gang_run(a.gang, &ps, proc(data: rawptr, c: int) {
+		ps := (^Pass)(data)
+		a, r, fq, rec := ps.a, ps.r, ps.fq, ps.rec
+		n := a.w * a.h
+		src, dst := a.planes[a.cur], a.planes[1 - a.cur]
+		pad := make([]u16, a.w + 2 * r + 2, context.temp_allocator)
+		sum := make([]u32, a.w, context.temp_allocator)
 		hpass(src[c * n:][:n], dst[c * n:][:n], a.w, a.h, r, fq, rec, pad)
 		vpass(dst[c * n:][:n], src[c * n:][:n], a.w, a.h, r, fq, rec, sum)
-	}
+	})
 }
 
 @(private = "file")

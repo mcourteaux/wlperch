@@ -187,3 +187,42 @@ test_lock_blur_anim_converges :: proc(t: ^testing.T) {
 		return f64(sum) / n, worst, f64(sd) / n
 	}
 }
+
+// With a Blur_Gang (channels and rows on three threads) the animation's
+// frames are bit-identical to drawing them on one thread.
+@(test)
+test_lock_blur_anim_gang_matches :: proc(t: ^testing.T) {
+	W, H := 640, 360
+	px := text_like(W, H)
+	defer delete(px)
+	ct := Capture_Target{w = i32(W), h = i32(H), stride = i32(W * 4), format = wl.SHM_FORMAT_XRGB8888, scale = 1, strength = 30, mem = raw_data(px), animate = true, anim_from = 10}
+	static := lock_reduce_and_blur(&ct)
+	defer delete(static.px)
+	src2 := ct.anim
+	src2.img.px = make([]u32, len(ct.anim.img.px))
+	copy(src2.img.px, ct.anim.img.px)
+	g := blur_gang_start()
+	testing.expect(t, g != nil)
+	defer blur_gang_stop(g)
+	a := blur_anim_init(ct.anim)
+	b := blur_anim_init(src2, g)
+	defer {blur_anim_free(&a); blur_anim_free(&b)}
+	one := make([]u32, W * H)
+	par := make([]u32, W * H)
+	defer {delete(one); delete(par)}
+	for f in 1 ..= 20 {
+		p := f64(f) / 20
+		blur_anim_step(&a, blur_anim_sigma_at(&a, p))
+		blur_anim_step(&b, blur_anim_sigma_at(&b, p))
+		blur_draw_fast(one, W, H, blur_anim_image(&a), 0x14161b, 0.3)
+		Job :: struct {px: []u32, img: Blur_Image, W, H: int}
+		j := Job{par, blur_anim_image(&b), W, H}
+		blur_gang_run(g, &j, proc(data: rawptr, part: int) {
+			j := (^Job)(data)
+			blur_draw_fast(j.px, j.W, j.H, j.img, 0x14161b, 0.3, j.H * part / BLUR_GANG, j.H * (part + 1) / BLUR_GANG)
+		})
+		same := true
+		for i in 0 ..< W * H {if one[i] != par[i] {same = false; break}}
+		testing.expectf(t, same, "frame %d differs", f)
+	}
+}

@@ -69,14 +69,20 @@ Lock_Output :: struct {
 	committed:     bool, // a buffer was committed (timing log)
 	mode_w:        i32, // current mode (pixels, untransformed)
 	mode_h:        i32,
+	refresh:       i32, // current mode, mHz (0: unknown)
 	pre:           Prerender,
 	// [lock] blur_animate_ms: the growing blur (see lock_blur_anim.odin)
 	anim_src:      Blur_Anim_Source, // the start, until the animation takes it
-	anim:          ^Blur_Anim, // while animating
-	anim_bufs:     [3]Anim_Buffer, // reused frame buffers while animating
-	anim_last:     time.Tick, // when the last animation frame was drawn
+	anim:          ^Blur_Anim, // while animating (the worker's, once it runs)
+	anim_bufs:     [ANIM_BUFS]Anim_Buffer, // frame buffers while animating
+	aw:            ^Anim_Worker, // draws the frames
+	gang:          ^Blur_Gang, // ...on this many threads
+	anim_ready:    int, // anim_bufs index of a drawn frame waiting for its commit, or -1
+	anim_final:    bool, // the last frame was asked for
+	anim_last:     time.Tick, // last buffer commit
+	anim_commit_t: f64, // ...on the animation clock (ms)
 	anim_frames:   int, // timing log
-	anim_ms:       f64,
+	anim_iv:       [3]f64, // commit intervals: min, sum, max
 }
 
 // A full-size shm buffer kept mapped while the blur animates (a new one per
@@ -86,6 +92,7 @@ Anim_Buffer :: struct {
 	buffer: ^wl.Buffer,
 	px:     []u32,
 	w, h:   i32,
+	fd:     linux.Fd, // until the wl_buffer is made
 	busy:   bool, // attached, not released yet
 }
 
@@ -97,9 +104,13 @@ Prerender :: struct {
 	w, h:   i32, // logical size it was drawn for
 	scale:  i32,
 	full:   bool, // drawn with the password field (primary output)
+	tint:   u32, // frost_tint, for the animation's frame 0
+	mix:    f32,
 	px:     []u32, // shm mapping, while drawing
 	fd:     linux.Fd,
 	ok:     bool,
+	anim:   bool, // drawn into anim_bufs[0]: the growing blur's first frame
+	ui:     Lock_UI,
 	buffer: ^wl.Buffer, // nil once used or dropped
 }
 
@@ -163,7 +174,9 @@ Locker :: struct {
 	lock_at:        time.Tick, // when lock() was sent (timing log)
 	rects:          map[string][2]i32, // sway's logical output sizes, by connector
 	animate:        bool, // grow the blur ([lock] blur_animate_ms, not with -f)
-	anim_start:     time.Tick,
+	anim_start:     time.Tick, // the animation clock's zero: first frame callback
+	anim_started:   bool,
+	loop_max:       f64, // timing log: longest main-loop pass while animating (ms)
 }
 
 // Milliseconds since lock() was sent, for the WLPERCH_DEBUG timing log.
@@ -248,7 +261,7 @@ output_listener := wl.Output_Listener {
 	mode = proc "c" (data: rawptr, self: ^wl.Output, flags: u32, width, height, refresh: i32) {
 		if flags & wl.OUTPUT_MODE_CURRENT == 0 {return}
 		o := (^Lock_Output)(data)
-		o.mode_w, o.mode_h = width, height
+		o.mode_w, o.mode_h, o.refresh = width, height, refresh
 	},
 	done = proc "c" (data: rawptr, self: ^wl.Output) {
 		context = g_lock_ctx
@@ -312,6 +325,11 @@ frame_listener := wl.Callback_Listener {
 		o := (^Lock_Output)(data)
 		o.frame_pending = false
 		wl.callback_destroy(self)
+		// The first frame (pre-rendered) is on screen: the growing blur starts.
+		if lk.animate && !lk.anim_started {
+			lk.anim_started = true
+			lk.anim_start = time.tick_now()
+		}
 	},
 }
 
@@ -850,11 +868,41 @@ primary_output :: proc() -> ^Lock_Output {
 	return nil
 }
 
+// Everything draw_ui needs from the main loop's state, copied there: frames
+// are also drawn on other threads (the pre-render, the animation's workers),
+// and the password itself never leaves the main thread (only its length).
 @(private = "file")
-draw_ui :: proc(cv: ^Cv, W, H: f32, full: bool) {
-	now := time.now()
-	r, ok := clock_read(local_region, now)
+Lock_UI :: struct {
+	now:      time.Time,
+	full:     bool, // the password field and status rows (primary output)
+	fg, fg2:  u32,
+	pw_n:     int, // characters typed
+	auth:     Auth_State,
+	caps:     bool,
+	fails:    int,
+	wait:     time.Duration, // left of the retry wait
+	layout:   [64]u8,
+	layout_n: int,
+}
+
+@(private = "file")
+lock_ui :: proc(full: bool) -> (u: Lock_UI) {
+	u.now = time.now()
+	u.full = full
+	u.fg, u.fg2 = lock_fg, lock_fg2
+	u.pw_n = utf8.rune_count(lk.pw[:lk.pw_len])
+	u.auth, u.caps, u.fails = lk.auth, lk.caps, lk.fails
+	u.wait = time.tick_diff(time.tick_now(), lk.retry_at)
+	u.layout_n = copy(u.layout[:], lk.layout)
+	return
+}
+
+@(private = "file")
+draw_ui :: proc(cv: ^Cv, W, H: f32, ui: ^Lock_UI) {
+	r, ok := clock_read(local_region, ui.now)
 	if !ok {return}
+	full := ui.full
+	lock_fg, lock_fg2 := ui.fg, ui.fg2
 	hour := int(r.dt.hour)
 	clock: string
 	if config.clock_24h {
@@ -877,16 +925,16 @@ draw_ui :: proc(cv: ^Cv, W, H: f32, full: bool) {
 	px, py := W / 2 - PILL_W / 2, cy + 98
 	ring := lock_fg
 	ring_a := f32(0.22)
-	switch lk.auth {
+	switch ui.auth {
 	case .Checking: ring, ring_a = C_BLUE, 0.95
 	case .Wrong:    ring, ring_a = C_RED, 0.95
-	case .Idle:     if lk.caps {ring, ring_a = C_YELLOW, 0.8}
+	case .Idle:     if ui.caps {ring, ring_a = C_YELLOW, 0.8}
 	}
 	round_rect(cv, px, py, PILL_W, PILL_H, PILL_H / 2, lock_fg, 0.08)
 	round_rect(cv, px, py, PILL_W, PILL_H, PILL_H / 2, ring, ring_a, 1.5)
 	text(cv, &soft_regular, 20, px + 18, py + PILL_H / 2 + 7, ICON_LOCK, lock_fg, 0.55)
-	n := utf8.rune_count(lk.pw[:lk.pw_len])
-	if lk.auth == .Checking {
+	n := ui.pw_n
+	if ui.auth == .Checking {
 		text_c(cv, &soft_regular, 16, W / 2, py + PILL_H / 2 + 6, "Checking…", C_BLUE)
 	} else if n == 0 {
 		text_c(cv, &soft_regular, 16, W / 2, py + PILL_H / 2 + 6, "Type your password", lock_fg, 0.42)
@@ -902,20 +950,20 @@ draw_ui :: proc(cv: ^Cv, W, H: f32, full: bool) {
 
 	// One line under the field: what went wrong, else PAM's info, else Caps Lock.
 	msg, col := "", u32(0)
-	wait := time.tick_diff(time.tick_now(), lk.retry_at)
+	wait := ui.wait
 	switch {
-	case wait > 0 && lk.auth != .Checking:
+	case wait > 0 && ui.auth != .Checking:
 		msg, col = fmt.tprintf("Wrong password · try again in %d s", int(math.ceil(time.duration_seconds(wait)))), C_RED
-	case lk.auth == .Wrong:
-		msg, col = lk.fails > 1 ? fmt.tprintf("Wrong password (%d attempts)", lk.fails) : "Wrong password", C_RED
-	case lk.auth == .Checking && info.pam_msg != "":
+	case ui.auth == .Wrong:
+		msg, col = ui.fails > 1 ? fmt.tprintf("Wrong password (%d attempts)", ui.fails) : "Wrong password", C_RED
+	case ui.auth == .Checking && info.pam_msg != "":
 		msg, col = info.pam_msg, lock_fg2
-	case lk.caps:
+	case ui.caps:
 		msg, col = fmt.tprintf("%s  Caps Lock is on", ICON_CAPS), C_YELLOW
 	}
 	if msg != "" {text_c(cv, &soft_regular, 15, W / 2, py + PILL_H + 30, msg, col)}
-	if lk.layout != "" {
-		text_c(cv, &soft_regular, 13, W / 2, py + PILL_H + (msg != "" ? 54 : 30), fmt.tprintf("%s  %s", ICON_KEYBOARD, lk.layout), lock_fg, 0.5)
+	if layout := string(ui.layout[:ui.layout_n]); layout != "" {
+		text_c(cv, &soft_regular, 13, W / 2, py + PILL_H + (msg != "" ? 54 : 30), fmt.tprintf("%s  %s", ICON_KEYBOARD, layout), lock_fg, 0.5)
 	}
 
 	// Status row along the bottom.
@@ -934,7 +982,7 @@ draw_ui :: proc(cv: ^Cv, W, H: f32, full: bool) {
 		icon, c := battery_glyph(info.battery, info.charging)
 		append(&items, Item{icon, fmt.tprintf("%d%%", info.battery), c})
 	}
-	draw_bt_row(cv, W, H - 44 - (len(items) > 0 ? 34 : 0))
+	draw_bt_row(cv, W, H - 44 - (len(items) > 0 ? 34 : 0), lock_fg)
 	if len(items) == 0 {return}
 	SZ :: 15
 	GAP :: 40
@@ -982,7 +1030,7 @@ lock_bt_parse :: proc(line: string) -> (d: Lock_BT, ok: bool) {
 // icon, name, and the battery when known (red at 20 % or less). Devices that
 // don't fit become "+N". Caller holds info.mu.
 @(private = "file")
-draw_bt_row :: proc(cv: ^Cv, W, base: f32) {
+draw_bt_row :: proc(cv: ^Cv, W, base: f32, lock_fg: u32) {
 	if info.bt == "" {return}
 	SZ :: 14
 	GAP :: 28
@@ -1050,7 +1098,8 @@ render :: proc(o: ^Lock_Output) {
 	if m == posix.MAP_FAILED {return}
 	cv := Cv{px = ([^]u32)(m)[:bw * bh], w = int(bw), h = int(bh), s = f32(s)}
 	copy(cv.px, o.bg)
-	draw_ui(&cv, f32(o.w), f32(o.h), o == primary_output())
+	ui := lock_ui(o == primary_output())
+	draw_ui(&cv, f32(o.w), f32(o.h), &ui)
 	posix.munmap(m, uint(size))
 
 	pool := wl.shm_create_pool(lk.shm, i32(fd), i32(size))
@@ -1072,127 +1121,342 @@ render :: proc(o: ^Lock_Output) {
 }
 
 // ---- Growing blur ([lock] blur_animate_ms) -------------------------------------------
+//
+// Each animated output gets a render worker, a thread for the length of the
+// animation (plus a Blur_Gang: the steps and the upscale are split over
+// three threads). The main loop hands it one job at a time (a free buffer,
+// the time on the animation clock the frame will be shown at, a copy of the
+// UI state) and keeps dispatching events; the worker blurs a step further,
+// draws the frame and wakes the loop, which commits it at the next frame
+// callback and hands out the next job right away. So the next frame is drawn
+// while the previous one waits for its refresh, every output in parallel;
+// the worker spends the rest of that wait blurring on toward the next one.
+//
+// The clock starts at the first frame callback (the pre-rendered frame is on
+// screen); frame 1 is drawn meanwhile, so it follows one refresh later
+// without a jump. The static picture the animation converges to (the frosted
+// background with its grain) is built on a thread of its own meanwhile; the
+// last frame is that picture, after which the output goes back to render().
+
+@(private = "file") ANIM_BUFS :: 2
+@(private = "file") ANIM_FRAME_MIN_MS :: 13.0 // ~60 fps at most on faster monitors
+
+@(private = "file")
+Anim_Job :: struct {
+	final: bool, // the static picture
+	buf:   int, // anim_bufs index
+	t:     f64, // ms on the animation clock the frame is for
+	dt:    f64, // ...and the next one most likely
+	tint:  u32,
+	mix:   f32,
+	light: bool,
+	ui:    Lock_UI,
+}
+
+@(private = "file")
+Anim_Worker :: struct {
+	o:             ^Lock_Output,
+	worker:        ^thread.Thread,
+	go:            sync.Sema, // a job (or quit) was posted
+	job:           Anim_Job, // main -> worker while busy
+	quit:          bool, // atomic
+	done:          bool, // atomic: the job is drawn
+	busy:          bool, // main loop: a job is out
+	// The static picture, from its own thread (static_sema once it's there).
+	static_thread: ^thread.Thread,
+	static_tried:  bool,
+	static_sema:   sync.Sema,
+	static_px:     []u32,
+	static_tint:   u32,
+	static_mix:    f32,
+	static_light:  bool,
+	static_ms:     f64,
+	// Timing log (written by the worker before `done`).
+	jobs:          int,
+	wall:          [2]f64, // sum, max (ms)
+	first:         [4]f64, // the first frames' (ms)
+	cpu:           [2]f64,
+}
+
+@(private = "file")
+thread_cpu_ms :: proc() -> f64 {
+	ts, _ := linux.clock_gettime(.THREAD_CPUTIME_ID)
+	return f64(ts.time_sec) * 1000 + f64(ts.time_nsec) / 1e6
+}
 
 // Takes over the capture's unblurred copy (blurred to the start strength).
-// Also runs on the pre-render threads.
+// Runs on the pre-render threads.
 @(private = "file")
 anim_begin :: proc(o: ^Lock_Output) {
 	if o.anim != nil || o.anim_src.img.px == nil {return}
 	o.anim = new(Blur_Anim)
-	o.anim^ = blur_anim_init(o.anim_src)
+	o.anim^ = blur_anim_init(o.anim_src, o.gang)
 	o.anim_src = {}
 }
 
-// The animation's current picture, upscaled and tinted (no grain).
+// The animation's current picture, upscaled and tinted (no grain), a third
+// of the rows on each of the gang's threads.
 @(private = "file")
-anim_background :: proc(o: ^Lock_Output, px: []u32, W, H: int) {
-	tint, mix := frost_tint()
-	blur_draw_fast(px, W, H, blur_anim_image(o.anim), tint, mix)
+anim_background :: proc(o: ^Lock_Output, px: []u32, W, H: int, tint: u32, mix: f32) {
+	Job :: struct {px: []u32, W, H: int, img: Blur_Image, tint: u32, mix: f32}
+	j := Job{px, W, H, blur_anim_image(o.anim), tint, mix}
+	blur_gang_run(o.gang, &j, proc(data: rawptr, part: int) {
+		j := (^Job)(data)
+		blur_draw_fast(j.px, j.W, j.H, j.img, j.tint, j.mix, j.H * part / BLUR_GANG, j.H * (part + 1) / BLUR_GANG)
+	})
 }
 
-// Frees everything the animation held; afterwards the output is drawn by
-// render() like any other.
+// The frame buffers, mapped (on a pre-render thread; the wl_buffers are
+// made on the main thread from the fds). Their pages are faulted in by the
+// first frames, the rows split over the gang. False: none made.
+@(private = "file")
+anim_alloc :: proc(o: ^Lock_Output, bw, bh: i32) -> bool {
+	size := int(bw) * int(bh) * 4
+	for &b, i in o.anim_bufs {
+		fd, err := linux.memfd_create("wlperch-lock", {.CLOEXEC})
+		m: rawptr
+		if err == .NONE {
+			err = linux.ftruncate(fd, i64(size))
+			if err == .NONE {m, err = linux.mmap(0, uint(size), {.READ, .WRITE}, {.SHARED}, fd)}
+			if err != .NONE {linux.close(fd)}
+		}
+		if err != .NONE {
+			for &c in o.anim_bufs[:i] {
+				posix.munmap(raw_data(c.px), uint(len(c.px) * 4))
+				linux.close(c.fd)
+				c = {}
+			}
+			return false
+		}
+		b = {px = ([^]u32)(m)[:int(bw) * int(bh)], w = bw, h = bh, fd = fd}
+	}
+	return true
+}
+
+// The output's refresh period (ms).
+@(private = "file")
+anim_refresh :: proc(o: ^Lock_Output) -> f64 {
+	return o.refresh > 0 ? 1e6 / f64(o.refresh) : 1000.0 / 60
+}
+
+// Ms per frame the animation runs at: the refresh period, or a multiple of
+// it that is at least ANIM_FRAME_MIN_MS.
+@(private = "file")
+anim_interval :: proc(o: ^Lock_Output) -> f64 {
+	tick := anim_refresh(o)
+	return tick * max(math.ceil(ANIM_FRAME_MIN_MS / tick - 0.01), 1)
+}
+
+@(private = "file")
+anim_worker :: proc(w: ^Anim_Worker) {
+	context.logger = g_lock_ctx.logger
+	o := w.o
+	dur := f64(max(config.lock_blur_animate_ms, 1))
+	for {
+		sync.sema_wait(&w.go)
+		if sync.atomic_load(&w.quit) {return}
+		t0, c0 := time.tick_now(), thread_cpu_ms()
+		h0 := o.gang != nil ? sync.atomic_load(&o.gang.cpu_ns) : 0
+		j := &w.job
+		b := &o.anim_bufs[j.buf]
+		W, H := int(b.w), int(b.h)
+		if j.final {
+			if w.static_thread != nil {sync.sema_wait(&w.static_sema)}
+			if w.static_px == nil {w.static_px = make([]u32, W * H); w.static_mix = -1} // no thread for it
+			if w.static_tint != j.tint || w.static_mix != j.mix {
+				// The theme changed while animating.
+				blur_draw(w.static_px, W, H, o.blur, j.tint, j.mix)
+				w.static_tint, w.static_mix, w.static_light = j.tint, j.mix, j.light
+			}
+			copy(b.px, w.static_px)
+		} else {
+			blur_anim_step(o.anim, blur_anim_sigma_at(o.anim, j.t / dur))
+			anim_background(o, b.px, W, H, j.tint, j.mix)
+		}
+		cv := Cv{px = b.px, w = W, h = H, s = f32(o.pre.scale)}
+		draw_ui(&cv, f32(o.pre.w), f32(o.pre.h), &j.ui)
+		free_all(context.temp_allocator)
+		wall := time.duration_milliseconds(time.tick_since(t0))
+		if w.jobs < len(w.first) {w.first[w.jobs] = wall}
+		w.jobs += 1
+		w.wall = {w.wall[0] + wall, max(w.wall[1], wall)}
+		final, t_next := j.final, j.t + j.dt
+		sync.atomic_store(&w.done, true) // w.job is the main loop's again
+		wake('r')
+		// While the frame waits for its refresh: blur on to where the next
+		// one will most likely be, so its job is mostly drawing.
+		if !final && t_next < dur {blur_anim_step(o.anim, blur_anim_sigma_at(o.anim, t_next / dur))}
+		free_all(context.temp_allocator)
+		cpu := thread_cpu_ms() - c0
+		if o.gang != nil {cpu += f64(sync.atomic_load(&o.gang.cpu_ns) - h0) / 1e6} // and the helpers'
+		w.cpu = {w.cpu[0] + cpu, max(w.cpu[1], cpu)}
+	}
+}
+
+// The exact static background (blur_draw, with grain), for the last frame.
+@(private = "file")
+anim_static_thread :: proc(w: ^Anim_Worker) {
+	t0 := time.tick_now()
+	o := w.o
+	W, H := int(o.pre.w * o.pre.scale), int(o.pre.h * o.pre.scale)
+	w.static_px = make([]u32, W * H)
+	blur_draw(w.static_px, W, H, o.blur, w.static_tint, w.static_mix)
+	free_all(context.temp_allocator)
+	w.static_ms = time.duration_milliseconds(time.tick_since(t0))
+	sync.sema_post(&w.static_sema)
+}
+
+// Starts an output's worker on frame 1: before the lock is requested, right
+// after the pre-render.
+@(private = "file")
+anim_start :: proc(o: ^Lock_Output) -> bool {
+	w := new(Anim_Worker)
+	w.o = o
+	w.worker = thread.create_and_start_with_poly_data(w, anim_worker)
+	if w.worker == nil {
+		free(w)
+		return false
+	}
+	o.aw = w
+	o.anim_ready = -1
+	// The pre-rendered frame shows at the clock's zero, as if committed a
+	// refresh before: frame 1 is for one refresh after.
+	o.anim_commit_t = -anim_interval(o)
+	anim_kick(o)
+	return true
+}
+
+// Hands the worker the next frame when it's idle and a buffer is free.
+@(private = "file")
+anim_kick :: proc(o: ^Lock_Output) {
+	w := o.aw
+	if w == nil || w.busy || o.anim_ready >= 0 || o.anim_final {return}
+	buf := -1
+	for b, i in o.anim_bufs {if !b.busy && b.buffer != nil {buf = i; break}}
+	if buf < 0 {return} // again on the release
+	// Committed at the next frame callback, shown a refresh later.
+	t := o.anim_commit_t + 2 * anim_interval(o)
+	full := o.surface == nil ? o.pre.full : o == primary_output()
+	tint, mix := frost_tint()
+	if !w.static_tried && (o.anim_frames >= 2 || t >= f64(config.lock_blur_animate_ms)) {
+		// The static picture, once the first (costlier) frames are out of
+		// the way. (Without a thread the last frame builds it.)
+		w.static_tried = true
+		w.static_tint, w.static_mix, w.static_light = tint, mix, theme_light
+		w.static_thread = thread.create_and_start_with_poly_data(w, anim_static_thread)
+	}
+	w.job = {final = t >= f64(config.lock_blur_animate_ms), buf = buf, t = t, dt = anim_interval(o), tint = tint, mix = mix, light = theme_light, ui = lock_ui(full)}
+	if w.job.final {o.dirty = false} // the last frame shows everything up to now
+	o.anim_final = w.job.final
+	w.busy = true
+	sync.sema_post(&w.go)
+}
+
+// Every main-loop pass while the output animates: collects the worker's
+// frame, commits it at the frame callback, hands out the next.
+@(private = "file")
+anim_service :: proc(o: ^Lock_Output) {
+	w := o.aw
+	if w.busy && sync.atomic_load(&w.done) {
+		sync.atomic_store(&w.done, false)
+		w.busy = false
+		o.anim_ready = w.job.buf
+	}
+	if o.anim_ready >= 0 && lk.anim_started && o.configured && o.surface != nil && !o.frame_pending {
+		now := time.tick_now()
+		since := time.duration_milliseconds(time.tick_diff(o.anim_last, now))
+		if o.anim_frames > 0 && since < ANIM_FRAME_MIN_MS && anim_interval(o) > anim_refresh(o) * 1.5 {
+			// A fast monitor: wait for the next frame callback without a
+			// new buffer (an empty commit), so it stays near 60 fps.
+			cb := wl.surface_frame(o.surface)
+			wl.callback_add_listener(cb, &frame_listener, o)
+			o.frame_pending = true
+			wl.surface_commit(o.surface)
+			return
+		}
+		b := &o.anim_bufs[o.anim_ready]
+		b.busy = true
+		wl.surface_set_buffer_scale(o.surface, o.pre.scale)
+		wl.surface_attach(o.surface, b.buffer, 0, 0)
+		wl.surface_damage_buffer(o.surface, 0, 0, b.w, b.h)
+		cb := wl.surface_frame(o.surface)
+		wl.callback_add_listener(cb, &frame_listener, o)
+		o.frame_pending = true
+		wl.surface_commit(o.surface)
+		if o.anim_frames > 0 {
+			o.anim_iv = {o.anim_frames == 1 ? since : min(o.anim_iv[0], since), o.anim_iv[1] + since, max(o.anim_iv[2], since)}
+		}
+		o.anim_frames += 1
+		o.anim_last = now
+		o.anim_commit_t = time.duration_milliseconds(time.tick_diff(lk.anim_start, now))
+		o.anim_ready = -1
+		if o.anim_final {
+			anim_finish(o)
+			return
+		}
+	}
+	anim_kick(o)
+}
+
+// After the last frame's commit: the static picture becomes the output's
+// background (unless the theme changed since), and the animation's
+// resources go.
+@(private = "file")
+anim_finish :: proc(o: ^Lock_Output) {
+	w := o.aw
+	if w.static_px != nil && w.static_light == theme_light {
+		delete(o.bg)
+		o.bg = w.static_px
+		w.static_px = nil
+		o.bg_w, o.bg_h = o.pre.w * o.pre.scale, o.pre.h * o.pre.scale
+	} else {
+		o.bg_w = 0
+		o.dirty = true
+	}
+	anim_end(o)
+}
+
+// Stops the worker and frees everything the animation held; afterwards the
+// output is drawn by render() like any other. (Destroying the buffer still
+// on screen is fine: its pixels are never touched again.)
 @(private = "file")
 anim_end :: proc(o: ^Lock_Output) {
-	if o.anim != nil {
+	if w := o.aw; w != nil {
+		sync.atomic_store(&w.quit, true)
+		sync.sema_post(&w.go)
+		thread.destroy(w.worker)
+		if w.static_thread != nil {thread.destroy(w.static_thread)}
 		if o.anim_frames > 0 {
-			nbuf := 0
-			for b in o.anim_bufs {if b.buffer != nil {nbuf += 1}}
-			log.debugf("lock: blur animation on %s: %d frames, %.1f fps, %.1f ms of work per frame, %d buffers", o.conn, o.anim_frames,
-				f64(o.anim_frames) * 1000 / max(time.duration_milliseconds(time.tick_since(lk.anim_start)), 1), o.anim_ms / f64(o.anim_frames), nbuf)
+			el := time.duration_milliseconds(time.tick_since(lk.anim_start))
+			n := f64(max(w.jobs, 1))
+			log.debugf("lock: blur animation on %s: %d frames in %.0f ms (%.1f fps), commit interval %.1f/%.1f/%.1f ms (min/avg/max), worker %.1f/%.1f ms per frame (avg/max; frames 1-4: %.1f, %.1f, %.1f, %.1f), CPU %.1f/%.1f ms (all threads), static picture %.1f ms",
+				o.conn, o.anim_frames, el, f64(o.anim_frames) * 1000 / max(el, 1), o.anim_iv[0], o.anim_iv[1] / f64(max(o.anim_frames - 1, 1)), o.anim_iv[2],
+				w.wall[0] / n, w.wall[1], w.first[0], w.first[1], w.first[2], w.first[3], w.cpu[0] / n, w.cpu[1], w.static_ms)
 		}
+		delete(w.static_px)
+		free(w)
+		o.aw = nil
+		done := true
+		for x in lk.outputs {if x.aw != nil {done = false}}
+		if done && lk.loop_max > 0 {log.debugf("lock: longest main-loop pass while animating: %.1f ms", lk.loop_max)}
+	}
+	if o.anim != nil {
 		blur_anim_free(o.anim)
 		free(o.anim)
 		o.anim = nil
 	}
+	blur_gang_stop(o.gang)
+	o.gang = nil
 	delete(o.anim_src.img.px)
 	o.anim_src = {}
 	for &b in o.anim_bufs {
 		if b.buffer != nil {wl.buffer_destroy(b.buffer)} // the compositor keeps its own mapping
 		if b.px != nil {posix.munmap(raw_data(b.px), uint(len(b.px) * 4))}
+		if b.fd > 0 {linux.close(b.fd)}
 		b = {}
 	}
-}
-
-// A free frame buffer of this size, (re)created as needed; nil when all are
-// still held by the compositor.
-@(private = "file")
-anim_buffer :: proc(o: ^Lock_Output, bw, bh: i32) -> ^Anim_Buffer {
-	pick: ^Anim_Buffer
-	for &b in o.anim_bufs {
-		if b.busy {continue}
-		if b.buffer != nil && b.w == bw && b.h == bh {return &b}
-		if pick == nil || pick.buffer != nil {pick = &b} // prefer an empty slot
-	}
-	if pick == nil {return nil}
-	if pick.buffer != nil {
-		wl.buffer_destroy(pick.buffer)
-		posix.munmap(raw_data(pick.px), uint(len(pick.px) * 4))
-		pick^ = {}
-	}
-	size := int(bw) * int(bh) * 4
-	fd, err := linux.memfd_create("wlperch-lock", {.CLOEXEC})
-	if err != .NONE {return nil}
-	defer linux.close(fd)
-	if linux.ftruncate(fd, i64(size)) != .NONE {return nil}
-	m := posix.mmap(nil, uint(size), {.READ, .WRITE}, {.SHARED}, posix.FD(fd), 0)
-	if m == posix.MAP_FAILED {return nil}
-	pool := wl.shm_create_pool(lk.shm, i32(fd), i32(size))
-	pick.buffer = wl.shm_pool_create_buffer(pool, 0, bw, bh, bw * 4, wl.SHM_FORMAT_XRGB8888)
-	wl.shm_pool_destroy(pool)
-	wl.buffer_add_listener(pick.buffer, &anim_buffer_listener, pick)
-	pick.px = ([^]u32)(m)[:int(bw) * int(bh)]
-	pick.w, pick.h = bw, bh
-	return pick
-}
-
-@(private = "file") ANIM_FRAME_MIN :: 14 * time.Millisecond // ~60 fps at most, with a little slack
-
-// One animation frame, paced by frame callbacks: blur a bit more, draw, and
-// commit. Past the duration the output gets the static picture (exactly
-// what the animation converged to, with its grain) and goes back to
-// event-driven redraws.
-@(private = "file")
-render_anim :: proc(o: ^Lock_Output) {
-	anim_begin(o)
-	p := time.duration_milliseconds(time.tick_since(lk.anim_start)) / f64(max(config.lock_blur_animate_ms, 1))
-	s := max(o.scale, 1)
-	bw, bh := o.w * s, o.h * s
-	if p >= 1 || bw <= 0 || bh <= 0 {
-		o.bg_w = 0 // the static background wasn't built yet
-		render(o)
-		anim_end(o) // after the commit that replaced the last frame's buffer
-		return
-	}
-	t0 := time.tick_now()
-	if o.anim_frames > 0 && time.tick_diff(o.anim_last, t0) < ANIM_FRAME_MIN {
-		// A fast monitor: wait for the next frame callback without drawing
-		// (an empty commit), so it stays near 60 fps instead of 144.
-		cb := wl.surface_frame(o.surface)
-		wl.callback_add_listener(cb, &frame_listener, o)
-		o.frame_pending = true
-		wl.surface_commit(o.surface)
-		return
-	}
-	o.anim_last = t0
-	blur_anim_step(o.anim, blur_anim_sigma_at(o.anim, p))
-	b := anim_buffer(o, bw, bh)
-	if b == nil {return} // retried when a buffer comes back
-	anim_background(o, b.px, int(bw), int(bh))
-	cv := Cv{px = b.px, w = int(bw), h = int(bh), s = f32(s)}
-	draw_ui(&cv, f32(o.w), f32(o.h), o == primary_output())
-	b.busy = true
-	wl.surface_set_buffer_scale(o.surface, s)
-	wl.surface_attach(o.surface, b.buffer, 0, 0)
-	wl.surface_damage_buffer(o.surface, 0, 0, bw, bh)
-	cb := wl.surface_frame(o.surface)
-	wl.callback_add_listener(cb, &frame_listener, o)
-	o.frame_pending = true
-	o.dirty = false
-	wl.surface_commit(o.surface)
-	o.committed = true
-	o.anim_frames += 1
-	o.anim_ms += time.duration_milliseconds(time.tick_since(t0))
+	o.anim_ready = -1
+	o.anim_final = false
 }
 
 // ---- Main ----------------------------------------------------------------------------
@@ -1228,8 +1492,28 @@ prerender_thread :: proc(o: ^Lock_Output) {
 	t0 := time.tick_now()
 	p := &o.pre
 	bw, bh := p.w * p.scale, p.h * p.scale
-	// Animated: the static background is only needed (and built) at the end.
-	if o.anim_src.img.px != nil {anim_begin(o)} else {build_background(o, bw, bh)}
+	// Animated: frame 0 goes into the animation's first buffer (the static
+	// background is built meanwhile, for the end).
+	if o.anim_src.img.px != nil {
+		anim_begin(o)
+		ta := time.tick_now()
+		if anim_alloc(o, bw, bh) {
+			t1 := time.tick_now()
+			b := &o.anim_bufs[0]
+			anim_background(o, b.px, int(bw), int(bh), p.tint, p.mix)
+			cv := Cv{px = b.px, w = int(bw), h = int(bh), s = f32(p.scale)}
+			draw_ui(&cv, f32(p.w), f32(p.h), &p.ui)
+			p.ok, p.anim = true, true
+			log.debugf("lock: pre-rendered %s %dx%d@%d (animated): start %.1f ms, buffers %.1f ms, frame %.1f ms", o.conn, p.w, p.h, p.scale,
+				time.duration_milliseconds(time.tick_diff(t0, ta)), time.duration_milliseconds(time.tick_diff(ta, t1)), time.duration_milliseconds(time.tick_since(t1)))
+			return
+		}
+		blur_anim_free(o.anim) // no buffers: the static picture, unanimated
+		free(o.anim)
+		o.anim = nil
+		// (the gang is stopped by anim_end, on the main thread)
+	}
+	build_background(o, bw, bh)
 	t1 := time.tick_now()
 	size := int(bw) * int(bh) * 4
 	fd, err := linux.memfd_create("wlperch-lock", {.CLOEXEC})
@@ -1239,9 +1523,9 @@ prerender_thread :: proc(o: ^Lock_Output) {
 	m := posix.mmap(nil, uint(size), {.READ, .WRITE}, {.SHARED}, posix.FD(fd), 0)
 	if m == posix.MAP_FAILED {return}
 	p.px = ([^]u32)(m)[:bw * bh]
-	if o.anim != nil {anim_background(o, p.px, int(bw), int(bh))} else {copy(p.px, o.bg)}
+	copy(p.px, o.bg)
 	cv := Cv{px = p.px, w = int(bw), h = int(bh), s = f32(p.scale)}
-	draw_ui(&cv, f32(p.w), f32(p.h), p.full)
+	draw_ui(&cv, f32(p.w), f32(p.h), &p.ui)
 	posix.munmap(m, uint(size))
 	p.px = nil
 	p.ok = true
@@ -1278,6 +1562,9 @@ prerender_outputs :: proc() {
 		}
 		if p.w <= 0 || p.h <= 0 {continue}
 		p.full = have_primary ? o.conn == lk.primary : i == 0
+		p.ui = lock_ui(p.full)
+		p.tint, p.mix = frost_tint()
+		if o.anim_src.img.px != nil {o.gang = blur_gang_start()}
 		// Without init_context: the thread gets its own temp allocator.
 		if t := thread.create_and_start_with_poly_data(o, prerender_thread); t != nil {
 			append(&threads, t)
@@ -1292,7 +1579,24 @@ prerender_outputs :: proc() {
 	n := 0
 	for o in lk.outputs {
 		p := &o.pre
-		if p.ok {
+		if p.ok && p.anim {
+			for &b in o.anim_bufs {
+				pool := wl.shm_create_pool(lk.shm, i32(b.fd), b.w * b.h * 4)
+				b.buffer = wl.shm_pool_create_buffer(pool, 0, b.w, b.h, b.w * 4, wl.SHM_FORMAT_XRGB8888)
+				wl.shm_pool_destroy(pool)
+				wl.buffer_add_listener(b.buffer, &anim_buffer_listener, &b)
+				linux.close(b.fd)
+				b.fd = 0
+			}
+			p.buffer = o.anim_bufs[0].buffer
+			// Frame 1 is drawn while the lock is set up.
+			if !anim_start(o) {log.warn("lock: no thread for the blur animation")}
+			n += 1
+		} else if o.gang != nil {
+			blur_gang_stop(o.gang) // not animated after all
+			o.gang = nil
+		}
+		if p.ok && !p.anim {
 			size := p.w * p.scale * p.h * p.scale * 4
 			pool := wl.shm_create_pool(lk.shm, i32(p.fd), size)
 			p.buffer = wl.shm_pool_create_buffer(pool, 0, p.w * p.scale, p.h * p.scale, p.w * p.scale * 4, wl.SHM_FORMAT_XRGB8888)
@@ -1317,9 +1621,11 @@ commit_prerender :: proc(o: ^Lock_Output) -> bool {
 	p.buffer = nil
 	if p.w != o.w || p.h != o.h || p.scale != max(o.scale, 1) || p.full != (o == primary_output()) {
 		log.debugf("lock: %s configured %dx%d@%d, pre-rendered %dx%d@%d: rendering again", o.conn, o.w, o.h, o.scale, p.w, p.h, p.scale)
-		wl.buffer_destroy(buf)
+		// Animated: the buffers are the wrong size, the static picture it is.
+		if p.anim {anim_end(o)} else {wl.buffer_destroy(buf)}
 		return false
 	}
+	if p.anim {o.anim_bufs[0].busy = true}
 	wl.surface_set_buffer_scale(o.surface, p.scale)
 	wl.surface_attach(o.surface, buf, 0, 0)
 	wl.surface_damage_buffer(o.surface, 0, 0, p.w * p.scale, p.h * p.scale)
@@ -1511,6 +1817,7 @@ lock_main :: proc(args: []string) -> int {
 			wl.display_cancel_read(d)
 			continue
 		}
+		t_pass := time.tick_now()
 		if .IN in pfds[0].revents {wl.display_read_events(d)} else {wl.display_cancel_read(d)}
 		if pfds[0].revents & {.HUP, .ERR} != {} || wl.display_dispatch_pending(d) < 0 {
 			// No unlock: the compositor keeps the session locked.
@@ -1524,10 +1831,12 @@ lock_main :: proc(args: []string) -> int {
 
 		if .IN in pfds[1].revents {
 			buf: [64]u8
+			redraw := false
 			for {
 				n := posix.read(lk.wake_r, &buf[0], len(buf))
 				if n <= 0 {break}
 				for b in buf[:n] {
+					if b != 'r' {redraw = true} // 'r': an animation frame is drawn
 					switch b {
 					case 'y':
 						if lk.locked {
@@ -1551,7 +1860,7 @@ lock_main :: proc(args: []string) -> int {
 					}
 				}
 			}
-			for o in lk.outputs {o.dirty = true}
+			if redraw {for o in lk.outputs {o.dirty = true}}
 		}
 		if theme_fd >= 0 && .IN in pfds[2].revents && theme_watch_changed(theme_fd) {
 			was := theme_light
@@ -1581,14 +1890,29 @@ lock_main :: proc(args: []string) -> int {
 				for o in lk.outputs {o.dirty = true}
 			}
 		}
+		// No frame callback yet (outputs off?): the animation starts anyway.
+		if lk.animate && !lk.anim_started && since_lock() > 150 {
+			lk.anim_started = true
+			lk.anim_start = time.tick_now()
+		}
+		animating := false
 		for o in lk.outputs {
+			if o.aw != nil {
+				animating = true
+				anim_service(o) // every frame until it's done, then render()
+				continue
+			}
 			if !o.configured || o.frame_pending || o.surface == nil {continue}
 			if o.anim != nil || o.anim_src.img.px != nil {
-				render_anim(o) // every frame until it's done, then render()
+				// Not animated after all (no worker, no pre-render): the static picture.
+				o.bg_w = 0
+				render(o)
+				anim_end(o)
 			} else if o.dirty {
 				render(o)
 			}
 		}
+		if animating {lk.loop_max = max(lk.loop_max, time.duration_milliseconds(time.tick_since(t_pass)))}
 		free_all(context.temp_allocator)
 	}
 }

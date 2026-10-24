@@ -4,7 +4,8 @@
 //
 // Capture prefers ext-image-copy-capture-v1 (+ ext-image-capture-source-v1)
 // and falls back to wlr-screencopy-unstable-v1. Every output is captured at
-// once into shm; each frame is reduced the moment it arrives: a box-average
+// once into shm; each frame is reduced the moment it arrives, on a thread of
+// its own (outputs in parallel, events keep flowing): a box-average
 // downscale (D x D native pixels -> 1), the output transform applied on that
 // small copy, then three box-blur passes per axis (≈ Gaussian). The capture
 // buffers are unmapped right after, so only the small blurred copies stay.
@@ -24,7 +25,9 @@ import "core:log"
 import "core:math"
 import "core:os"
 import "core:sys/linux"
+import "core:sync"
 import "core:sys/posix"
+import "core:thread"
 import "core:time"
 
 import "wl"
@@ -52,7 +55,10 @@ Capture_Target :: struct {
 	result:    Blur_Image,
 
 	// in flight
-	state:     enum {Idle, Waiting, Copying, Done, Failed},
+	state:     enum {Idle, Waiting, Copying, Blurring, Done, Failed},
+	blur_th:   ^thread.Thread, // while Blurring
+	blurred:   bool, // atomic: blur_th is done
+	blur_t0:   time.Tick,
 	format:    u32,
 	fmt_rank:  int, // lower is better, max = none yet
 	w, h:      i32,
@@ -160,13 +166,30 @@ fail :: proc(t: ^Capture_Target, why: string) {
 	release(t)
 }
 
+// The frame is in: reduce and blur it on its own thread (blur_done finishes).
 @(private = "file")
 ready :: proc(t: ^Capture_Target) {
-	t0 := time.tick_now()
-	t.result = lock_reduce_and_blur(t)
+	t.blur_t0 = time.tick_now()
+	t.state = .Blurring
+	t.blur_th = thread.create_and_start_with_poly_data(t, proc(t: ^Capture_Target) {
+		t.result = lock_reduce_and_blur(t)
+		free_all(context.temp_allocator)
+		sync.atomic_store(&t.blurred, true)
+	})
+	if t.blur_th == nil {
+		t.result = lock_reduce_and_blur(t)
+		sync.atomic_store(&t.blurred, true)
+	}
+}
+
+// Main thread, once t.blurred: the capture's buffer goes.
+@(private = "file")
+blur_done :: proc(t: ^Capture_Target) {
+	if t.blur_th != nil {thread.destroy(t.blur_th)}
+	t.blur_th = nil
 	release(t)
 	t.state = t.result.px != nil ? .Done : .Failed
-	log.debugf("lock: blurred %dx%d -> %dx%d in %.1f ms", t.w, t.h, t.result.w, t.result.h, time.duration_milliseconds(time.tick_since(t0)))
+	log.debugf("lock: blurred %dx%d -> %dx%d in %.1f ms", t.w, t.h, t.result.w, t.result.h, time.duration_milliseconds(time.tick_since(t.blur_t0)))
 }
 
 // ---- ext-image-copy-capture-v1 ----------------------------------------------------
@@ -309,9 +332,13 @@ capture_and_blur :: proc(display: ^wl.Display, shm: ^wl.Shm, targets: []^Capture
 wait_targets :: proc(display: ^wl.Display, targets: []^Capture_Target, timeout: time.Duration) -> int {
 	deadline := time.tick_add(time.tick_now(), timeout)
 	for {
-		pending := 0
-		for t in targets {if t.state == .Waiting || t.state == .Copying {pending += 1}}
-		if pending == 0 {break}
+		pending, blurring := 0, 0
+		for t in targets {
+			if t.state == .Blurring && sync.atomic_load(&t.blurred) {blur_done(t)}
+			if t.state == .Waiting || t.state == .Copying {pending += 1}
+			if t.state == .Blurring {blurring += 1}
+		}
+		if pending + blurring == 0 {break}
 		left := time.tick_diff(time.tick_now(), deadline)
 		if left <= 0 {
 			log.warnf("lock: screen capture timed out after %v", timeout)
@@ -321,6 +348,7 @@ wait_targets :: proc(display: ^wl.Display, targets: []^Capture_Target, timeout: 
 		wl.display_flush(display)
 		pfd := posix.pollfd{fd = posix.FD(wl.display_get_fd(display)), events = {.IN}}
 		ms := max(i32(time.duration_milliseconds(left)), 1)
+		if blurring > 0 {ms = min(ms, 1)} // look again soon
 		if posix.poll(&pfd, 1, ms) > 0 && .IN in pfd.revents {
 			wl.display_read_events(display)
 		} else {
@@ -330,6 +358,11 @@ wait_targets :: proc(display: ^wl.Display, targets: []^Capture_Target, timeout: 
 	}
 	ok := 0
 	for t in targets {
+		if t.state == .Blurring {
+			// The copy is in: worth waiting the few ms for.
+			if t.blur_th != nil {thread.join(t.blur_th)}
+			blur_done(t)
+		}
 		if t.state == .Done {ok += 1} else {
 			t.state = .Failed
 			release(t)
@@ -364,26 +397,38 @@ lock_reduce_and_blur :: proc(t: ^Capture_Target) -> Blur_Image {
 	// Shrink so the remaining blur is ~4 small pixels: cheap passes, and the
 	// box downscale already averages away every detail below D px.
 	D := clamp(int(sigma / 4), 1, min(W, H))
-	out := reduce_orient(t, D) // the result: kept until the lock exits
-	lw, lh := out.w, out.h
-
-	// 3. Three box passes per axis ≈ Gaussian of the remaining sigma.
 	ss := sigma / f32(D)
 	r := max(1, int(math.round((math.sqrt(4 * ss * ss + 1) - 1) / 2)))
+	// The animation's copy, on another thread meanwhile.
+	Anim_Reduce :: struct {t: ^Capture_Target, D: int, img: Blur_Image}
+	ar: Anim_Reduce
+	ar_th: ^thread.Thread
 	if t.animate {
 		// The static copy's effective sigma; the animation starts at a share of it.
 		s_static := math.sqrt(blur_anim_shown_var(D, f64(r * (r + 1))))
 		s_from := s_static * f64(clamp(t.anim_from, 0, 100)) / 100
 		Dw := clamp(int(s_from / 2), 2, max(D, 2))
 		Dw = min(Dw, W, H)
-		t.anim = {img = reduce_orient(t, Dw), D = Dw, D_static = D, s_from = s_from, s_static = s_static}
+		t.anim = {D = Dw, D_static = D, s_from = s_from, s_static = s_static}
+		ar = {t, Dw, {}}
+		ar_th = thread.create_and_start_with_poly_data(&ar, proc(ar: ^Anim_Reduce) {
+			ar.img = reduce_orient(ar.t, ar.D)
+			free_all(context.temp_allocator)
+		})
+		if ar_th == nil {ar.img = reduce_orient(t, Dw)}
 	}
+	out := reduce_orient(t, D) // the result: kept until the lock exits
+	lw, lh := out.w, out.h
+
+	// 3. Three box passes per axis ≈ Gaussian of the remaining sigma.
 	tmp := make([]u32, max(lw, lh), context.temp_allocator)
 	for _ in 0 ..< 3 {
 		for y in 0 ..< lh {box_line(out.px[y * lw:], 1, lw, r, tmp)}
 		for x in 0 ..< lw {box_line(out.px[x:], lw, lh, r, tmp)}
 	}
 	if t.animate {
+		if ar_th != nil {thread.destroy(ar_th)}
+		t.anim.img = ar.img
 		// box_line's rounding down darkens busy areas by a few levels; the
 		// animation (which rounds) eases toward that so its end matches.
 		m0, m1 := channel_means(t.anim.img), channel_means(out)
@@ -533,10 +578,13 @@ blur_draw :: proc(dst: []u32, W, H: int, img: Blur_Image, tint: u32, mix: f32, g
 // blur_draw without the grain, about five times faster, for the animation's
 // frames: each source row is upscaled horizontally and tinted once (two
 // kept), then every output row is a vertical lerp of two contiguous rows,
-// eight pixels at a time. Within ±2 of blur_draw(grain = false).
-blur_draw_fast :: proc(dst: []u32, W, H: int, img: Blur_Image, tint: u32, mix: f32) {
+// eight pixels at a time in 16-bit lanes. Within ±2 of blur_draw(grain =
+// false). Draws output rows y_from ..< y_to (all by default), so threads can
+// share a frame.
+blur_draw_fast :: proc(dst: []u32, W, H: int, img: Blur_Image, tint: u32, mix: f32, y_from := 0, y_to := -1) {
 	sw, sh := img.w, img.h
 	if sw <= 0 || sh <= 0 || W <= 0 || H <= 0 || len(img.px) < sw * sh || len(dst) < W * H {return}
+	y_to := y_to < 0 ? H : min(y_to, H)
 	k := u32(clamp(mix, 0, 1) * 256)
 	ik := 256 - k
 	trb, tg := (tint & 0xff00ff) * k, (tint & 0xff00) * k
@@ -563,9 +611,12 @@ blur_draw_fast :: proc(dst: []u32, W, H: int, img: Blur_Image, tint: u32, mix: f
 		have[s] = sy
 		return out
 	}
+	// Each pixel as 16-bit lanes: 0x00RR00BB and 0x0000_00GG; a weight of
+	// at most 256 times a level fits.
 	V :: #simd[8]u32
-	mrb, mg, opaque, eight := V(0xff00ff), V(0xff00), V(0xff000000), V(8)
-	for y in 0 ..< H {
+	L :: #simd[16]u16
+	mrb, opaque, eight := V(0xff00ff), V(0xff000000), V(8)
+	for y in y_from ..< y_to {
 		fy := clamp((f32(y) + 0.5) * f32(sh) / f32(H) - 0.5, 0, f32(sh - 1))
 		y0 := int(fy)
 		y1 := min(y0 + 1, sh - 1)
@@ -573,14 +624,14 @@ blur_draw_fast :: proc(dst: []u32, W, H: int, img: Blur_Image, tint: u32, mix: f
 		a := upscaled(&rows, &have, y0, img, xs0, xs1, xw, ik, trb, tg)
 		b := upscaled(&rows, &have, y1, img, xs0, xs1, xw, ik, trb, tg)
 		row := dst[y * W:][:W]
-		w0, w1 := V(256 - wy), V(wy)
+		w0, w1, e8 := L(u16(256 - wy)), L(u16(wy)), L(8)
 		x := 0
 		#no_bounds_check for ; x + 8 <= W; x += 8 {
 			p := intrinsics.unaligned_load((^V)(&a[x]))
 			q := intrinsics.unaligned_load((^V)(&b[x]))
-			rb := intrinsics.simd_shr((p & mrb) * w0 + (q & mrb) * w1, eight) & mrb
-			g := intrinsics.simd_shr((p & mg) * w0 + (q & mg) * w1, eight) & mg
-			intrinsics.unaligned_store((^V)(&row[x]), rb | g | opaque)
+			rb := intrinsics.simd_shr(transmute(L)(p & mrb) * w0 + transmute(L)(q & mrb) * w1, e8)
+			g := intrinsics.simd_shr(transmute(L)(intrinsics.simd_shr(p, eight) & mrb) * w0 + transmute(L)(intrinsics.simd_shr(q, eight) & mrb) * w1, e8)
+			intrinsics.unaligned_store((^V)(&row[x]), transmute(V)rb | intrinsics.simd_shl(transmute(V)g, eight) | opaque)
 		}
 		for ; x < W; x += 1 {row[x] = 0xff000000 | lerp_px(a[x], b[x], wy)}
 	}
