@@ -28,6 +28,7 @@ Tray_Item :: struct {
 	title:       string,
 	tooltip:     string,
 	menu:        string, // dbusmenu object path ("" = none)
+	theme_path:  string, // IconThemePath (also for menu icons)
 	is_menu:     bool,   // left click opens the menu
 	icon:        ^Notif_Icon,
 	att_icon:    ^Notif_Icon,
@@ -171,7 +172,7 @@ tray_remove :: proc(i: int) {
 	}
 	if it.slot != nil {sd_bus_slot_unref(it.slot)}
 	delete(it.id); delete(it.bus); delete(it.path); delete(it.status)
-	delete(it.title); delete(it.tooltip); delete(it.menu)
+	delete(it.title); delete(it.tooltip); delete(it.menu); delete(it.theme_path)
 	free(it)
 	ordered_remove(&tray.items, i)
 	tray.changed = true
@@ -371,6 +372,7 @@ on_props :: proc "c" (m: ^Sd_Bus_Message, userdata: rawptr, ret_error: ^Sd_Bus_E
 	changed |= set(&it.title, title)
 	changed |= set(&it.tooltip, tip)
 	changed |= set(&it.menu, menu == "/" ? "" : menu)
+	set(&it.theme_path, theme_path)
 	changed |= it.icon != icon || it.att_icon != att || it.is_menu != is_menu
 	it.icon, it.att_icon, it.is_menu = icon, att, is_menu
 	it.loaded = true
@@ -428,6 +430,7 @@ Menu_Node :: struct {
 	id:           i32,
 	label:        string,
 	icon:         string,
+	img:          ^Notif_Icon, // resolved icon-name or icon-data (interned, not owned)
 	enabled:      bool,
 	visible:      bool,
 	separator:    bool,
@@ -463,10 +466,11 @@ strip_mnemonic :: proc(s: string) -> string {
 }
 
 @(private = "file")
-read_node :: proc(m: ^Sd_Bus_Message, n: ^Menu_Node) -> bool {
+read_node :: proc(m: ^Sd_Bus_Message, n: ^Menu_Node, theme_path: string) -> bool {
 	if sd_bus_message_enter_container(m, 'r', "ia{sv}av") <= 0 {return false}
 	n.enabled, n.visible = true, true
 	sd_bus_message_read_basic(m, 'i', &n.id)
+	data: []u8 // icon-data (PNG), valid while m is
 	if sd_bus_message_enter_container(m, 'a', "{sv}") >= 0 {
 		for sd_bus_message_enter_container(m, 'e', "sv") > 0 {
 			key := strings.clone(read_str(m, 's'), context.temp_allocator)
@@ -479,6 +483,10 @@ read_node :: proc(m: ^Sd_Bus_Message, n: ^Menu_Node) -> bool {
 				switch {
 				case key == "label" && cs == "s":        n.label = strip_mnemonic(read_str(m, 's'))
 				case key == "icon-name" && cs == "s":    n.icon = strings.clone(read_str(m, 's'))
+				case key == "icon-data" && cs == "ay":
+					p: rawptr
+					sz: c.size_t
+					if sd_bus_message_read_array(m, 'y', &p, &sz) >= 0 && sz > 0 {data = ([^]u8)(p)[:sz]}
 				case key == "type" && cs == "s":         n.separator = read_str(m, 's') == "separator"
 				case key == "toggle-type" && cs == "s":  n.toggle = strings.clone(read_str(m, 's'))
 				case key == "enabled" && cs == "b":
@@ -501,10 +509,15 @@ read_node :: proc(m: ^Sd_Bus_Message, n: ^Menu_Node) -> bool {
 		}
 		sd_bus_message_exit_container(m)
 	}
+	// Resolved here, once per layout: the named icon first, else the PNG.
+	if !n.separator {
+		n.img = resolve_icon(n.icon, theme_path)
+		if n.img == nil && data != nil {n.img = icon_from_encoded(data)}
+	}
 	if sd_bus_message_enter_container(m, 'a', "v") >= 0 {
 		for sd_bus_message_enter_container(m, 'v', "(ia{sv}av)") > 0 {
 			child: Menu_Node
-			if read_node(m, &child) {append(&n.children, child)}
+			if read_node(m, &child, theme_path) {append(&n.children, child)}
 			sd_bus_message_exit_container(m)
 		}
 		sd_bus_message_exit_container(m)
@@ -529,7 +542,7 @@ tray_menu_layout :: proc(it: ^Tray_Item) -> (root: Menu_Node, ok: bool) {
 	defer sd_bus_message_unref(reply)
 	rev: u32
 	sd_bus_message_read_basic(reply, 'u', &rev)
-	ok = read_node(reply, &root)
+	ok = read_node(reply, &root, it.theme_path)
 	return
 }
 

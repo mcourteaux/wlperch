@@ -128,6 +128,7 @@ Bar :: struct {
 @(private = "file") ROW_H :: f32(28)
 @(private = "file") SEP_H :: f32(9)
 @(private = "file") MENU_PAD :: f32(6)
+@(private = "file") MENU_ICON :: f32(16)
 
 // ---- Wayland ---------------------------------------------------------------------------
 
@@ -860,6 +861,7 @@ render_popup :: proc(p: ^Bar_Popup) {
 			}
 		}
 	case .Menu:
+		icon_x, label_x := menu_cols(p.node)
 		for r, i in p.rows {
 			n := r.node
 			if n.separator {
@@ -875,7 +877,8 @@ render_popup :: proc(p: ^Bar_Popup) {
 			case "radio":
 				bar_text(cv, .Regular, 13.5, 12, baseline, n.toggle_state == 1 ? "\U000F043E" : "\U000F043D", n.toggle_state == 1 ? pal.accent : pal.muted)
 			}
-			bar_text(cv, .Regular, 13.5, 34, baseline, n.label, col)
+			if n.img != nil {bar_icon(cv, n.img, icon_x, r.y + (r.h - MENU_ICON) / 2, MENU_ICON, n.enabled ? 1 : 0.4)}
+			bar_text(cv, .Regular, 13.5, label_x, baseline, n.label, col)
 			if len(n.children) > 0 {
 				bar_text(cv, .Regular, 13.5, f32(p.w) - 22, baseline, "\U000F0142", pal.muted)
 			}
@@ -888,6 +891,23 @@ render_popup :: proc(p: ^Bar_Popup) {
 
 // ---- Tray menus -----------------------------------------------------------------------------------
 
+// Columns: check/radio marks, then icons, each only when some visible entry
+// of this (sub)menu has one; the label starts at 34 at the least.
+@(private = "file")
+menu_cols :: proc(n: ^Menu_Node) -> (icon_x, label_x: f32) {
+	toggles, icons: bool
+	for &ch in n.children {
+		if !ch.visible || ch.separator {continue}
+		toggles |= ch.toggle == "checkmark" || ch.toggle == "radio"
+		icons |= ch.img != nil
+	}
+	x := f32(12)
+	if toggles {x += 22}
+	icon_x = x
+	if icons {x += MENU_ICON + 6}
+	return icon_x, max(x, 34)
+}
+
 @(private = "file")
 menu_size :: proc(n: ^Menu_Node) -> (w, h: f32, rows: [dynamic]Menu_Row) {
 	y := MENU_PAD
@@ -898,7 +918,8 @@ menu_size :: proc(n: ^Menu_Node) -> (w, h: f32, rows: [dynamic]Menu_Row) {
 		y += rh
 		if !ch.separator {w = max(w, bar_text_width(.Regular, 13.5, ch.label))}
 	}
-	return max(w + 34 + 36, 170), y + MENU_PAD, rows
+	_, label_x := menu_cols(n)
+	return max(w + label_x + 36, 170), y + MENU_PAD, rows
 }
 
 @(private = "file")

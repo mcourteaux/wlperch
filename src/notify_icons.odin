@@ -102,12 +102,24 @@ icon_from_image_data :: proc(w, h, stride: i32, has_alpha: bool, channels: i32, 
 	return icon_intern(thumbnail(data, int(w), int(h), int(stride), int(channels)), true)
 }
 
+// An encoded image (PNG/JPEG bytes), e.g. a dbusmenu icon-data.
+icon_from_encoded :: proc(data: []u8) -> ^Notif_Icon {
+	px := decode_raster(data)
+	return px == nil ? nil : icon_intern(px, false)
+}
+
 // ---- Files --------------------------------------------------------------------
 
 @(private = "file")
 load_raster :: proc(path: string) -> []u32 {
 	data, err := os.read_entire_file(path, context.temp_allocator)
 	if err != nil {return nil}
+	return decode_raster(data)
+}
+
+@(private = "file")
+decode_raster :: proc(data: []u8) -> []u32 {
+	if len(data) == 0 {return nil}
 	w, h, n: c.int
 	px := stbi.load_from_memory(raw_data(data), c.int(len(data)), &w, &h, &n, 4)
 	if px == nil {return nil}
