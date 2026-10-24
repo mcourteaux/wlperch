@@ -459,52 +459,68 @@ box_line :: proc(line: []u32, step, n, r: int, tmp: []u32) {
 
 // Fill dst (W x H) with the blurred copy bilinearly upscaled, mixed toward
 // `tint` by `mix` (0..1), plus a faint grain against banding: frosted glass.
-blur_draw :: proc(dst: []u32, W, H: int, img: Blur_Image, tint: u32, mix: f32) {
+// (Also the [lock] image's upscale: tint black, no grain.)
+// Fixed point throughout: each source row pair is blended vertically once per
+// output row, then every output pixel is one horizontal lerp and the tint.
+blur_draw :: proc(dst: []u32, W, H: int, img: Blur_Image, tint: u32, mix: f32, grain := true) {
 	sw, sh := img.w, img.h
+	if sw <= 0 || sh <= 0 || W <= 0 || H <= 0 || len(img.px) < sw * sh || len(dst) < W * H {return}
 	k := u32(clamp(mix, 0, 1) * 256)
-	tr, tg, tb := ((tint >> 16) & 0xff) * k, ((tint >> 8) & 0xff) * k, (tint & 0xff) * k
 	ik := 256 - k
-	// Per-column source index and weight (16.16 fixed point, pixel centres).
-	xs := make([]i32, W, context.temp_allocator)
+	// The tint's share, per 8-bit lane (R|B together, G alone).
+	trb, tg := (tint & 0xff00ff) * k, (tint & 0xff00) * k
+	// Per-column source indices and weight (8-bit, pixel centres).
+	xs0 := make([]i32, W, context.temp_allocator)
+	xs1 := make([]i32, W, context.temp_allocator)
 	xw := make([]u32, W, context.temp_allocator)
 	for x in 0 ..< W {
 		f := clamp((f32(x) + 0.5) * f32(sw) / f32(W) - 0.5, 0, f32(sw - 1))
-		xs[x] = i32(f)
+		xs0[x] = i32(f)
+		xs1[x] = min(i32(f) + 1, i32(sw - 1))
 		xw[x] = u32((f - f32(i32(f))) * 256)
 	}
+	vrow := make([]u32, sw, context.temp_allocator)
+	last_y0, last_wy := -1, u32(0)
 	for y in 0 ..< H {
 		fy := clamp((f32(y) + 0.5) * f32(sh) / f32(H) - 0.5, 0, f32(sh - 1))
 		y0 := int(fy)
 		y1 := min(y0 + 1, sh - 1)
 		wy := u32((fy - f32(y0)) * 256)
-		r0, r1 := img.px[y0 * sw:], img.px[y1 * sw:]
-		row := dst[y * W:]
-		for x in 0 ..< W {
-			x0 := int(xs[x])
-			x1 := min(x0 + 1, sw - 1)
-			wx := xw[x]
-			a, b, c, d := r0[x0], r0[x1], r1[x0], r1[x1]
-			// Interpolate R|B and G together (8-bit lanes, 8-bit weights).
-			lerp :: #force_inline proc "contextless" (p, q, w: u32) -> (rb, g: u32) {
-				rb = ((p & 0xff00ff) * (256 - w) + (q & 0xff00ff) * w) >> 8 & 0xff00ff
-				g = ((p & 0xff00) * (256 - w) + (q & 0xff00) * w) >> 8 & 0xff00
-				return
-			}
-			trb, tg_ := lerp(a, b, wx)
-			brb, bg_ := lerp(c, d, wx)
-			top, bot := trb | tg_, brb | bg_
-			vrb, vg := lerp(top, bot, wy)
-			v := vrb | vg
-			// Grain: a cheap hash, triangular ±3 levels.
+		if y0 != last_y0 || wy != last_wy {
+			last_y0, last_wy = y0, wy
+			r0, r1 := img.px[y0 * sw:][:sw], img.px[y1 * sw:][:sw]
+			for i in 0 ..< sw {vrow[i] = lerp_px(r0[i], r1[i], wy)}
+		}
+		blur_row(dst[y * W:][:W], vrow, xs0, xs1, xw, y, ik, trb, tg, grain)
+	}
+}
+
+// Interpolates R|B and G together (8-bit lanes, 8-bit weight).
+@(private = "file")
+lerp_px :: #force_inline proc "contextless" (p, q, w: u32) -> u32 {
+	rb := ((p & 0xff00ff) * (256 - w) + (q & 0xff00ff) * w) >> 8 & 0xff00ff
+	g := ((p & 0xff00) * (256 - w) + (q & 0xff00) * w) >> 8 & 0xff00
+	return rb | g
+}
+
+@(private = "file")
+blur_row :: proc(row, vrow: []u32, xs0, xs1: []i32, xw: []u32, y: int, ik, trb, tg: u32, grain: bool) #no_bounds_check {
+	// Callers keep xs0/xs1 < len(vrow) and len(row) == len(xs0).
+	for x in 0 ..< len(row) {
+		v := lerp_px(vrow[xs0[x]], vrow[xs1[x]], xw[x])
+		v = ((v & 0xff00ff) * ik + trb) >> 8 & 0xff00ff | ((v & 0xff00) * ik + tg) >> 8 & 0xff00
+		if grain {
+			// A cheap hash, triangular ±3 levels.
 			h := u32(x) * 0x9E3779B1 ~ u32(y) * 0x85EBCA77
 			h ~= h >> 16
 			h *= 0x7feb352d
 			h ~= h >> 15
 			n := i32(h >> 30) + i32((h >> 28) & 3) - 3
-			rr := i32((((v >> 16) & 0xff) * ik + tr) >> 8) + n
-			gg := i32((((v >> 8) & 0xff) * ik + tg) >> 8) + n
-			bb := i32(((v & 0xff) * ik + tb) >> 8) + n
-			row[x] = 0xff000000 | u32(clamp(rr, 0, 255)) << 16 | u32(clamp(gg, 0, 255)) << 8 | u32(clamp(bb, 0, 255))
+			rr := clamp(i32((v >> 16) & 0xff) + n, 0, 255)
+			gg := clamp(i32((v >> 8) & 0xff) + n, 0, 255)
+			bb := clamp(i32(v & 0xff) + n, 0, 255)
+			v = u32(rr) << 16 | u32(gg) << 8 | u32(bb)
 		}
+		row[x] = 0xff000000 | v
 	}
 }

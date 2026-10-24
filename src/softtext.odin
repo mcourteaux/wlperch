@@ -7,6 +7,7 @@ package main
 import "core:c"
 import "core:fmt"
 import "core:os"
+import "core:sync"
 import stbtt "vendor:stb/truetype"
 
 Soft_Font :: struct {
@@ -64,11 +65,13 @@ foreign fontconfig {
 @(private = "file") fallback_by_rune: map[rune]^Soft_Font // nil: nothing has it
 @(private = "file") fallback_by_file: map[string]^Soft_Font
 @(private = "file") fc_ready: bool
+@(private = "file") fallback_mu: sync.Mutex // the lock screen draws its outputs in parallel
 
 // A system font with a real outline for r, looked up once per rune. Colour
 // (bitmap emoji) fonts are skipped: stb_truetype can't draw them.
 @(private = "file")
 system_fallback :: proc(r: rune) -> ^Soft_Font {
+	sync.guard(&fallback_mu)
 	if fb, seen := fallback_by_rune[r]; seen {return fb}
 	fallback_by_rune[r] = nil
 	if !fc_ready {

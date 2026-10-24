@@ -5,6 +5,10 @@
 // playing, battery) with connected Bluetooth devices above it; the others
 // just the clock.
 //
+// Every output's first frame is drawn (in parallel) before the lock is
+// requested and committed from the lock surface's configure event, so the
+// black sway shows between `locked` and the first commit lasts no frame.
+//
 // The lock is only ever released after PAM accepted the password. Every
 // error path exits without unlocking; the compositor then keeps the session
 // locked (in sway another `wlperch lock` can take over the abandoned lock).
@@ -57,6 +61,24 @@ Lock_Output :: struct {
 	bg_w, bg_h:    i32,
 	transform:     i32,
 	blur:          Blur_Image, // background_mode = blur: the screen before locking
+	committed:     bool, // a buffer was committed (timing log)
+	mode_w:        i32, // current mode (pixels, untransformed)
+	mode_h:        i32,
+	pre:           Prerender,
+}
+
+// The first frame, drawn before the lock is requested at the size the lock
+// surface is expected to get, and committed straight from its configure
+// event: sway shows black from `locked` until each lock surface commits.
+@(private = "file")
+Prerender :: struct {
+	w, h:   i32, // logical size it was drawn for
+	scale:  i32,
+	full:   bool, // drawn with the password field (primary output)
+	px:     []u32, // shm mapping, while drawing
+	fd:     linux.Fd,
+	ok:     bool,
+	buffer: ^wl.Buffer, // nil once used or dropped
 }
 
 @(private = "file")
@@ -116,7 +138,13 @@ Locker :: struct {
 
 	image:          []u32, // decoded [lock] image (0xAARRGGBB), or nil
 	img_w, img_h:   int,
+	lock_at:        time.Tick, // when lock() was sent (timing log)
+	rects:          map[string][2]i32, // sway's logical output sizes, by connector
 }
+
+// Milliseconds since lock() was sent, for the WLPERCH_DEBUG timing log.
+@(private = "file")
+since_lock :: proc() -> f64 {return time.duration_milliseconds(time.tick_since(lk.lock_at))}
 
 @(private = "file") lk: Locker
 @(private = "file") info: Lock_Info
@@ -177,6 +205,7 @@ registry_listener := wl.Registry_Listener {
 		if o == nil {return}
 		if o.lsurf != nil {wl.ext_session_lock_surface_v1_destroy(o.lsurf)}
 		if o.surface != nil {wl.surface_destroy(o.surface)}
+		if o.pre.buffer != nil {wl.buffer_destroy(o.pre.buffer)}
 		if wl.output_get_version(o.output) >= 3 {wl.output_release(o.output)} else {wl.output_destroy(o.output)}
 		delete(o.bg)
 		delete(o.blur.px)
@@ -191,7 +220,11 @@ output_listener := wl.Output_Listener {
 	geometry = proc "c" (data: rawptr, self: ^wl.Output, x, y, pw, ph, subpixel: i32, make, model: cstring, transform: i32) {
 		(^Lock_Output)(data).transform = transform
 	},
-	mode = proc "c" (data: rawptr, self: ^wl.Output, flags: u32, width, height, refresh: i32) {},
+	mode = proc "c" (data: rawptr, self: ^wl.Output, flags: u32, width, height, refresh: i32) {
+		if flags & wl.OUTPUT_MODE_CURRENT == 0 {return}
+		o := (^Lock_Output)(data)
+		o.mode_w, o.mode_h = width, height
+	},
 	done = proc "c" (data: rawptr, self: ^wl.Output) {
 		context = g_lock_ctx
 		o := (^Lock_Output)(data)
@@ -219,6 +252,7 @@ lock_listener := wl.Ext_Session_Lock_V1_Listener {
 		context = g_lock_ctx
 		lk.locked = true
 		log.info("session locked")
+		log.debugf("lock: timing: locked at +%.1f ms", since_lock())
 		if lk.daemon_w >= 0 {
 			b := u8(1)
 			posix.write(lk.daemon_w, &b, 1)
@@ -237,9 +271,11 @@ lock_surface_listener := wl.Ext_Session_Lock_Surface_V1_Listener {
 	configure = proc "c" (data: rawptr, self: ^wl.Ext_Session_Lock_Surface_V1, serial, width, height: u32) {
 		context = g_lock_ctx
 		o := (^Lock_Output)(data)
+		if !o.committed {log.debugf("lock: timing: configure %s %dx%d at +%.1f ms", o.conn, width, height, since_lock())}
 		wl.ext_session_lock_surface_v1_ack_configure(self, serial)
 		o.w, o.h = i32(width), i32(height)
 		o.configured = true
+		if commit_prerender(o) {return}
 		o.dirty = true
 		o.frame_pending = false // the next commit must carry a buffer of the new size
 	},
@@ -710,60 +746,71 @@ build_background :: proc(o: ^Lock_Output, bw, bh: i32) {
 		div := max(1, config.lock_blur)
 		sw, sh := max(W / div, 1), max(H / div, 1)
 		small := make([]u32, sw * sh, context.temp_allocator)
-		for y in 0 ..< sh {
+		// Image columns each small pixel covers (box-averaged, at most ~4x4 taps).
+		cx0 := make([]int, sw, context.temp_allocator)
+		cx1 := make([]int, sw, context.temp_allocator)
+		xstep := make([]int, sw, context.temp_allocator)
+		for x in 0 ..< sw {
+			ax := ox + f32(x) * f32(W) / f32(sw) / sc
+			bx := ox + f32(x + 1) * f32(W) / f32(sw) / sc
+			cx0[x], cx1[x] = int(ax), max(int(bx), int(ax) + 1)
+			xstep[x] = max(int((bx - ax) / 4), 1)
+		}
+		#no_bounds_check for y in 0 ..< sh { // indices clamped / within sw, sh
+			ay := oy + f32(y) * f32(H) / f32(sh) / sc
+			by := oy + f32(y + 1) * f32(H) / f32(sh) / sc
+			ystep := max(int((by - ay) / 4), 1)
 			for x in 0 ..< sw {
-				// Box-average the image area this small pixel covers.
-				ax := ox + f32(x) * f32(W) / f32(sw) / sc
-				ay := oy + f32(y) * f32(H) / f32(sh) / sc
-				bx := ox + f32(x + 1) * f32(W) / f32(sw) / sc
-				by := oy + f32(y + 1) * f32(H) / f32(sh) / sc
-				step := max(int((bx - ax) / 4), 1)
 				r, g, b, n: u32
-				for yy := int(ay); yy < max(int(by), int(ay) + 1); yy += step {
-					for xx := int(ax); xx < max(int(bx), int(ax) + 1); xx += step {
-						p := lk.image[clamp(yy, 0, lk.img_h - 1) * lk.img_w + clamp(xx, 0, lk.img_w - 1)]
+				for yy := int(ay); yy < max(int(by), int(ay) + 1); yy += ystep {
+					row := lk.image[clamp(yy, 0, lk.img_h - 1) * lk.img_w:]
+					for xx := cx0[x]; xx < cx1[x]; xx += xstep[x] {
+						p := row[clamp(xx, 0, lk.img_w - 1)]
 						r += (p >> 16) & 0xff; g += (p >> 8) & 0xff; b += p & 0xff; n += 1
 					}
 				}
-				small[y * sw + x] = (r / n) << 16 | (g / n) << 8 | (b / n)
+				if n == 1 {
+					small[y * sw + x] = r << 16 | g << 8 | b
+				} else {
+					inv := 1 / f32(n) // three integer divisions per pixel cost more than the sampling
+					small[y * sw + x] = u32(f32(r) * inv + 0.5) << 16 | u32(f32(g) * inv + 0.5) << 8 | u32(f32(b) * inv + 0.5)
+				}
 			}
 		}
-		k := 1 - config.lock_dim
-		for y in 0 ..< H {
-			fy := clamp((f32(y) + 0.5) * f32(sh) / f32(H) - 0.5, 0, f32(sh - 1))
-			y0 := int(fy); y1 := min(y0 + 1, sh - 1); ty := fy - f32(y0)
-			for x in 0 ..< W {
-				fx := clamp((f32(x) + 0.5) * f32(sw) / f32(W) - 0.5, 0, f32(sw - 1))
-				x0 := int(fx); x1 := min(x0 + 1, sw - 1); tx := fx - f32(x0)
-				a, b, c, d := small[y0 * sw + x0], small[y0 * sw + x1], small[y1 * sw + x0], small[y1 * sw + x1]
-				ch :: proc(a, b, c, d: u32, sh: u32, tx, ty: f32) -> f32 {
-					fa, fb := f32((a >> sh) & 0xff), f32((b >> sh) & 0xff)
-					fc, fd := f32((c >> sh) & 0xff), f32((d >> sh) & 0xff)
-					return (fa * (1 - tx) + fb * tx) * (1 - ty) + (fc * (1 - tx) + fd * tx) * ty
-				}
-				r := u32(ch(a, b, c, d, 16, tx, ty) * k)
-				g := u32(ch(a, b, c, d, 8, tx, ty) * k)
-				bb := u32(ch(a, b, c, d, 0, tx, ty) * k)
-				o.bg[y * W + x] = 0xff000000 | r << 16 | g << 8 | bb
+		// Dimmed = mixed toward black. (Unblurred: no upscale needed.)
+		if sw == W && sh == H {
+			kd := u32(clamp(1 - config.lock_dim, 0, 1) * 256)
+			for p, i in small {
+				o.bg[i] = 0xff000000 | ((p & 0xff00ff) * kd) >> 8 & 0xff00ff | ((p & 0xff00) * kd) >> 8 & 0xff00
 			}
+		} else {
+			blur_draw(o.bg, W, H, {small, sw, sh}, 0, config.lock_dim, grain = false)
 		}
 		return
 	}
 	c := theme_light ? config.lock_background_light : config.lock_background
 	cr, cg, cb := f32((c >> 16) & 0xff), f32((c >> 8) & 0xff), f32(c & 0xff)
-	for y in 0 ..< H {
+	colv := make([]f32, W, context.temp_allocator)
+	for x in 0 ..< W {
+		dx := f32(x) / f32(W) - 0.5
+		colv[x] = 1.12 - 0.45 * dx * dx // lighter behind the clock
+	}
+	#no_bounds_check for y in 0 ..< H {
 		dy := (f32(y) / f32(H) - 0.45) * 1.6
+		rowv := 0.45 * dy * dy
+		row := o.bg[y * W:]
 		for x in 0 ..< W {
-			dx := f32(x) / f32(W) - 0.5
-			v := 1.12 - 0.45 * (dx * dx + dy * dy) // lighter behind the clock
-			o.bg[y * W + x] = 0xff000000 | u32(min(cr * v, 255)) << 16 | u32(min(cg * v, 255)) << 8 | u32(min(cb * v, 255))
+			v := colv[x] - rowv
+			row[x] = 0xff000000 | u32(min(cr * v, 255)) << 16 | u32(min(cg * v, 255)) << 8 | u32(min(cb * v, 255))
 		}
 	}
 }
 
 @(private = "file")
 primary_output :: proc() -> ^Lock_Output {
-	for o in lk.outputs {if o.conn == lk.primary && o.configured {return o}}
+	// The focused output keeps the UI even before its surface is configured
+	// (what the pre-rendered frames assume).
+	for o in lk.outputs {if o.conn == lk.primary && o.surface != nil {return o}}
 	for o in lk.outputs {if o.configured {return o}}
 	return nil
 }
@@ -983,20 +1030,150 @@ render :: proc(o: ^Lock_Output) {
 	o.frame_pending = true
 	o.dirty = false
 	wl.surface_commit(o.surface)
+	if !o.committed {
+		o.committed = true
+		log.debugf("lock: timing: first frame on %s committed at +%.1f ms", o.conn, since_lock())
+	}
 }
 
 // ---- Main ----------------------------------------------------------------------------
 
+// The focused output's name; also records every active output's logical
+// size (what its lock surface will be configured to) in lk.rects.
 @(private = "file")
 focused_output_name :: proc() -> string {
 	reply, ok := sway_request(3, "") // GET_OUTPUTS
 	if !ok {return ""}
 	v, jok := jparse(reply)
 	if !jok {return ""}
+	focused := ""
 	for o in jarr(v) {
-		if jbool(jobj(o, "focused")) {return strings.clone(jstr(jobj(o, "name")))}
+		name := jstr(jobj(o, "name"))
+		if jbool(jobj(o, "focused")) && focused == "" {focused = strings.clone(name)}
+		rect := jobj(o, "rect")
+		w, h := i32(jint(jobj(rect, "width"))), i32(jint(jobj(rect, "height")))
+		if jbool(jobj(o, "active")) && w > 0 && h > 0 {lk.rects[strings.clone(name)] = {w, h}}
 	}
-	return ""
+	return focused
+}
+
+// ---- Pre-rendered first frame ----------------------------------------------------------
+
+// Draws one output's first frame into a fresh shm file. Runs on its own
+// thread (outputs in parallel): only reads shared state, and nothing else
+// runs until all are joined.
+@(private = "file")
+prerender_thread :: proc(o: ^Lock_Output) {
+	context.logger = g_lock_ctx.logger
+	defer free_all(context.temp_allocator)
+	t0 := time.tick_now()
+	p := &o.pre
+	bw, bh := p.w * p.scale, p.h * p.scale
+	build_background(o, bw, bh)
+	t1 := time.tick_now()
+	size := int(bw) * int(bh) * 4
+	fd, err := linux.memfd_create("wlperch-lock", {.CLOEXEC})
+	if err != .NONE {return}
+	p.fd = fd
+	if linux.ftruncate(fd, i64(size)) != .NONE {return}
+	m := posix.mmap(nil, uint(size), {.READ, .WRITE}, {.SHARED}, posix.FD(fd), 0)
+	if m == posix.MAP_FAILED {return}
+	p.px = ([^]u32)(m)[:bw * bh]
+	copy(p.px, o.bg)
+	cv := Cv{px = p.px, w = int(bw), h = int(bh), s = f32(p.scale)}
+	draw_ui(&cv, f32(p.w), f32(p.h), p.full)
+	posix.munmap(m, uint(size))
+	p.px = nil
+	p.ok = true
+	log.debugf("lock: pre-rendered %s %dx%d@%d: background %.1f ms, frame %.1f ms", o.conn, p.w, p.h, p.scale,
+		time.duration_milliseconds(time.tick_diff(t0, t1)), time.duration_milliseconds(time.tick_since(t1)))
+}
+
+// Before locking: every output's first frame, at the size sway reports for it
+// (else its mode / scale), drawn in parallel, with its wl_buffer ready.
+// Outputs left without one (unknown size, any failure) render on configure.
+@(private = "file")
+prerender_outputs :: proc() {
+	t0 := time.tick_now()
+	have_primary := false
+	for o in lk.outputs {if o.conn != "" && o.conn == lk.primary {have_primary = true}}
+	threads := make([dynamic]^thread.Thread, context.temp_allocator)
+	for o, i in lk.outputs {
+		p := &o.pre
+		p^ = {scale = max(o.scale, 1), fd = -1}
+		if !o.ready {continue}
+		if r, ok := lk.rects[o.conn]; ok {
+			p.w, p.h = r[0], r[1]
+		} else {
+			// No sway: wl_output's mode, which is exact for integer scales.
+			p.w, p.h = o.mode_w / p.scale, o.mode_h / p.scale
+			if o.transform & 1 != 0 {p.w, p.h = p.h, p.w}
+		}
+		when LOCK_TEST_AUTH {
+			// Test builds: WLPERCH_LOCK_TEST_PRERENDER=off | skew (a size the configure won't match)
+			switch os.get_env("WLPERCH_LOCK_TEST_PRERENDER", context.temp_allocator) {
+			case "off":  continue
+			case "skew": p.w += 1
+			}
+		}
+		if p.w <= 0 || p.h <= 0 {continue}
+		p.full = have_primary ? o.conn == lk.primary : i == 0
+		// Without init_context: the thread gets its own temp allocator.
+		if t := thread.create_and_start_with_poly_data(o, prerender_thread); t != nil {
+			append(&threads, t)
+		} else {
+			prerender_thread(o)
+		}
+	}
+	for t in threads {
+		thread.join(t)
+		thread.destroy(t)
+	}
+	n := 0
+	for o in lk.outputs {
+		p := &o.pre
+		if p.ok {
+			size := p.w * p.scale * p.h * p.scale * 4
+			pool := wl.shm_create_pool(lk.shm, i32(p.fd), size)
+			p.buffer = wl.shm_pool_create_buffer(pool, 0, p.w * p.scale, p.h * p.scale, p.w * p.scale * 4, wl.SHM_FORMAT_XRGB8888)
+			wl.shm_pool_destroy(pool)
+			wl.buffer_add_listener(p.buffer, &buffer_listener, nil)
+			n += 1
+		}
+		if p.fd >= 0 {linux.close(p.fd)}
+		p.fd = -1
+	}
+	log.debugf("lock: pre-rendered %d/%d output(s) in %.1f ms", n, len(lk.outputs), time.duration_milliseconds(time.tick_since(t0)))
+}
+
+// From the configure event: commits the pre-rendered frame when it was drawn
+// for exactly this size, scale and role. Otherwise drops it (the main loop
+// renders) and returns false.
+@(private = "file")
+commit_prerender :: proc(o: ^Lock_Output) -> bool {
+	p := &o.pre
+	if p.buffer == nil {return false}
+	buf := p.buffer
+	p.buffer = nil
+	if p.w != o.w || p.h != o.h || p.scale != max(o.scale, 1) || p.full != (o == primary_output()) {
+		log.debugf("lock: %s configured %dx%d@%d, pre-rendered %dx%d@%d: rendering again", o.conn, o.w, o.h, o.scale, p.w, p.h, p.scale)
+		wl.buffer_destroy(buf)
+		return false
+	}
+	wl.surface_set_buffer_scale(o.surface, p.scale)
+	wl.surface_attach(o.surface, buf, 0, 0)
+	wl.surface_damage_buffer(o.surface, 0, 0, p.w * p.scale, p.h * p.scale)
+	cb := wl.surface_frame(o.surface)
+	wl.callback_add_listener(cb, &frame_listener, o)
+	o.frame_pending = true
+	o.dirty = true // redrawn after this frame: the clock may have moved on, info arrives
+	wl.surface_commit(o.surface)
+	wl.display_flush(lk.display)
+	if !o.committed {
+		o.committed = true
+		log.debugf("lock: timing: first frame on %s committed at +%.1f ms (pre-rendered)", o.conn, since_lock())
+	}
+	return true
 }
 
 @(private = "file")
@@ -1119,6 +1296,7 @@ lock_main :: proc(args: []string) -> int {
 		return 1
 	}
 	if config.lock_mode == .Blur {capture_outputs()}
+	prerender_outputs()
 
 	fds: [2]posix.FD
 	posix.pipe(&fds)
@@ -1127,6 +1305,7 @@ lock_main :: proc(args: []string) -> int {
 	set_cloexec_nonblock(lk.wake_w)
 	posix.signal(.SIGPIPE, auto_cast posix.SIG_IGN)
 
+	lk.lock_at = time.tick_now()
 	lk.lock = wl.ext_session_lock_manager_v1_lock(lk.manager)
 	wl.ext_session_lock_v1_add_listener(lk.lock, &lock_listener, nil)
 	for o in lk.outputs {create_lock_surface(o)}

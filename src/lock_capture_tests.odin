@@ -96,3 +96,26 @@ test_lock_bg_mode_parse :: proc(t: ^testing.T) {
 	testing.expect(t, lock_bg_mode_parse("image", "") == .Color) // no picture set
 	testing.expect(t, lock_bg_mode_parse("nonsense", "") == .Color)
 }
+
+// blur_draw's fixed-point upscale: exact at the source pixels, a midpoint
+// between them, the tint mixed in, alpha opaque.
+@(test)
+test_blur_draw_upscale :: proc(t: ^testing.T) {
+	src := []u32{0x000000, 0xff8040, 0x204060, 0x204060}
+	img := Blur_Image{src, 2, 2}
+	dst := make([]u32, 8 * 2)
+	defer delete(dst)
+	blur_draw(dst, 8, 2, img, 0, 0, grain = false)
+	testing.expect_value(t, dst[0], 0xff000000) // left of the first centre: clamped
+	testing.expect_value(t, dst[7], 0xffff8040)
+	testing.expect_value(t, dst[8], 0xff204060)
+	// x = 3 samples 0.375 of the way from black to 0xff8040: 0xff * 96 / 256.
+	testing.expect_value(t, (dst[3] >> 16) & 0xff, 0x5f)
+	// Half toward white.
+	blur_draw(dst, 8, 2, img, 0xffffff, 0.5, grain = false)
+	testing.expect_value(t, dst[0], 0xff7f7f7f)
+	// Grain stays within ±3 levels.
+	flat := Blur_Image{[]u32{0x808080}, 1, 1}
+	blur_draw(dst, 8, 2, flat, 0, 0)
+	for p in dst {testing.expect(t, abs(i32((p >> 8) & 0xff) - 0x80) <= 3, "grain")}
+}
