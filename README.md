@@ -3,6 +3,11 @@
 ✨ **A quick-settings panel, status bar, app launcher, notification center and
 lock screen for sway, in one small native Wayland binary.**
 
+wlperch is meant to replace waybar, swaylock, rofi/wofi, dunst/mako and the
+usual pile of theme-switch and display-layout scripts with a single coherent,
+good-looking, self-contained tool: one look, one config file, one theme switch
+for all of it.
+
 ![wlperch on a sway desktop: the bar with project workspaces, media and a running timer, and notification popups in the corner](docs/screenshots/desktop.png)
 
 A quick-settings popup for Sway (and other wlroots compositors), written in
