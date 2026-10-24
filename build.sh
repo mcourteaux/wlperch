@@ -75,17 +75,20 @@ odin build tools/wlscan -out:build/wlscan -o:speed
 
 # ---- App ------------------------------------------------------------------
 MODE=${1:-release}
-FLAGS=(-collection:third_party=third_party -define:DEFAULT_TEMP_ALLOCATOR_BACKING_SIZE=262144 -extra-linker-flags:"$(pkg-config --libs freetype2)")
+LINK="$(pkg-config --libs freetype2)"
+FLAGS=(-collection:third_party=third_party -define:DEFAULT_TEMP_ALLOCATOR_BACKING_SIZE=262144)
 case $MODE in
 	debug|run) FLAGS+=(-debug -o:none) ;;
 	test)
 		# Single-threaded: several tests swap out global state (tracker, panels).
-		odin test src -out:build/wlperch-test "${FLAGS[@]}" -debug -define:ODIN_TEST_THREADS=1
+		odin test src -out:build/wlperch-test "${FLAGS[@]}" -extra-linker-flags:"$LINK" -debug -define:ODIN_TEST_THREADS=1
 		exit $?
 		;;
-	*)         FLAGS+=(-o:speed) ;;
+	# -s: no symbol table or debug info in the release binary (~0.35 MB);
+	# panics still print source locations. ./build.sh debug keeps them.
+	*)         FLAGS+=(-o:speed); LINK+=" -s" ;;
 esac
-odin build src -out:build/wlperch "${FLAGS[@]}"
+odin build src -out:build/wlperch "${FLAGS[@]}" -extra-linker-flags:"$LINK"
 odin build tools/vptr -out:build/vptr -o:speed
 echo ">> built build/wlperch"
 

@@ -1035,3 +1035,8 @@ src/setup_dim.odin       setup's dim around its window: layer surfaces with a ro
 
 Fonts in `assets/fonts` are under their own licenses (Inter: OFL, JetBrains
 Mono: OFL, Nerd Fonts Symbols: MIT). See the license files next to them.
+
+The binary embeds only the icons it uses from the Nerd Fonts symbol font
+(`SymbolsNerdFont-Subset.ttf`, ~24 KB instead of ~2.4 MB). After adding an
+icon, run `python3 tools/subset_symbols.py` (needs `pip install fonttools`);
+`./build.sh test` fails until you do.

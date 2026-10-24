@@ -6,7 +6,9 @@ import im "third_party:odin-imgui"
 FONT_INTER_REGULAR :: #load("../assets/fonts/Inter-Regular.ttf")
 FONT_INTER_SEMIBOLD :: #load("../assets/fonts/Inter-SemiBold.ttf")
 FONT_MONO :: #load("../assets/fonts/JetBrainsMono-Medium.ttf")
-FONT_SYMBOLS :: #load("../assets/fonts/SymbolsNerdFont-Regular.ttf")
+// Only the icons wlperch uses (tools/subset_symbols.py; the full font is
+// ~2.4 MB). test_symbol_font_has_icons fails when an icon is missing.
+FONT_SYMBOLS :: #load("../assets/fonts/SymbolsNerdFont-Subset.ttf")
 
 Fonts :: struct {
 	ui:   ^im.Font,
