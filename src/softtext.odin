@@ -1,9 +1,12 @@
 // Software text rendering into ARGB8888 (premultiplied) pixel buffers, for
 // surfaces that don't use the GL renderer (placeholder windows, notification
-// popups). Glyphs missing from Inter come from the symbol font.
+// popups, the bar). Glyphs missing from Inter come from the symbol font, then
+// from a system font fontconfig picks.
 package main
 
 import "core:c"
+import "core:fmt"
+import "core:os"
 import stbtt "vendor:stb/truetype"
 
 Soft_Font :: struct {
@@ -20,12 +23,103 @@ soft_fonts_init :: proc() {
 	soft_symbols.ok = bool(stbtt.InitFont(&soft_symbols.info, raw_data(FONT_SYMBOLS), 0))
 }
 
-// The font that has a glyph for r: f, else the symbol font (icons), else f.
+// The font that has a glyph for r: f, else the symbol font (icons), else a
+// system font fontconfig finds for it (window titles carry arbitrary
+// symbols, e.g. ◑), else f.
 @(private = "file")
 pick :: proc(f: ^Soft_Font, r: rune) -> ^Soft_Font {
-	if stbtt.FindGlyphIndex(&f.info, r) != 0 || !soft_symbols.ok {return f}
-	if stbtt.FindGlyphIndex(&soft_symbols.info, r) != 0 {return &soft_symbols}
+	if stbtt.FindGlyphIndex(&f.info, r) != 0 || r < 0x80 {return f}
+	if soft_symbols.ok && stbtt.FindGlyphIndex(&soft_symbols.info, r) != 0 {return &soft_symbols}
+	if fb := system_fallback(r); fb != nil {return fb}
 	return f
+}
+
+// ---- fontconfig fallback ----------------------------------------------------------------------
+
+foreign import fontconfig "system:fontconfig"
+
+@(private = "file") Fc_Pattern :: struct {}
+@(private = "file") Fc_Char_Set :: struct {}
+
+@(default_calling_convention = "c", private = "file")
+foreign fontconfig {
+	FcInit :: proc() -> b32 ---
+	FcPatternCreate :: proc() -> ^Fc_Pattern ---
+	FcPatternDestroy :: proc(p: ^Fc_Pattern) ---
+	FcCharSetCreate :: proc() -> ^Fc_Char_Set ---
+	FcCharSetDestroy :: proc(cs: ^Fc_Char_Set) ---
+	FcCharSetAddChar :: proc(cs: ^Fc_Char_Set, ucs4: u32) -> b32 ---
+	FcCharSetHasChar :: proc(cs: ^Fc_Char_Set, ucs4: u32) -> b32 ---
+	FcPatternAddCharSet :: proc(p: ^Fc_Pattern, object: cstring, cs: ^Fc_Char_Set) -> b32 ---
+	FcPatternAddBool :: proc(p: ^Fc_Pattern, object: cstring, b: b32) -> b32 ---
+	FcConfigSubstitute :: proc(config: rawptr, p: ^Fc_Pattern, kind: c.int) -> b32 ---
+	FcDefaultSubstitute :: proc(p: ^Fc_Pattern) ---
+	FcFontMatch :: proc(config: rawptr, p: ^Fc_Pattern, result: ^c.int) -> ^Fc_Pattern ---
+	FcPatternGetString :: proc(p: ^Fc_Pattern, object: cstring, n: c.int, s: ^cstring) -> c.int ---
+	FcPatternGetInteger :: proc(p: ^Fc_Pattern, object: cstring, n: c.int, i: ^c.int) -> c.int ---
+	FcPatternGetBool :: proc(p: ^Fc_Pattern, object: cstring, n: c.int, b: ^b32) -> c.int ---
+	FcPatternGetCharSet :: proc(p: ^Fc_Pattern, object: cstring, n: c.int, cs: ^^Fc_Char_Set) -> c.int ---
+}
+
+@(private = "file") fallback_by_rune: map[rune]^Soft_Font // nil: nothing has it
+@(private = "file") fallback_by_file: map[string]^Soft_Font
+@(private = "file") fc_ready: bool
+
+// A system font with a real outline for r, looked up once per rune. Colour
+// (bitmap emoji) fonts are skipped: stb_truetype can't draw them.
+@(private = "file")
+system_fallback :: proc(r: rune) -> ^Soft_Font {
+	if fb, seen := fallback_by_rune[r]; seen {return fb}
+	fallback_by_rune[r] = nil
+	if !fc_ready {
+		if !FcInit() {return nil}
+		fc_ready = true
+	}
+	pat := FcPatternCreate()
+	defer FcPatternDestroy(pat)
+	cs := FcCharSetCreate()
+	FcCharSetAddChar(cs, u32(r))
+	FcPatternAddCharSet(pat, "charset", cs)
+	FcCharSetDestroy(cs)
+	FcPatternAddBool(pat, "color", false)
+	FcConfigSubstitute(nil, pat, 0) // FcMatchPattern
+	FcDefaultSubstitute(pat)
+	res: c.int
+	m := FcFontMatch(nil, pat, &res)
+	if m == nil {return nil}
+	defer FcPatternDestroy(m)
+
+	have: ^Fc_Char_Set
+	color: b32
+	file: cstring
+	index: c.int
+	if FcPatternGetCharSet(m, "charset", 0, &have) != 0 || !FcCharSetHasChar(have, u32(r)) {return nil}
+	if FcPatternGetBool(m, "color", 0, &color) == 0 && color {return nil}
+	if FcPatternGetString(m, "file", 0, &file) != 0 {return nil}
+	FcPatternGetInteger(m, "index", 0, &index)
+
+	key := fmt.aprintf("%s#%d", file, index)
+	fb, loaded := fallback_by_file[key]
+	if loaded {
+		delete(key)
+	} else {
+		fallback_by_file[key] = nil
+		if data, err := os.read_entire_file(string(file), context.allocator); err == nil {
+			off := stbtt.GetFontOffsetForIndex(raw_data(data), index)
+			font := new(Soft_Font)
+			if off >= 0 && stbtt.InitFont(&font.info, raw_data(data), off) {
+				font.ok = true
+				fallback_by_file[key] = font
+				fb = font
+			} else {
+				free(font)
+				delete(data)
+			}
+		}
+	}
+	if fb != nil && stbtt.FindGlyphIndex(&fb.info, r) == 0 {fb = nil}
+	fallback_by_rune[r] = fb
+	return fb
 }
 
 soft_text_width :: proc(f: ^Soft_Font, px: f32, s: string) -> f32 {
