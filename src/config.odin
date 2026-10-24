@@ -49,6 +49,10 @@ Config :: struct {
 	sensors_bar_room:   string, // room shown by "wlperch status sensors"
 	memory_warn_pct:    int, // memory use (%) at which we draw attention
 
+	// [memory]
+	memory_free_warn_pct: int, // low-memory card when available memory (%) drops below this; 0 = off
+	memory_bar_warn_pct:  int, // bar memory module orange + pulsing from this use (%)
+
 	// [notifications]
 	notifications:      bool, // serve org.freedesktop.Notifications
 
@@ -136,8 +140,17 @@ command = wlsunset -l {lat} -L {lon}
 [system]
 # Length of the CPU/GPU history graphs.
 history_seconds = 120
-# Memory use (%) at which the popup and the waybar button ("wlperch status") turn red.
-memory_warn_percent = 90
+
+[memory]
+# Low-memory warning: a card at the top of the screen with the biggest memory
+# users (SIGTERM / SIGKILL buttons) once available memory (MemAvailable) drops
+# below this percentage of RAM. Shows under do not disturb. 0 = off.
+warn_free_percent = 15
+# The bar's memory module turns orange and slowly pulses from this memory use (%).
+bar_warn_percent = 75
+# Memory use (%) at which the bar's memory module, the wlperch button (also
+# "wlperch status" for waybar) and the panel's memory card turn red.
+critical_percent = 90
 
 [notifications]
 # Show desktop notifications (popups + the notification center) instead of
@@ -476,7 +489,18 @@ config_load :: proc() {
 	c.nightlight_cmd = strings.clone(get(m, defaults, "nightlight", "command"))
 
 	c.history_seconds = clamp(strconv.parse_int(get(m, defaults, "system", "history_seconds")) or_else 120, 30, 600)
-	c.memory_warn_pct = clamp(strconv.parse_int(get(m, defaults, "system", "memory_warn_percent")) or_else 90, 1, 100)
+	// critical_percent used to be [system] memory_warn_percent: still honoured.
+	crit := get(m, defaults, "memory", "critical_percent")
+	crit_set := false
+	if sec, ok := m["memory"]; ok {_, crit_set = sec["critical_percent"]}
+	if !crit_set {
+		if sec, ok := m["system"]; ok {
+			if old, has := sec["memory_warn_percent"]; has {crit = unquote(strings.trim_space(old))}
+		}
+	}
+	c.memory_warn_pct = clamp(strconv.parse_int(crit) or_else 90, 1, 100)
+	c.memory_free_warn_pct = clamp(strconv.parse_int(get(m, defaults, "memory", "warn_free_percent")) or_else 15, 0, 99)
+	c.memory_bar_warn_pct = clamp(strconv.parse_int(get(m, defaults, "memory", "bar_warn_percent")) or_else 75, 1, 100)
 
 	c.notifications = parse_bool(get(m, defaults, "notifications", "enabled"), true)
 

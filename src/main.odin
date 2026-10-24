@@ -599,6 +599,10 @@ loop_iteration :: proc() {
 		ms := int(time.duration_milliseconds(nt)) + 1
 		timeout = timeout < 0 ? ms : min(timeout, ms)
 	}
+	if mt := memwarn_timeout(); mt >= 0 {
+		ms := int(time.duration_milliseconds(mt)) + 1
+		timeout = timeout < 0 ? ms : min(timeout, ms)
+	}
 
 	bus_fd, bus_events := notifications_fd()
 	pfds := [4]posix.pollfd {
@@ -644,6 +648,7 @@ loop_iteration :: proc() {
 	tracker_tick()
 	placeholders_tick()
 	notifications_tick()
+	memwarn_tick()
 
 	if restart_requested {
 		restart_requested = false
@@ -682,7 +687,7 @@ loop_iteration :: proc() {
 			last_render_second = sec
 			render_frame()
 		}
-	} else if plat.egl_context != nil && config.release_gpu_after > 0 && time.tick_since(hidden_since) >= config.release_gpu_after && !notifications_busy() {
+	} else if plat.egl_context != nil && config.release_gpu_after > 0 && time.tick_since(hidden_since) >= config.release_gpu_after && !notifications_busy() && !memwarn_busy() {
 		// The GPU driver keeps its memory after eglTerminate; a fresh process image doesn't.
 		// (Not while notification popups are up: they'd vanish.)
 		notifications_save()

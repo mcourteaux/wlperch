@@ -47,6 +47,7 @@ read_meminfo :: proc() -> (used, total: u64, ok: bool) {
 		}
 	}
 	if total == 0 {return}
+	mem_test_override(total, &avail)
 	return total - avail, total, true
 }
 

@@ -468,6 +468,25 @@ handle_notify :: proc(m: ^Sd_Bus_Message) -> u32 {
 	return n.id
 }
 
+// An entry of wlperch's own (the low-memory warning) in the history: no
+// popup (the caller shows its own), unread.
+notif_log_local :: proc(app, summary, body: string, urgency: u8) {
+	n := new(Notification)
+	notifs.next_id += 1
+	if notifs.next_id == 0 {notifs.next_id = 1}
+	n.id = notifs.next_id
+	n.at = time.to_unix_seconds(time.now())
+	n.app = strings.clone(app)
+	n.summary = strings.clone(summary)
+	n.body = strings.clone(body)
+	n.urgency = min(urgency, 2)
+	n.value = -1
+	n.rev = notifs.version + 1
+	append(&notifs.list, n)
+	prune()
+	changed()
+}
+
 // Older than the history window, or over the size cap: dropped (open ones stay).
 @(private = "file")
 prune :: proc() {

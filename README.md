@@ -95,7 +95,7 @@ popup.
 
 - **cpu, memory, gpu:** large history graphs. CPU adds load average, per-core
   bars and uptime. Memory shows used/cache/free and swap, and turns red past
-  `memory_warn_percent`. GPU adds VRAM.
+  `[memory] critical_percent`. GPU adds VRAM.
 - **thermals:** CPU and GPU temperature history, power history (GPU through
   NVML, against its power limit; CPU package through the RAPL energy counter),
   every useful hwmon temperature (motherboard inputs that are unconnected or
@@ -301,6 +301,39 @@ settings tile, `wlperch notify dnd`, or right click on the bar bell.
 - **History file:** `~/.local/share/wlperch/notifications.bin`, binary, last
   7 days, at most 300 entries, icons stored once.
 
+### Low-memory warning
+
+When available memory (`MemAvailable`, so page cache that can be dropped
+counts as free) falls below `[memory] warn_free_percent` of RAM (15 % by
+default), a red card drops down at the top centre of the screen:
+
+- **What it shows:** available / total memory and the biggest memory users
+  by resident memory, grouped by executable like the processes module
+  (`firefox ×40`). It updates every second while it's up.
+- **SIGTERM / SIGKILL:** one of each per row. On a `×N` row they signal every
+  process of that group. SIGKILL asks first: the button turns red, *Really
+  kill?*, and a second click within 4 s sends it.
+- **Never offered:** PID 1, sway, Xwayland, your systemd user manager and
+  wlperch itself (shown greyed out as *protected* when they rank). Other
+  users' processes are left out.
+- **When it goes:** × closes it for this episode; it also goes by itself once
+  memory recovers. It comes back only after available memory has climbed 5 %
+  above the threshold and fallen below it again, so it doesn't flap.
+- **Always shown:** also under do not disturb, with no timeout. Each episode
+  is logged once in the notification history.
+- **No GPU needed:** drawn in software into shared memory like the
+  notification popups, by the daemon (which samples memory anyway).
+
+**The bar** starts drawing attention sooner: its memory module turns orange
+and slowly pulses (a ~2 s breath, at most 8 redraws a second, and only while
+orange) from `bar_warn_percent` memory use (75 %), and turns solid red at
+`critical_percent` (90 %).
+
+**Trying it out** without running out of memory: start the daemon and the
+bar with `WLPERCH_TEST_MEM_AVAILABLE=<file>`, and write the available
+percentage to pretend into that file (`echo 8 > file`). It's re-read every
+sample. This is a test hook: without the variable, `/proc/meminfo` is used.
+
 ### Lock screen
 
 `wlperch lock` locks the session with the `ext-session-lock-v1` protocol
@@ -488,7 +521,8 @@ bar {
 - **Right side:** idle inhibitor (click: keep the screen awake), power profile
   (click / right click: next / previous), backlight (scroll), battery (click:
   time left), media (⏮ · track · ⏭; click: play/pause, scroll: skip, right
-  click: main panel), project timer, sensors, memory, clock (tooltip: this
+  click: main panel), project timer, sensors, memory (orange and pulsing from
+  `[memory] bar_warn_percent`, red from `critical_percent`), clock (tooltip: this
   month), tray, notifications (right click: do not disturb) and the wlperch
   button. Modules without data (no battery, nothing playing) are hidden.
 - **Panels:** clicking the clock, memory, timer, sensors, bell or wlperch
@@ -662,7 +696,7 @@ config. Hook them up with three lines:
 
 | Module | Shows | Click |
 |---|---|---|
-| `custom/wlperch` | panel button; red with `92%` when memory use passes `memory_warn_percent` | main panel |
+| `custom/wlperch` | panel button; red with `92%` when memory use passes `[memory] critical_percent` | main panel |
 | `group/media` | ⏮ · `⏸ Artist — Title` · ⏭ while something plays (hidden otherwise); green while playing | play/pause (scroll: previous/next, right click: main panel); ⏮/⏭ skip |
 | `custom/timer` | `⏱ ACME 1:23` while a project is counted, dim otherwise | time panel |
 | `custom/sensors` | `bar_room` temperature + latest CO₂; orange >800 ppm, red >1200 ppm | sensors panel |
@@ -708,7 +742,12 @@ DP-1 = 2560x1440 pos 3440 0 transform 90
 
 [system]
 history_seconds = 120         # span the system graphs show by default (zoom out to 1 h)
-memory_warn_percent = 90      # popup + bar button turn red at this memory use
+
+[memory]
+warn_free_percent = 15        # low-memory card when available memory < this % of RAM (0 = off)
+bar_warn_percent = 75         # bar memory module orange + slowly pulsing from this use (%)
+critical_percent = 90         # bar memory module, wlperch button and memory card red from this use (%)
+                              # (was [system] memory_warn_percent, which still works)
 
 [sensors]
 dir =                         # directory with a tinytuya devices.json (see Sensors)
@@ -820,6 +859,7 @@ src/{audio,sysmon,procs,sensors,sway,weather,network,bluetooth,nightlight,displa
 src/notifications.odin   notification server (D-Bus via sd-bus), history, do not disturb
 src/notify_popup.odin    software-rendered notification popups (layer surfaces + shm)
 src/notify_icons.odin    icon lookup and decoding (theme, PNG/JPEG, SVG via librsvg)
+src/memwarn.odin         low-memory warning: threshold with hysteresis, offenders, the shm card, signals
 src/media.odin           MPRIS players (sd-bus): scan, commands, `status media`
 src/calc.odin            calculator: expression parser/evaluator, number formats, `wlperch calc`
 src/github.odin          GitHub through gh (GraphQL search like `gh status`, notifications, runs)

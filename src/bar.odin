@@ -1111,6 +1111,8 @@ theme_watch_read :: proc() {
 	for p in popups {p.dirty = true}
 }
 
+@(private = "file") pulse_at: time.Tick
+
 // Until the clock text changes.
 @(private = "file")
 clock_timeout :: proc() -> time.Duration {
@@ -1133,6 +1135,11 @@ bar_iteration :: proc() -> bool {
 		bar.last_minute = minute
 		mark_all_dirty()
 	}
+	// The memory module pulses while it's orange: a few frames a second, only then.
+	if bar_mem_pulse_timeout(pulse_at) == 0 {
+		pulse_at = time.tick_now()
+		mark_all_dirty()
+	}
 	for o in bar.outputs {
 		if o.dirty && o.configured && !o.frame_pending {render(o)}
 	}
@@ -1150,6 +1157,7 @@ bar_iteration :: proc() -> bool {
 	if bar.tip_at != {} {pick(&timeout, max(time.tick_diff(time.tick_now(), bar.tip_at), 0))}
 	pick(&timeout, bar_sway_timeout())
 	pick(&timeout, tray_timeout())
+	pick(&timeout, bar_mem_pulse_timeout(pulse_at))
 
 	sway_fd := bar_sway_fd()
 	bus_fd, bus_ev := tray_fd()

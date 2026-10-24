@@ -7,6 +7,7 @@ package main
 
 import "core:c"
 import "core:fmt"
+import "core:math"
 import "core:encoding/ini"
 import "core:os"
 import "core:strconv"
@@ -629,10 +630,21 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		GiB :: f64(1 << 30)
 		it := module_item(.Memory)
 		used, total := f64(bar_data.mem_used) / GiB, f64(bar_data.mem_total) / GiB
-		seg(&it, fmt.tprintf("%.1f", used), p.cyan)
-		seg(&it, fmt.tprintf(" / %.0f GiB", total), p.cyan, .Regular, PX * 0.82)
-		seg(&it, "  ", p.cyan)
-		seg(&it, ICON_MEM, p.cyan)
+		col, font := p.cyan, Bar_Font.Regular
+		switch bar_mem_state() {
+		case .Critical:
+			it.bg, it.bg_alpha = p.red, 1
+			col, font = p.on_accent, .Bold
+		case .Warn:
+			// A slow pulse of the background (bar_mem_pulse_timeout keeps it moving).
+			it.bg, it.bg_alpha = p.orange, 0.10 + 0.32 * bar_mem_pulse()
+			col, font = p.orange, .Bold
+		case .Normal:
+		}
+		seg(&it, fmt.tprintf("%.1f", used), col, font)
+		seg(&it, fmt.tprintf(" / %.0f GiB", total), col, .Regular, PX * 0.82)
+		seg(&it, "  ", col)
+		seg(&it, ICON_MEM, col)
 		it.tooltip = fmt.tprintf("%.0f%% used", f64(bar_data.mem_used) / f64(bar_data.mem_total) * 100)
 		add(lay, it)
 	case .Clock:
@@ -935,4 +947,51 @@ bar_scroll :: proc(it: ^Bar_Item, steps: int, horizontal: bool, output: string) 
 sway_quote :: proc(s: string) -> string {
 	out, _ := strings.replace_all(s, `"`, `\"`, context.temp_allocator)
 	return out
+}
+
+// ---- Memory module attention ---------------------------------------------------------
+
+Bar_Mem_State :: enum u8 {Normal, Warn, Critical}
+
+BAR_PULSE_PERIOD :: 2 * time.Second
+BAR_PULSE_FRAME :: 125 * time.Millisecond // 8 fps while pulsing, none otherwise
+
+bar_mem_level :: proc(used, total: u64, warn_pct, crit_pct: int) -> Bar_Mem_State {
+	if total == 0 {return .Normal}
+	pct := f64(used) / f64(total) * 100
+	switch {
+	case pct >= f64(crit_pct): return .Critical
+	case pct >= f64(warn_pct): return .Warn
+	}
+	return .Normal
+}
+
+// Caller holds bar_data.mu (or is the main thread reading a snapshot).
+bar_mem_state :: proc() -> Bar_Mem_State {
+	if .Memory not_in bar_mods_used() {return .Normal}
+	return bar_mem_level(bar_data.mem_used, bar_data.mem_total, config.memory_bar_warn_pct, config.memory_warn_pct)
+}
+
+// 0..1..0 over BAR_PULSE_PERIOD, smooth.
+bar_mem_pulse :: proc() -> f32 {
+	ns := time.tick_now()._nsec % i64(BAR_PULSE_PERIOD)
+	return 0.5 - 0.5 * math.cos(f32(ns) / f32(BAR_PULSE_PERIOD) * 2 * math.PI)
+}
+
+// Time until the next pulse frame while the memory module is orange; -1 otherwise.
+bar_mem_pulse_timeout :: proc(last: time.Tick) -> time.Duration {
+	state: Bar_Mem_State
+	{
+		sync.guard(&bar_data.mu)
+		state = bar_mem_state()
+	}
+	if state != .Warn {return -1}
+	return max(BAR_PULSE_FRAME - time.tick_since(last), 0)
+}
+
+@(private = "file")
+bar_mods_used :: proc() -> bit_set[Bar_Mod] {
+	set: bit_set[Bar_Mod]
+	for side in bar_cfg.sides {for m in side {set += {m}}}
+	return set
 }

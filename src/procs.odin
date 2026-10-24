@@ -57,7 +57,7 @@ procs_mark_active :: proc() {
 	}
 }
 
-@(private = "file")
+// Grouping name: the executable's (also used by the low-memory warning).
 exe_name :: proc(pid: string, comm: string) -> string {
 	link := strings.concatenate({"/proc/", pid, "/exe"}, context.temp_allocator)
 	if target, err := os.read_link(link, context.temp_allocator); err == nil && len(target) > 0 {
