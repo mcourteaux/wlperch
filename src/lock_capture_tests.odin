@@ -119,3 +119,71 @@ test_blur_draw_upscale :: proc(t: ^testing.T) {
 	blur_draw(dst, 8, 2, flat, 0, 0)
 	for p in dst {testing.expect(t, abs(i32((p >> 8) & 0xff) - 0x80) <= 3, "grain")}
 }
+
+// The animation's fast upscale matches blur_draw (no grain) within two levels.
+@(test)
+test_blur_draw_fast_matches :: proc(t: ^testing.T) {
+	sw, sh := 37, 23
+	src := make([]u32, sw * sh)
+	defer delete(src)
+	for &p, i in src {p = u32(i * 2654435761) & 0xffffff}
+	W, H := 301, 157 // not a multiple of 8: the scalar tail too
+	a := make([]u32, W * H)
+	b := make([]u32, W * H)
+	defer {delete(a); delete(b)}
+	blur_draw(a, W, H, {src, sw, sh}, 0x14161b, 0.32, grain = false)
+	blur_draw_fast(b, W, H, {src, sw, sh}, 0x14161b, 0.32)
+	worst: i32
+	for i in 0 ..< W * H {
+		testing.expect(t, b[i] >> 24 == 0xff)
+		for sh in ([]u32{0, 8, 16}) {worst = max(worst, abs(i32((a[i] >> sh) & 0xff) - i32((b[i] >> sh) & 0xff)))}
+	}
+	testing.expectf(t, worst <= 2, "fast upscale off by %d", worst)
+}
+
+// Animated: the incremental blur (many small passes, halvings) ends where
+// the static copy is, the brightness doesn't drift, and the start is
+// much sharper.
+@(test)
+test_lock_blur_anim_converges :: proc(t: ^testing.T) {
+	W, H := 960, 540
+	px := text_like(W, H)
+	defer delete(px)
+	// Big shapes too, so the blur width matters.
+	for y in 0 ..< H {for x in 0 ..< W {if (x / 160 + y / 120) % 2 == 0 && y % 24 >= 14 {px[y * W + x] = 0x3060c0}}}
+	for strength in ([]int{0, 60, 100}) {
+		ct := Capture_Target{w = i32(W), h = i32(H), stride = i32(W * 4), format = wl.SHM_FORMAT_XRGB8888, scale = 1, strength = strength, mem = raw_data(px), animate = true, anim_from = 0}
+		static := lock_reduce_and_blur(&ct)
+		defer delete(static.px)
+		testing.expect(t, ct.anim.img.px != nil && ct.anim.D >= 2 && ct.anim.D <= max(ct.anim.D_static, 2))
+		a := blur_anim_init(ct.anim)
+		defer blur_anim_free(&a)
+
+		up_static := make([]u32, W * H)
+		up_anim := make([]u32, W * H)
+		defer {delete(up_static); delete(up_anim)}
+		blur_draw(up_static, W, H, static, 0, 0, grain = false)
+		// Sharp at the start: far from the static picture.
+		blur_draw(up_anim, W, H, blur_anim_image(&a), 0, 0, grain = false)
+		start_diff, _, _ := img_diff(up_static, up_anim)
+		// ~1.5 s at 60 fps.
+		for f in 1 ..= 90 {blur_anim_step(&a, blur_anim_sigma_at(&a, f64(f) / 90))}
+		blur_draw(up_anim, W, H, blur_anim_image(&a), 0, 0, grain = false)
+		mean, worst, drift := img_diff(up_static, up_anim)
+		testing.expectf(t, mean < 2 && worst <= 16 && abs(drift) < 0.5, "strength %d: mean %.2f, worst %d, drift %.2f", strength, mean, worst, drift)
+		testing.expectf(t, start_diff > 4 * mean, "strength %d: the start isn't sharper (%.2f vs %.2f)", strength, start_diff, mean)
+	}
+
+	img_diff :: proc(a, b: []u32) -> (mean: f64, worst: i32, drift: f64) {
+		sum, sd: i64
+		for i in 0 ..< len(a) {
+			for sh in ([]u32{0, 8, 16}) {
+				d := i32((b[i] >> sh) & 0xff) - i32((a[i] >> sh) & 0xff)
+				sum += i64(abs(d)); sd += i64(d)
+				worst = max(worst, abs(d))
+			}
+		}
+		n := f64(len(a) * 3)
+		return f64(sum) / n, worst, f64(sd) / n
+	}
+}

@@ -9,6 +9,11 @@
 // requested and committed from the lock surface's configure event, so the
 // black sway shows between `locked` and the first commit lasts no frame.
 //
+// It draws only when something changes (the minute, a key, info, the
+// theme), except while the frosted background's blur grows
+// ([lock] blur_animate_ms): then every frame callback brings a new frame
+// until the static picture is reached.
+//
 // The lock is only ever released after PAM accepted the password. Every
 // error path exits without unlocking; the compositor then keeps the session
 // locked (in sway another `wlperch lock` can take over the abandoned lock).
@@ -65,6 +70,23 @@ Lock_Output :: struct {
 	mode_w:        i32, // current mode (pixels, untransformed)
 	mode_h:        i32,
 	pre:           Prerender,
+	// [lock] blur_animate_ms: the growing blur (see lock_blur_anim.odin)
+	anim_src:      Blur_Anim_Source, // the start, until the animation takes it
+	anim:          ^Blur_Anim, // while animating
+	anim_bufs:     [3]Anim_Buffer, // reused frame buffers while animating
+	anim_last:     time.Tick, // when the last animation frame was drawn
+	anim_frames:   int, // timing log
+	anim_ms:       f64,
+}
+
+// A full-size shm buffer kept mapped while the blur animates (a new one per
+// frame would fault in ~20 MB of fresh pages each time).
+@(private = "file")
+Anim_Buffer :: struct {
+	buffer: ^wl.Buffer,
+	px:     []u32,
+	w, h:   i32,
+	busy:   bool, // attached, not released yet
 }
 
 // The first frame, drawn before the lock is requested at the size the lock
@@ -140,6 +162,8 @@ Locker :: struct {
 	img_w, img_h:   int,
 	lock_at:        time.Tick, // when lock() was sent (timing log)
 	rects:          map[string][2]i32, // sway's logical output sizes, by connector
+	animate:        bool, // grow the blur ([lock] blur_animate_ms, not with -f)
+	anim_start:     time.Tick,
 }
 
 // Milliseconds since lock() was sent, for the WLPERCH_DEBUG timing log.
@@ -206,6 +230,7 @@ registry_listener := wl.Registry_Listener {
 		if o.lsurf != nil {wl.ext_session_lock_surface_v1_destroy(o.lsurf)}
 		if o.surface != nil {wl.surface_destroy(o.surface)}
 		if o.pre.buffer != nil {wl.buffer_destroy(o.pre.buffer)}
+		anim_end(o)
 		if wl.output_get_version(o.output) >= 3 {wl.output_release(o.output)} else {wl.output_destroy(o.output)}
 		delete(o.bg)
 		delete(o.blur.px)
@@ -293,6 +318,11 @@ frame_listener := wl.Callback_Listener {
 @(private = "file")
 buffer_listener := wl.Buffer_Listener {
 	release = proc "c" (data: rawptr, self: ^wl.Buffer) {wl.buffer_destroy(self)},
+}
+
+@(private = "file")
+anim_buffer_listener := wl.Buffer_Listener {
+	release = proc "c" (data: rawptr, self: ^wl.Buffer) {(^Anim_Buffer)(data).busy = false},
 }
 
 @(private = "file")
@@ -720,6 +750,14 @@ text_c :: proc(cv: ^Cv, f: ^Soft_Font, size, cx, baseline: f32, s: string, rgb: 
 	text(cv, f, size, cx - text_w(cv, f, size, s) / 2, baseline, s, rgb, alpha)
 }
 
+// The frosted screenshot's tint toward the theme's background colour. ~1/3
+// at the default dim: the screen shows through, the clock stays readable.
+// (0.3 + dim made a dark desktop look like a plain background.)
+@(private = "file")
+frost_tint :: proc() -> (tint: u32, mix: f32) {
+	return theme_light ? config.lock_background_light : config.lock_background, clamp(0.15 + config.lock_dim * 0.5, 0, 0.9)
+}
+
 // Solid colour with a soft vignette, the configured picture (cover-fit,
 // optionally blurred by sampling a smaller copy) darkened by dim, or the
 // frosted screenshot tinted toward the theme's background colour.
@@ -730,11 +768,8 @@ build_background :: proc(o: ^Lock_Output, bw, bh: i32) {
 	o.bg_w, o.bg_h = bw, bh
 	W, H := int(bw), int(bh)
 	if o.blur.px != nil {
-		tint := theme_light ? config.lock_background_light : config.lock_background
-		// ~1/3 tint at the default dim: the screen shows through, the clock
-		// stays readable. (0.3 + dim made a dark desktop look like a plain
-		// background.)
-		blur_draw(o.bg, W, H, o.blur, tint, clamp(0.15 + config.lock_dim * 0.5, 0, 0.9))
+		tint, mix := frost_tint()
+		blur_draw(o.bg, W, H, o.blur, tint, mix)
 		return
 	}
 	if lk.image != nil {
@@ -1036,6 +1071,130 @@ render :: proc(o: ^Lock_Output) {
 	}
 }
 
+// ---- Growing blur ([lock] blur_animate_ms) -------------------------------------------
+
+// Takes over the capture's unblurred copy (blurred to the start strength).
+// Also runs on the pre-render threads.
+@(private = "file")
+anim_begin :: proc(o: ^Lock_Output) {
+	if o.anim != nil || o.anim_src.img.px == nil {return}
+	o.anim = new(Blur_Anim)
+	o.anim^ = blur_anim_init(o.anim_src)
+	o.anim_src = {}
+}
+
+// The animation's current picture, upscaled and tinted (no grain).
+@(private = "file")
+anim_background :: proc(o: ^Lock_Output, px: []u32, W, H: int) {
+	tint, mix := frost_tint()
+	blur_draw_fast(px, W, H, blur_anim_image(o.anim), tint, mix)
+}
+
+// Frees everything the animation held; afterwards the output is drawn by
+// render() like any other.
+@(private = "file")
+anim_end :: proc(o: ^Lock_Output) {
+	if o.anim != nil {
+		if o.anim_frames > 0 {
+			nbuf := 0
+			for b in o.anim_bufs {if b.buffer != nil {nbuf += 1}}
+			log.debugf("lock: blur animation on %s: %d frames, %.1f fps, %.1f ms of work per frame, %d buffers", o.conn, o.anim_frames,
+				f64(o.anim_frames) * 1000 / max(time.duration_milliseconds(time.tick_since(lk.anim_start)), 1), o.anim_ms / f64(o.anim_frames), nbuf)
+		}
+		blur_anim_free(o.anim)
+		free(o.anim)
+		o.anim = nil
+	}
+	delete(o.anim_src.img.px)
+	o.anim_src = {}
+	for &b in o.anim_bufs {
+		if b.buffer != nil {wl.buffer_destroy(b.buffer)} // the compositor keeps its own mapping
+		if b.px != nil {posix.munmap(raw_data(b.px), uint(len(b.px) * 4))}
+		b = {}
+	}
+}
+
+// A free frame buffer of this size, (re)created as needed; nil when all are
+// still held by the compositor.
+@(private = "file")
+anim_buffer :: proc(o: ^Lock_Output, bw, bh: i32) -> ^Anim_Buffer {
+	pick: ^Anim_Buffer
+	for &b in o.anim_bufs {
+		if b.busy {continue}
+		if b.buffer != nil && b.w == bw && b.h == bh {return &b}
+		if pick == nil || pick.buffer != nil {pick = &b} // prefer an empty slot
+	}
+	if pick == nil {return nil}
+	if pick.buffer != nil {
+		wl.buffer_destroy(pick.buffer)
+		posix.munmap(raw_data(pick.px), uint(len(pick.px) * 4))
+		pick^ = {}
+	}
+	size := int(bw) * int(bh) * 4
+	fd, err := linux.memfd_create("wlperch-lock", {.CLOEXEC})
+	if err != .NONE {return nil}
+	defer linux.close(fd)
+	if linux.ftruncate(fd, i64(size)) != .NONE {return nil}
+	m := posix.mmap(nil, uint(size), {.READ, .WRITE}, {.SHARED}, posix.FD(fd), 0)
+	if m == posix.MAP_FAILED {return nil}
+	pool := wl.shm_create_pool(lk.shm, i32(fd), i32(size))
+	pick.buffer = wl.shm_pool_create_buffer(pool, 0, bw, bh, bw * 4, wl.SHM_FORMAT_XRGB8888)
+	wl.shm_pool_destroy(pool)
+	wl.buffer_add_listener(pick.buffer, &anim_buffer_listener, pick)
+	pick.px = ([^]u32)(m)[:int(bw) * int(bh)]
+	pick.w, pick.h = bw, bh
+	return pick
+}
+
+@(private = "file") ANIM_FRAME_MIN :: 14 * time.Millisecond // ~60 fps at most, with a little slack
+
+// One animation frame, paced by frame callbacks: blur a bit more, draw, and
+// commit. Past the duration the output gets the static picture (exactly
+// what the animation converged to, with its grain) and goes back to
+// event-driven redraws.
+@(private = "file")
+render_anim :: proc(o: ^Lock_Output) {
+	anim_begin(o)
+	p := time.duration_milliseconds(time.tick_since(lk.anim_start)) / f64(max(config.lock_blur_animate_ms, 1))
+	s := max(o.scale, 1)
+	bw, bh := o.w * s, o.h * s
+	if p >= 1 || bw <= 0 || bh <= 0 {
+		o.bg_w = 0 // the static background wasn't built yet
+		render(o)
+		anim_end(o) // after the commit that replaced the last frame's buffer
+		return
+	}
+	t0 := time.tick_now()
+	if o.anim_frames > 0 && time.tick_diff(o.anim_last, t0) < ANIM_FRAME_MIN {
+		// A fast monitor: wait for the next frame callback without drawing
+		// (an empty commit), so it stays near 60 fps instead of 144.
+		cb := wl.surface_frame(o.surface)
+		wl.callback_add_listener(cb, &frame_listener, o)
+		o.frame_pending = true
+		wl.surface_commit(o.surface)
+		return
+	}
+	o.anim_last = t0
+	blur_anim_step(o.anim, blur_anim_sigma_at(o.anim, p))
+	b := anim_buffer(o, bw, bh)
+	if b == nil {return} // retried when a buffer comes back
+	anim_background(o, b.px, int(bw), int(bh))
+	cv := Cv{px = b.px, w = int(bw), h = int(bh), s = f32(s)}
+	draw_ui(&cv, f32(o.w), f32(o.h), o == primary_output())
+	b.busy = true
+	wl.surface_set_buffer_scale(o.surface, s)
+	wl.surface_attach(o.surface, b.buffer, 0, 0)
+	wl.surface_damage_buffer(o.surface, 0, 0, bw, bh)
+	cb := wl.surface_frame(o.surface)
+	wl.callback_add_listener(cb, &frame_listener, o)
+	o.frame_pending = true
+	o.dirty = false
+	wl.surface_commit(o.surface)
+	o.committed = true
+	o.anim_frames += 1
+	o.anim_ms += time.duration_milliseconds(time.tick_since(t0))
+}
+
 // ---- Main ----------------------------------------------------------------------------
 
 // The focused output's name; also records every active output's logical
@@ -1069,7 +1228,8 @@ prerender_thread :: proc(o: ^Lock_Output) {
 	t0 := time.tick_now()
 	p := &o.pre
 	bw, bh := p.w * p.scale, p.h * p.scale
-	build_background(o, bw, bh)
+	// Animated: the static background is only needed (and built) at the end.
+	if o.anim_src.img.px != nil {anim_begin(o)} else {build_background(o, bw, bh)}
 	t1 := time.tick_now()
 	size := int(bw) * int(bh) * 4
 	fd, err := linux.memfd_create("wlperch-lock", {.CLOEXEC})
@@ -1079,7 +1239,7 @@ prerender_thread :: proc(o: ^Lock_Output) {
 	m := posix.mmap(nil, uint(size), {.READ, .WRITE}, {.SHARED}, posix.FD(fd), 0)
 	if m == posix.MAP_FAILED {return}
 	p.px = ([^]u32)(m)[:bw * bh]
-	copy(p.px, o.bg)
+	if o.anim != nil {anim_background(o, p.px, int(bw), int(bh))} else {copy(p.px, o.bg)}
 	cv := Cv{px = p.px, w = int(bw), h = int(bh), s = f32(p.scale)}
 	draw_ui(&cv, f32(p.w), f32(p.h), p.full)
 	posix.munmap(m, uint(size))
@@ -1204,10 +1364,13 @@ capture_outputs :: proc() {
 	targets := make([]^Capture_Target, len(lk.outputs), context.temp_allocator)
 	for o, i in lk.outputs {
 		targets[i] = new(Capture_Target, context.temp_allocator)
-		targets[i]^ = {output = o.output, transform = o.transform, scale = o.scale}
+		targets[i]^ = {output = o.output, transform = o.transform, scale = o.scale, animate = lk.animate, anim_from = config.lock_blur_animate_from}
 	}
 	n := capture_and_blur(lk.display, lk.shm, targets, config.lock_screenshot_blur)
-	for o, i in lk.outputs {o.blur = targets[i].result}
+	for o, i in lk.outputs {
+		o.blur = targets[i].result
+		if o.blur.px != nil {o.anim_src = targets[i].anim} else {delete(targets[i].anim.img.px)}
+	}
 	log.infof("lock: screen blurred on %d/%d output(s) in %.1f ms", n, len(targets), time.duration_milliseconds(time.tick_since(t0)))
 	free_all(context.temp_allocator)
 }
@@ -1295,6 +1458,10 @@ lock_main :: proc(args: []string) -> int {
 		fmt.eprintln("wlperch lock: the compositor doesn't support ext-session-lock-v1")
 		return 1
 	}
+	// The growing blur shows the screen almost sharp for a moment: only when
+	// someone locks by hand. Never with -f (swayidle's timeout and
+	// before-sleep), so a machine never wakes up to a readable screen.
+	lk.animate = config.lock_mode == .Blur && config.lock_blur_animate_ms > 0 && !daemonize
 	if config.lock_mode == .Blur {capture_outputs()}
 	prerender_outputs()
 
@@ -1306,6 +1473,7 @@ lock_main :: proc(args: []string) -> int {
 	posix.signal(.SIGPIPE, auto_cast posix.SIG_IGN)
 
 	lk.lock_at = time.tick_now()
+	lk.anim_start = lk.lock_at
 	lk.lock = wl.ext_session_lock_manager_v1_lock(lk.manager)
 	wl.ext_session_lock_v1_add_listener(lk.lock, &lock_listener, nil)
 	for o in lk.outputs {create_lock_surface(o)}
@@ -1414,7 +1582,12 @@ lock_main :: proc(args: []string) -> int {
 			}
 		}
 		for o in lk.outputs {
-			if o.dirty && o.configured && !o.frame_pending && o.surface != nil {render(o)}
+			if !o.configured || o.frame_pending || o.surface == nil {continue}
+			if o.anim != nil || o.anim_src.img.px != nil {
+				render_anim(o) // every frame until it's done, then render()
+			} else if o.dirty {
+				render(o)
+			}
 		}
 		free_all(context.temp_allocator)
 	}

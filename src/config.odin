@@ -67,6 +67,8 @@ Config :: struct {
 	lock_image:         string,
 	lock_mode:          Lock_Bg_Mode,
 	lock_screenshot_blur: int, // 0..100, see LOCK_BLUR_MIN_SIGMA
+	lock_blur_animate_ms:   int, // 0 = off; see lock_blur_anim.odin
+	lock_blur_animate_from: int, // % of the final blur the animation starts at
 	lock_blur:          int,
 	lock_dim:           f32,
 	lock_notifications: bool,
@@ -195,6 +197,13 @@ dim = 0.35
 # How strongly the screenshot is blurred with background_mode = blur
 # (0..100). Even 0 blurs by a ~20 px radius so no text stays readable.
 screenshot_blur = 60
+# background_mode = blur only: grow the blur over this many milliseconds
+# after locking (0 = off, at most 3000), starting at blur_animate_from
+# percent of it (0 = sharp). Opt-in: until it has grown, the screen as it
+# was stays readable for a moment. Never animates when locked with -f
+# (swayidle's timeout and before-sleep).
+blur_animate_ms = 0
+blur_animate_from = 10
 # Show the unread notification count (and which apps) / the playing track /
 # connected Bluetooth devices with their battery (needs the daemon).
 # Notification text is never shown on the lock screen.
@@ -514,6 +523,8 @@ config_load :: proc() {
 	c.lock_image = expand_home(get(m, defaults, "lock", "image"))
 	c.lock_mode = lock_bg_mode_parse(get(m, defaults, "lock", "background_mode"), c.lock_image)
 	c.lock_screenshot_blur = parse_int_lim(get(m, defaults, "lock", "screenshot_blur"), LIM_LOCK_SCREENSHOT_BLUR)
+	c.lock_blur_animate_ms = parse_int_lim(get(m, defaults, "lock", "blur_animate_ms"), LIM_LOCK_BLUR_ANIMATE_MS)
+	c.lock_blur_animate_from = parse_int_lim(get(m, defaults, "lock", "blur_animate_from"), LIM_LOCK_BLUR_ANIMATE_FROM)
 	c.lock_blur = parse_int_lim(get(m, defaults, "lock", "blur"), LIM_LOCK_BLUR)
 	c.lock_dim = f32(parse_float_lim(get(m, defaults, "lock", "dim"), LIM_LOCK_DIM))
 	c.lock_notifications = parse_bool(get(m, defaults, "lock", "show_notifications"), true)
@@ -669,6 +680,8 @@ LIM_MEM_FREE_WARN :: Int_Limits{0, 99, 15}
 LIM_MEM_BAR_WARN :: Int_Limits{1, 100, 75}
 LIM_GITHUB_REFRESH :: Int_Limits{1, 1440, 5}
 LIM_LOCK_SCREENSHOT_BLUR :: Int_Limits{0, 100, 60}
+LIM_LOCK_BLUR_ANIMATE_MS :: Int_Limits{0, 3000, 0}
+LIM_LOCK_BLUR_ANIMATE_FROM :: Int_Limits{0, 100, 10}
 LIM_LOCK_BLUR :: Int_Limits{0, 64, 0}
 LIM_LOCK_DIM :: Float_Limits{0, 1, 0.35}
 LIM_IDLE_SECONDS :: Int_Limits{5, 86400, 300}

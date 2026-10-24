@@ -18,6 +18,7 @@
 // timeout and outputs without a copy get the solid colour.
 package main
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:log"
 import "core:math"
@@ -66,6 +67,9 @@ Capture_Target :: struct {
 	frame:     ^wl.Ext_Image_Copy_Capture_Frame_V1,
 	wframe:    ^wl.Zwlr_Screencopy_Frame_V1,
 	strength:  int,
+	animate:   bool, // [lock] blur_animate_ms: also make the animation's start
+	anim_from: int, // [lock] blur_animate_from: % of the blur it starts at
+	anim:      Blur_Anim_Source,
 }
 
 Capture_Globals :: struct {
@@ -351,7 +355,8 @@ to_rgb :: #force_inline proc "contextless" (p: u32, format: u32) -> u32 {
 	return p & 0xffffff
 }
 
-// Shrink, orient and blur one captured frame (its shm mapping).
+// Shrink, orient and blur one captured frame (its shm mapping). With
+// t.animate also a less reduced, unblurred copy for the animation.
 lock_reduce_and_blur :: proc(t: ^Capture_Target) -> Blur_Image {
 	W, H := int(t.w), int(t.h)
 	if t.mem == nil || W <= 0 || H <= 0 {return {}}
@@ -359,6 +364,45 @@ lock_reduce_and_blur :: proc(t: ^Capture_Target) -> Blur_Image {
 	// Shrink so the remaining blur is ~4 small pixels: cheap passes, and the
 	// box downscale already averages away every detail below D px.
 	D := clamp(int(sigma / 4), 1, min(W, H))
+	out := reduce_orient(t, D) // the result: kept until the lock exits
+	lw, lh := out.w, out.h
+
+	// 3. Three box passes per axis ≈ Gaussian of the remaining sigma.
+	ss := sigma / f32(D)
+	r := max(1, int(math.round((math.sqrt(4 * ss * ss + 1) - 1) / 2)))
+	if t.animate {
+		// The static copy's effective sigma; the animation starts at a share of it.
+		s_static := math.sqrt(blur_anim_shown_var(D, f64(r * (r + 1))))
+		s_from := s_static * f64(clamp(t.anim_from, 0, 100)) / 100
+		Dw := clamp(int(s_from / 2), 2, max(D, 2))
+		Dw = min(Dw, W, H)
+		t.anim = {img = reduce_orient(t, Dw), D = Dw, D_static = D, s_from = s_from, s_static = s_static}
+	}
+	tmp := make([]u32, max(lw, lh), context.temp_allocator)
+	for _ in 0 ..< 3 {
+		for y in 0 ..< lh {box_line(out.px[y * lw:], 1, lw, r, tmp)}
+		for x in 0 ..< lw {box_line(out.px[x:], lw, lh, r, tmp)}
+	}
+	if t.animate {
+		// box_line's rounding down darkens busy areas by a few levels; the
+		// animation (which rounds) eases toward that so its end matches.
+		m0, m1 := channel_means(t.anim.img), channel_means(out)
+		t.anim.bias = m1 - m0
+	}
+	return out
+}
+
+@(private = "file")
+channel_means :: proc(img: Blur_Image) -> (m: [3]f64) {
+	for p in img.px {m += {f64((p >> 16) & 0xff), f64((p >> 8) & 0xff), f64(p & 0xff)}}
+	return m / f64(max(len(img.px), 1))
+}
+
+// Steps 1 and 2: a D x D box average straight from shm (one sequential
+// read), turned into the logical orientation.
+@(private = "file")
+reduce_orient :: proc(t: ^Capture_Target, D: int) -> Blur_Image {
+	W, H := int(t.w), int(t.h)
 	nw, nh := W / D, H / D
 
 	// 1. D x D box average, straight from shm (one sequential read).
@@ -409,7 +453,7 @@ lock_reduce_and_blur :: proc(t: ^Capture_Target) -> Blur_Image {
 	// 2. Into the logical orientation (buffer -> output, as wlr_box_transform).
 	lw, lh := nw, nh
 	if t.transform & 1 != 0 {lw, lh = nh, nw}
-	out := make([]u32, lw * lh) // the result: kept until the lock exits
+	out := make([]u32, lw * lh)
 	for ny in 0 ..< nh {
 		for nx in 0 ..< nw {
 			lx, ly: int
@@ -425,15 +469,6 @@ lock_reduce_and_blur :: proc(t: ^Capture_Target) -> Blur_Image {
 			}
 			out[ly * lw + lx] = small[ny * nw + nx]
 		}
-	}
-
-	// 3. Three box passes per axis ≈ Gaussian of the remaining sigma.
-	ss := sigma / f32(D)
-	r := max(1, int(math.round((math.sqrt(4 * ss * ss + 1) - 1) / 2)))
-	tmp := make([]u32, max(lw, lh), context.temp_allocator)
-	for _ in 0 ..< 3 {
-		for y in 0 ..< lh {box_line(out[y * lw:], 1, lw, r, tmp)}
-		for x in 0 ..< lw {box_line(out[x:], lw, lh, r, tmp)}
 	}
 	return {out, lw, lh}
 }
@@ -492,6 +527,62 @@ blur_draw :: proc(dst: []u32, W, H: int, img: Blur_Image, tint: u32, mix: f32, g
 			for i in 0 ..< sw {vrow[i] = lerp_px(r0[i], r1[i], wy)}
 		}
 		blur_row(dst[y * W:][:W], vrow, xs0, xs1, xw, y, ik, trb, tg, grain)
+	}
+}
+
+// blur_draw without the grain, about five times faster, for the animation's
+// frames: each source row is upscaled horizontally and tinted once (two
+// kept), then every output row is a vertical lerp of two contiguous rows,
+// eight pixels at a time. Within ±2 of blur_draw(grain = false).
+blur_draw_fast :: proc(dst: []u32, W, H: int, img: Blur_Image, tint: u32, mix: f32) {
+	sw, sh := img.w, img.h
+	if sw <= 0 || sh <= 0 || W <= 0 || H <= 0 || len(img.px) < sw * sh || len(dst) < W * H {return}
+	k := u32(clamp(mix, 0, 1) * 256)
+	ik := 256 - k
+	trb, tg := (tint & 0xff00ff) * k, (tint & 0xff00) * k
+	xs0 := make([]i32, W, context.temp_allocator)
+	xs1 := make([]i32, W, context.temp_allocator)
+	xw := make([]u32, W, context.temp_allocator)
+	for x in 0 ..< W {
+		f := clamp((f32(x) + 0.5) * f32(sw) / f32(W) - 0.5, 0, f32(sw - 1))
+		xs0[x] = i32(f)
+		xs1[x] = min(i32(f) + 1, i32(sw - 1))
+		xw[x] = u32((f - f32(i32(f))) * 256)
+	}
+	rows := [2][]u32{make([]u32, W, context.temp_allocator), make([]u32, W, context.temp_allocator)}
+	have := [2]int{-1, -1}
+	upscaled :: proc(rows: ^[2][]u32, have: ^[2]int, sy: int, img: Blur_Image, xs0, xs1: []i32, xw: []u32, ik, trb, tg: u32) -> []u32 {
+		if have[0] == sy {return rows[0]}
+		if have[1] == sy {return rows[1]}
+		s := have[0] < have[1] ? 0 : 1 // rows only move down: drop the upper one
+		out, src := rows[s], img.px[sy * img.w:][:img.w]
+		#no_bounds_check for x in 0 ..< len(out) {
+			v := lerp_px(src[xs0[x]], src[xs1[x]], xw[x])
+			out[x] = ((v & 0xff00ff) * ik + trb) >> 8 & 0xff00ff | ((v & 0xff00) * ik + tg) >> 8 & 0xff00
+		}
+		have[s] = sy
+		return out
+	}
+	V :: #simd[8]u32
+	mrb, mg, opaque, eight := V(0xff00ff), V(0xff00), V(0xff000000), V(8)
+	for y in 0 ..< H {
+		fy := clamp((f32(y) + 0.5) * f32(sh) / f32(H) - 0.5, 0, f32(sh - 1))
+		y0 := int(fy)
+		y1 := min(y0 + 1, sh - 1)
+		wy := u32((fy - f32(y0)) * 256)
+		a := upscaled(&rows, &have, y0, img, xs0, xs1, xw, ik, trb, tg)
+		b := upscaled(&rows, &have, y1, img, xs0, xs1, xw, ik, trb, tg)
+		row := dst[y * W:][:W]
+		w0, w1 := V(256 - wy), V(wy)
+		x := 0
+		#no_bounds_check for ; x + 8 <= W; x += 8 {
+			p := intrinsics.unaligned_load((^V)(&a[x]))
+			q := intrinsics.unaligned_load((^V)(&b[x]))
+			rb := intrinsics.simd_shr((p & mrb) * w0 + (q & mrb) * w1, eight) & mrb
+			g := intrinsics.simd_shr((p & mg) * w0 + (q & mg) * w1, eight) & mg
+			intrinsics.unaligned_store((^V)(&row[x]), rb | g | opaque)
+		}
+		for ; x < W; x += 1 {row[x] = 0xff000000 | lerp_px(a[x], b[x], wy)}
 	}
 }
 

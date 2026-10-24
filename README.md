@@ -373,6 +373,16 @@ locked, which is what swayidle's `before-sleep` needs.
     compositor lacks it. When the mode is off, neither protocol is touched.
   - **Fallback:** if the capture fails or takes over 300 ms, the lock goes
     ahead with the plain colour.
+  - **Growing blur (opt-in):** with `blur_animate_ms` (up to 3000) the blur
+    starts at `blur_animate_from` percent of its strength (default 10;
+    0 = sharp) and grows to the full strength, easing out. Until it has
+    grown, what was on screen can be partly readable, so it's off by
+    default. `wlperch lock -f` (swayidle's timeout, before-sleep) never
+    animates: a machine never wakes up to a readable screen. Typing works
+    during the animation. Each frame blurs the previous one a little more
+    (on a reduced copy, about 5 ms per 3440x1440 output) at up to 60 fps;
+    the last frame is exactly the static picture, and then the lock goes
+    back to drawing only when something changes.
 - **Rendering:** in software, like the notification popups.
 
 It runs as its own process, never inside the daemon, and appears as
@@ -806,6 +816,10 @@ background = #14161b          # colour behind the clock
 image =                       # optional picture (PNG/JPEG) instead, cover-fitted
 blur = 0                      # blur the picture this much (e.g. 16); 0 = sharp
 dim = 0.35                    # darken the picture (0..1)
+background_mode =             # color, image or blur (the screen, frosted); empty: image if set, else color
+screenshot_blur = 60          # blur strength for background_mode = blur (0..100; 0 is still unreadable)
+blur_animate_ms = 0           # blur mode: grow the blur over this long after locking (max 3000; 0 = off)
+blur_animate_from = 10        # ... starting at this % of the blur (0 = sharp; readable for a moment!)
 show_notifications = true     # unread count + app names (never the text)
 show_media = true             # the playing track
 show_bluetooth = true         # connected Bluetooth devices and their battery
