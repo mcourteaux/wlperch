@@ -141,6 +141,14 @@ panels_load :: proc(src: string, m: ini.Map) {
 // emoji") work with any panel set: add the built-in panels when the config
 // doesn't define them.
 panels_ensure_launcher :: proc() {
+	// The bar's audio module opens this one (hidden from the tab strip).
+	if panel_find("audio") < 0 {
+		p := Panel{name = strings.clone("audio"), title = strings.clone("Audio"), width = 520, tab = false}
+		col: [dynamic]string
+		append(&col, strings.clone("audio"))
+		append(&p.columns, col)
+		append(&panels, p)
+	}
 	for name in ([]string{"launch", "run", "emoji"}) {
 		if panel_find(name) >= 0 {continue}
 		p := Panel{name = strings.clone(name), width = 680, tab = false}

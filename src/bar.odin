@@ -111,6 +111,7 @@ Bar :: struct {
 	ptr_x, ptr_y:  f32,
 	serial:        u32, // last input serial (popup grabs)
 	scroll_acc:    [2]f32,
+	axis_source:   u32, // of the last scroll (wheel, finger…)
 
 	tip:           ^Bar_Popup,
 	tip_out:       ^Bar_Output,
@@ -130,6 +131,9 @@ Bar :: struct {
 @(private = "file") TOOLTIP_DELAY :: 550 * time.Millisecond
 @(private = "file") ROW_H :: f32(28)
 @(private = "file") SEP_H :: f32(9)
+@(private = "file") ROW_SUB_H :: f32(42) // a row with a second line
+@(private = "file") SUB_PX :: f32(11.5)
+@(private = "file") AUDIO_MENU :: "@audio" // bar.menu_item of the audio module's menu
 @(private = "file") MENU_PAD :: f32(6)
 @(private = "file") MENU_ICON :: f32(16)
 
@@ -359,15 +363,23 @@ pointer_listener := wl.Pointer_Listener {
 		context = g_bar_ctx
 		i := axis == wl.POINTER_AXIS_HORIZONTAL_SCROLL ? 1 : 0
 		bar.scroll_acc[i] += f32(wl.fixed_to_f64(value))
-		// A wheel click is 15; touchpads send many small steps.
-		steps := int(bar.scroll_acc[i] / 15)
+		// A wheel click is 15 (a high-resolution wheel sends fractions of it,
+		// which add up). Touchpads send a stream of small deltas that add up
+		// fast: a step takes a longer stretch of finger travel there.
+		unit := f32(15)
+		if bar.axis_source == wl.POINTER_AXIS_SOURCE_FINGER || bar.axis_source == wl.POINTER_AXIS_SOURCE_CONTINUOUS {unit = 50}
+		steps := int(bar.scroll_acc[i] / unit)
 		if steps != 0 {
-			bar.scroll_acc[i] -= f32(steps) * 15
+			bar.scroll_acc[i] -= f32(steps) * unit
 			pointer_scroll(steps, i == 1)
 		}
 	},
 	frame = proc "c" (data: rawptr, self: ^wl.Pointer) {},
-	axis_source = proc "c" (data: rawptr, self: ^wl.Pointer, axis_source: u32) {},
+	axis_source = proc "c" (data: rawptr, self: ^wl.Pointer, axis_source: u32) {
+		// Another device: what the last one left over doesn't count.
+		if axis_source != bar.axis_source {bar.scroll_acc = {}}
+		bar.axis_source = axis_source
+	},
 	axis_stop = proc "c" (data: rawptr, self: ^wl.Pointer, t: u32, axis: u32) {
 		context = g_bar_ctx
 		bar.scroll_acc = {}
@@ -434,6 +446,13 @@ pointer_button :: proc(button: u32, pressed: bool) {
 			if p.child == nil {open_submenu(p, p.hover)}
 			return
 		}
+		if bar.menu_item == AUDIO_MENU {
+			id := n.id
+			close_menu()
+			bar_audio_menu_activate(id)
+			mark_all_dirty()
+			return
+		}
 		if it, _ := tray_find(bar.menu_item); it != nil {tray_menu_event(it, n.id)}
 		close_menu()
 		return
@@ -452,7 +471,7 @@ pointer_button :: proc(button: u32, pressed: bool) {
 	if h.mod == .Idle {
 		update_inhibitor()
 		mark_all_dirty()
-	} else if h.mod == .Battery {
+	} else if h.mod == .Battery || h.mod == .Audio {
 		mark_all_dirty()
 	}
 }
@@ -465,6 +484,14 @@ pointer_scroll :: proc(steps: int, horizontal: bool) {
 	if i < 0 {return}
 	it := Bar_Item{mod = o.hits[i].mod, key = o.hits[i].key}
 	bar_scroll(&it, steps, horizontal, o.conn)
+	if it.mod == .Audio {
+		// The new volume shows now; its tooltip comes back once the scrolling stops.
+		mark_all_dirty()
+		if bar.tip_out == o && bar.tip_hit == i {
+			close_tooltip()
+			bar.tip_at = time.tick_add(time.tick_now(), TOOLTIP_DELAY)
+		}
+	}
 }
 
 @(private = "file")
@@ -621,10 +648,11 @@ render :: proc(o: ^Bar_Output) {
 	o.dirty = false
 
 	// What the pointer can hit until the next render.
-	old_key := ""
+	old_key, old_tip := "", ""
 	old_mod: Bar_Mod
 	if o.hover >= 0 && o.hover < len(o.hits) {
 		old_key = strings.clone(o.hits[o.hover].key, context.temp_allocator)
+		old_tip = strings.clone(o.hits[o.hover].tooltip, context.temp_allocator)
 		old_mod = o.hits[o.hover].mod
 	}
 	free_hits(o)
@@ -642,6 +670,11 @@ render :: proc(o: ^Bar_Output) {
 		bar.tip_at = {}
 	}
 	if bar.tip_out == o {bar.tip_hit = o.hover}
+	// Same item, new text (the volume changed under the pointer): show the new one.
+	if bar.tip != nil && bar.tip_out == o && o.hover >= 0 && o.hits[o.hover].tooltip != old_tip {
+		close_tooltip()
+		show_tooltip()
+	}
 }
 
 // ---- Popups (tooltips, menus) --------------------------------------------------------------------
@@ -874,6 +907,11 @@ render_popup :: proc(p: ^Bar_Popup) {
 			if i == p.hover || i == p.child_of {bar_fill_round(cv, {4, r.y, f32(p.w) - 8, r.h}, 6, pal.popup_hi, 1)}
 			col := n.enabled ? pal.text : pal.faint
 			baseline := r.y + r.h / 2 + 0.31 * 13.5
+			if n.sublabel != "" {
+				// Two lines: the label a little up, the explanation under it.
+				baseline = r.y + 17 + 0.31 * 13.5
+				bar_text(cv, .Regular, SUB_PX, label_x, r.y + 33 + 0.31 * SUB_PX, n.sublabel, n.enabled ? pal.muted : pal.faint)
+			}
 			switch n.toggle {
 			case "checkmark":
 				if n.toggle_state == 1 {bar_text(cv, .Regular, 13.5, 12, baseline, "\U000F012C", pal.accent)}
@@ -881,6 +919,7 @@ render_popup :: proc(p: ^Bar_Popup) {
 				bar_text(cv, .Regular, 13.5, 12, baseline, n.toggle_state == 1 ? "\U000F043E" : "\U000F043D", n.toggle_state == 1 ? pal.accent : pal.muted)
 			}
 			if n.img != nil {bar_icon(cv, n.img, icon_x, r.y + (r.h - MENU_ICON) / 2, MENU_ICON, n.enabled ? 1 : 0.4)}
+			if n.glyph != "" {bar_text(cv, .Regular, 15, icon_x, baseline + 1, n.glyph, n.enabled ? pal.muted : pal.faint)}
 			bar_text(cv, .Regular, 13.5, label_x, baseline, n.label, col)
 			if len(n.children) > 0 {
 				bar_text(cv, .Regular, 13.5, f32(p.w) - 22, baseline, "\U000F0142", pal.muted)
@@ -902,7 +941,7 @@ menu_cols :: proc(n: ^Menu_Node) -> (icon_x, label_x: f32) {
 	for &ch in n.children {
 		if !ch.visible || ch.separator {continue}
 		toggles |= ch.toggle == "checkmark" || ch.toggle == "radio"
-		icons |= ch.img != nil
+		icons |= ch.img != nil || ch.glyph != ""
 	}
 	x := f32(12)
 	if toggles {x += 22}
@@ -916,10 +955,10 @@ menu_size :: proc(n: ^Menu_Node) -> (w, h: f32, rows: [dynamic]Menu_Row) {
 	y := MENU_PAD
 	for &ch in n.children {
 		if !ch.visible {continue}
-		rh := ch.separator ? SEP_H : ROW_H
+		rh := ch.separator ? SEP_H : ch.sublabel != "" ? ROW_SUB_H : ROW_H
 		append(&rows, Menu_Row{y = y, h = rh, node = &ch})
 		y += rh
-		if !ch.separator {w = max(w, bar_text_width(.Regular, 13.5, ch.label))}
+		if !ch.separator {w = max(w, bar_text_width(.Regular, 13.5, ch.label), bar_text_width(.Regular, SUB_PX, ch.sublabel))}
 	}
 	_, label_x := menu_cols(n)
 	return max(w + label_x + 36, 170), y + MENU_PAD, rows
@@ -936,11 +975,27 @@ open_menu :: proc(t: ^Tray_Item) {
 		menu_free(&root)
 		return
 	}
+	show_menu(o, root, t.id, .Tray)
+}
+
+// The audio module's own menu (bar_audio.odin builds and runs it).
+@(private = "file")
+open_audio_menu :: proc(ck: Bar_Click) {
+	close_tooltip()
+	close_menu()
+	bar.tip_at = {}
+	o := bar.menu_out
+	if o == nil || o.surface == nil {return}
+	show_menu(o, bar_audio_menu(ck), AUDIO_MENU, .Audio)
+}
+
+@(private = "file")
+show_menu :: proc(o: ^Bar_Output, root: Menu_Node, item: string, mod: Bar_Mod) {
 	bar.menu_tree = root
-	bar.menu_item = strings.clone(t.id)
+	bar.menu_item = strings.clone(item)
 	w, h, rows := menu_size(&bar.menu_tree)
 	anchor := Bar_Rect{0, 0, 1, f32(o.h)}
-	for hh in o.hits {if hh.mod == .Tray && hh.key == t.id {anchor = {hh.x, 0, hh.w, f32(o.h)}}}
+	for hh in o.hits {if hh.mod == mod && (mod != .Tray || hh.key == item) {anchor = {hh.x, 0, hh.w, f32(o.h)}}}
 	p := popup_new(.Menu, i32(w), i32(h), anchor, o.layer, nil, o.scale)
 	if p == nil {
 		delete(rows)
@@ -1061,13 +1116,27 @@ bar_main :: proc(args: []string) -> int {
 	bar_sway_start()
 	tray.on_media = bar_data_poke
 	open_tray_menu_cb = proc(t: ^Tray_Item) {open_menu(t)}
+	open_audio_menu_cb = open_audio_menu
 	tray_start()
 	bar_data_start()
+	bar_audio_maybe_start()
 
+	for sig in ([]posix.Signal{.SIGTERM, .SIGINT, .SIGHUP}) {posix.signal(sig, bar_on_term)}
 	for {
 		if !bar_iteration() {break}
 	}
+	// Our children (pactl subscribe…) go with us, not on as orphans.
+	stop_children()
 	return 0
+}
+
+@(private = "file") bar_term: bool
+
+@(private = "file")
+bar_on_term :: proc "c" (sig: posix.Signal) {
+	bar_term = true
+	b := u8(1)
+	posix.write(bar_wake_w, &b, 1) // interrupt poll()
 }
 
 // ---- Dark / light ----------------------------------------------------------------------------
@@ -1132,6 +1201,7 @@ config_reload :: proc() {
 	for side in old.sides {delete(side)}
 	delete(old.clock)
 	bar.last_minute = -1 // the clock format may have gained or lost seconds
+	bar_audio_maybe_start()
 	mark_all_dirty()
 	for p in popups {p.dirty = true}
 }
@@ -1197,7 +1267,7 @@ bar_iteration :: proc() -> bool {
 	n := posix.poll(&pfds[0], len(pfds), i32(time.duration_milliseconds(timeout)) + 1)
 	if n < 0 {
 		wl.display_cancel_read(d)
-		return posix.errno() == .EINTR
+		return posix.errno() == .EINTR && !bar_term
 	}
 	if .IN in pfds[0].revents {wl.display_read_events(d)} else {wl.display_cancel_read(d)}
 	if .HUP in pfds[0].revents || .ERR in pfds[0].revents {
@@ -1205,6 +1275,7 @@ bar_iteration :: proc() -> bool {
 		return false
 	}
 	if wl.display_dispatch_pending(d) < 0 {return false}
+	if bar_term {return false}
 	if .IN in pfds[1].revents {
 		buf: [64]u8
 		for posix.read(bar.wake_r, &buf[0], len(buf)) > 0 {}

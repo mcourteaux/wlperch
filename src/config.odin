@@ -280,15 +280,17 @@ height = 34
 # Connector names (e.g. DP-1 HDMI-A-1) to show the bar on; empty = all.
 outputs =
 # Modules per side, in order. Available: workspaces mode scratchpad window
-# idle power-profile backlight battery media timer sensors memory clock tray
-# notifications wlperch
+# idle power-profile backlight battery media audio timer sensors memory clock
+# tray notifications wlperch
 left = workspaces mode scratchpad window
 center =
-right = idle power-profile backlight battery media timer sensors memory clock tray notifications wlperch
+right = idle power-profile backlight battery media audio timer sensors memory clock tray notifications wlperch
 # strftime-like: %a %A %b %B %d %e %m %Y %H %I %M %S %p; <b>…</b> is bold.
 clock_format = %a %d %b  <b>%H:%M</b>
 # Tray icon size (logical pixels).
 tray_icon_size = 20
+# Volume change per scroll step of the audio module, in percent (never above 100 %).
+volume_step = 5
 
 [timetracker]
 # Seconds without input after which you're on a break: counting pauses and the
@@ -358,6 +360,12 @@ columns = notifications
 title = Time
 width = 600
 columns = time
+
+[panel.audio]
+title = Audio
+width = 520
+tab = false
+columns = audio
 
 [panel.calc]
 title = Calculator
@@ -703,6 +711,7 @@ LIM_LOCK_DIM :: Float_Limits{0, 1, 0.35}
 LIM_IDLE_SECONDS :: Int_Limits{5, 86400, 300}
 LIM_BAR_HEIGHT :: Int_Limits{20, 80, 34}
 LIM_BAR_TRAY :: Int_Limits{12, 48, 20}
+LIM_BAR_VOLSTEP :: Int_Limits{1, 25, 5}
 LIM_LOCK_COUNTDOWN :: Int_Limits{0, 120, 15}
 LIM_LOCK_IDLE :: Int_Limits{0, 86400, 0}
 

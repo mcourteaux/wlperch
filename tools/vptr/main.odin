@@ -1,6 +1,6 @@
 // vptr: drive a virtual pointer for UI testing on wlroots compositors.
 //
-// usage: vptr <x> <y> <layout_w> <layout_h> [move|click|right|middle|scroll:<n>|drag:<x2>:<y2>] [hold_ms]
+// usage: vptr <x> <y> <layout_w> <layout_h> [move|click|right|middle|scroll:<n>|wheel:<n>:<count>|finger:<delta>:<count>|drag:<x2>:<y2>] [hold_ms]
 //
 // Coordinates are absolute in the compositor's layout space. The pointer device
 // exists only while this tool runs, so `hold_ms` keeps it alive (e.g. to take a
@@ -116,6 +116,34 @@ main :: proc() {
 		n := strconv.parse_int(action[7:]) or_else 1
 		wl.zwlr_virtual_pointer_v1_axis_source(ptr, wl.POINTER_AXIS_SOURCE_WHEEL)
 		wl.zwlr_virtual_pointer_v1_axis_discrete(ptr, now_ms(), wl.POINTER_AXIS_VERTICAL_SCROLL, wl.fixed_from_f64(f64(n) * 15), i32(n))
+		wl.zwlr_virtual_pointer_v1_frame(ptr)
+		wl.display_roundtrip(display)
+	case strings.has_prefix(action, "wheel:"):
+		// wheel:<n>:<count>: <count> wheel clicks of <n> each, 10 ms apart (a fast spin).
+		to := strings.split(action[6:], ":", context.temp_allocator)
+		n := strconv.parse_int(to[0]) or_else 1
+		count := len(to) > 1 ? strconv.parse_int(to[1]) or_else 1 : 1
+		for _ in 0 ..< count {
+			wl.zwlr_virtual_pointer_v1_axis_source(ptr, wl.POINTER_AXIS_SOURCE_WHEEL)
+			wl.zwlr_virtual_pointer_v1_axis_discrete(ptr, now_ms(), wl.POINTER_AXIS_VERTICAL_SCROLL, wl.fixed_from_f64(f64(n) * 15), i32(n))
+			wl.zwlr_virtual_pointer_v1_frame(ptr)
+			wl.display_roundtrip(display)
+			time.sleep(10 * time.Millisecond)
+		}
+	case strings.has_prefix(action, "finger:"):
+		// finger:<delta>:<count>: a touchpad swipe, <count> small deltas then a stop.
+		to := strings.split(action[7:], ":", context.temp_allocator)
+		d := strconv.parse_f64(to[0]) or_else 1
+		count := len(to) > 1 ? strconv.parse_int(to[1]) or_else 1 : 1
+		for _ in 0 ..< count {
+			wl.zwlr_virtual_pointer_v1_axis_source(ptr, wl.POINTER_AXIS_SOURCE_FINGER)
+			wl.zwlr_virtual_pointer_v1_axis(ptr, now_ms(), wl.POINTER_AXIS_VERTICAL_SCROLL, wl.fixed_from_f64(d))
+			wl.zwlr_virtual_pointer_v1_frame(ptr)
+			wl.display_roundtrip(display)
+			time.sleep(8 * time.Millisecond)
+		}
+		wl.zwlr_virtual_pointer_v1_axis_source(ptr, wl.POINTER_AXIS_SOURCE_FINGER)
+		wl.zwlr_virtual_pointer_v1_axis_stop(ptr, now_ms(), wl.POINTER_AXIS_VERTICAL_SCROLL)
 		wl.zwlr_virtual_pointer_v1_frame(ptr)
 		wl.display_roundtrip(display)
 	}

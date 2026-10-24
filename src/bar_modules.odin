@@ -21,6 +21,7 @@ import "core:time/datetime"
 Bar_Mod :: enum u8 {
 	Workspaces, Mode, Scratchpad, Window,
 	Idle, Power_Profile, Backlight, Battery, Media, Timer, Sensors, Memory, Clock, Tray, Notifications, Wlperch,
+	Audio,
 }
 
 @(private = "file")
@@ -28,7 +29,7 @@ MOD_NAMES := [Bar_Mod]string {
 	.Workspaces = "workspaces", .Mode = "mode", .Scratchpad = "scratchpad", .Window = "window",
 	.Idle = "idle", .Power_Profile = "power-profile", .Backlight = "backlight", .Battery = "battery",
 	.Media = "media", .Timer = "timer", .Sensors = "sensors", .Memory = "memory", .Clock = "clock",
-	.Tray = "tray", .Notifications = "notifications", .Wlperch = "wlperch",
+	.Tray = "tray", .Notifications = "notifications", .Wlperch = "wlperch", .Audio = "audio",
 }
 
 Bar_Config :: struct {
@@ -38,6 +39,7 @@ Bar_Config :: struct {
 	sides:       [3][dynamic]Bar_Mod, // left, center, right
 	clock:       string,
 	tray_size:   f32,
+	volume_step: int, // percent per scroll step (audio)
 }
 bar_cfg: Bar_Config
 
@@ -69,12 +71,14 @@ bar_config_load :: proc(m, defaults: ini.Map) {
 			case "sway/window":           append(&b.sides[i], Bar_Mod.Window); found = true
 			case "idle_inhibitor":        append(&b.sides[i], Bar_Mod.Idle); found = true
 			case "power-profiles-daemon": append(&b.sides[i], Bar_Mod.Power_Profile); found = true
+			case "pulseaudio", "wireplumber": append(&b.sides[i], Bar_Mod.Audio); found = true
 			}
 			if !found {fmt.eprintfln("wlperch bar: unknown module %q", name)}
 		}
 	}
 	b.clock = strings.clone(get(m, defaults, "clock_format"))
 	b.tray_size = f32(parse_int_lim(get(m, defaults, "tray_icon_size"), LIM_BAR_TRAY))
+	b.volume_step = parse_int_lim(get(m, defaults, "volume_step"), LIM_BAR_VOLSTEP)
 }
 
 // ---- Data gathered off the main thread ----------------------------------------------
@@ -405,14 +409,12 @@ Bar_Layout :: struct {
 @(private = "file") BATTERY_ICONS := [5]string{"", "", "", "", ""}
 @(private = "file") BRIGHT_ICONS := [3]string{"\U000F00DE", "\U000F00DF", "\U000F00E0"}
 
-@(private = "file")
-seg :: proc(it: ^Bar_Item, text: string, color: u32, font := Bar_Font.Regular, px := PX, alpha: f32 = 1) {
+bar_seg :: proc(it: ^Bar_Item, text: string, color: u32, font := Bar_Font.Regular, px := PX, alpha: f32 = 1) {
 	if it.segs == nil {it.segs.allocator = context.temp_allocator}
 	// A copy: bar_data's strings change under the worker once the lock is let go.
 	append(&it.segs, Bar_Seg{strings.clone(text, context.temp_allocator), font, px, color, alpha})
 }
 
-@(private = "file")
 module_item :: proc(mod: Bar_Mod) -> Bar_Item {
 	return {mod = mod, pad = 10, margin = 1, inset = 3, hover = true, group = -1, icon_alpha = 1}
 }
@@ -450,15 +452,15 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 				switch {
 				case w.urgent:
 					it.bg, it.bg_alpha = p.red, 0.85
-					seg(&it, w.name, p.on_accent, .Bold)
+					bar_seg(&it, w.name, p.on_accent, .Bold)
 				case w.focused:
 					it.bg, it.bg_alpha = p.accent, 1
-					seg(&it, w.name, p.on_accent, .Bold)
+					bar_seg(&it, w.name, p.on_accent, .Bold)
 				case w.visible:
 					it.line, it.line_alpha = p.accent, 0.6
-					seg(&it, w.name, p.text)
+					bar_seg(&it, w.name, p.text)
 				case:
-					seg(&it, w.name, p.muted)
+					bar_seg(&it, w.name, p.muted)
 				}
 				add(lay, it)
 				continue
@@ -477,7 +479,7 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 				add(lay, it)
 			} else {
 				label := Bar_Item{mod = .Workspaces, key = g.ws[0].name, pad = 8, margin = 2, inset = 6, hover = false, group = len(lay.groups), icon_alpha = 1}
-				seg(&label, proj.name, bar_ink(col), grp.level == 2 ? .Bold : .Regular)
+				bar_seg(&label, proj.name, bar_ink(col), grp.level == 2 ? .Bold : .Regular)
 				label.tooltip = fmt.tprintf("%s: %d workspaces on this monitor", proj.name, len(g.ws))
 				add(lay, label)
 				for w in g.ws {
@@ -498,14 +500,14 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		it.hover = false
 		it.inset = 4
 		it.bg, it.bg_alpha = p.red, 0.9
-		seg(&it, bsway.mode, p.on_accent, .Bold)
+		bar_seg(&it, bsway.mode, p.on_accent, .Bold)
 		add(lay, it)
 	case .Scratchpad:
 		if len(bsway.scratch) == 0 {return}
 		it := module_item(.Scratchpad)
 		it.pad = 8
-		seg(&it, ICON_WINDOWS, p.muted)
-		seg(&it, fmt.tprintf(" %d", len(bsway.scratch)), p.muted)
+		bar_seg(&it, ICON_WINDOWS, p.muted)
+		bar_seg(&it, fmt.tprintf(" %d", len(bsway.scratch)), p.muted)
 		b := strings.builder_make(context.temp_allocator)
 		for s, i in bsway.scratch {
 			if i > 0 {strings.write_byte(&b, '\n')}
@@ -520,16 +522,16 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		it.hover = false
 		it.pad = 8
 		it.margin = 4
-		seg(&it, clip_runes_bar(title, 90), p.soft)
+		bar_seg(&it, clip_runes_bar(title, 90), p.soft)
 		add(lay, it)
 	case .Idle:
 		it := module_item(.Idle)
 		if idle_inhibit_on {
 			it.bg, it.bg_alpha = p.yellow, 0.18
-			seg(&it, ICON_EYE_ON, p.yellow)
+			bar_seg(&it, ICON_EYE_ON, p.yellow)
 			it.tooltip = "Idle inhibitor: on (the screen stays awake)"
 		} else {
-			seg(&it, ICON_EYE_OFF, p.muted)
+			bar_seg(&it, ICON_EYE_OFF, p.muted)
 			it.tooltip = "Idle inhibitor: off"
 		}
 		add(lay, it)
@@ -537,17 +539,17 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		if bar_data.ppd == "" {return}
 		it := module_item(.Power_Profile)
 		switch bar_data.ppd {
-		case "performance": seg(&it, ICON_PERF, p.red)
-		case "power-saver": seg(&it, ICON_SAVER, p.green)
-		case:               seg(&it, ICON_BALANCED, p.accent)
+		case "performance": bar_seg(&it, ICON_PERF, p.red)
+		case "power-saver": bar_seg(&it, ICON_SAVER, p.green)
+		case:               bar_seg(&it, ICON_BALANCED, p.accent)
 		}
 		it.tooltip = fmt.tprintf("Power profile: %s\nClick: next · right click: previous", bar_data.ppd)
 		add(lay, it)
 	case .Backlight:
 		if bar_data.bl_pct < 0 {return}
 		it := module_item(.Backlight)
-		seg(&it, fmt.tprintf("%d%% ", bar_data.bl_pct), p.yellow)
-		seg(&it, BRIGHT_ICONS[clamp(bar_data.bl_pct * 3 / 101, 0, 2)], p.yellow)
+		bar_seg(&it, fmt.tprintf("%d%% ", bar_data.bl_pct), p.yellow)
+		bar_seg(&it, BRIGHT_ICONS[clamp(bar_data.bl_pct * 3 / 101, 0, 2)], p.yellow)
 		it.tooltip = "Brightness: scroll to change"
 		add(lay, it)
 	case .Battery:
@@ -566,11 +568,11 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		icon := BATTERY_ICONS[clamp(pct * 5 / 101, 0, 4)]
 		if charging {icon = ICON_CHARGING} else if plugged {icon = ICON_PLUG}
 		if battery_alt && bar_data.bat_time != "" {
-			seg(&it, fmt.tprintf("%s ", bar_data.bat_time), col)
+			bar_seg(&it, fmt.tprintf("%s ", bar_data.bat_time), col)
 		} else {
-			seg(&it, fmt.tprintf("%d%% ", pct), col)
+			bar_seg(&it, fmt.tprintf("%d%% ", pct), col)
 		}
-		seg(&it, icon, col)
+		bar_seg(&it, icon, col)
 		it.tooltip = fmt.tprintf("Battery %d%% · %s%s", pct, strings.to_lower(bar_data.bat_status, context.temp_allocator),
 			bar_data.bat_time != "" ? fmt.tprintf("\n%s %s", bar_data.bat_time, charging ? "until full" : "left") : "")
 		add(lay, it)
@@ -580,21 +582,21 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		if bar_data.media_prev {
 			it := module_item(.Media)
 			it.key, it.pad, it.margin = "prev", 6, 0
-			seg(&it, ICON_SKIP_PREV, p.muted)
+			bar_seg(&it, ICON_SKIP_PREV, p.muted)
 			it.tooltip = "Previous"
 			add(lay, it)
 		}
 		it := module_item(.Media)
 		it.key = "track"
-		seg(&it, playing ? ICON_PAUSE : ICON_PLAY, playing ? p.green : p.muted)
-		seg(&it, "  ", p.muted)
-		seg(&it, clip_runes_bar(bar_data.media_track, 40), playing ? p.green : p.muted)
+		bar_seg(&it, playing ? ICON_PAUSE : ICON_PLAY, playing ? p.green : p.muted)
+		bar_seg(&it, "  ", p.muted)
+		bar_seg(&it, clip_runes_bar(bar_data.media_track, 40), playing ? p.green : p.muted)
 		it.tooltip = fmt.tprintf("%s\nClick: play/pause · right click: panel · scroll: skip", bar_data.media_tip)
 		add(lay, it)
 		if bar_data.media_next {
 			n := module_item(.Media)
 			n.key, n.pad, n.margin = "next", 6, 0
-			seg(&n, ICON_SKIP_NEXT, p.muted)
+			bar_seg(&n, ICON_SKIP_NEXT, p.muted)
 			n.tooltip = "Next"
 			add(lay, n)
 		}
@@ -604,9 +606,9 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		if t.text == "" {return}
 		if t.class == "running" {
 			it.bg, it.bg_alpha = p.teal, 0.12
-			seg(&it, t.text, p.teal, .Bold)
+			bar_seg(&it, t.text, p.teal, .Bold)
 		} else {
-			seg(&it, t.text, p.faint)
+			bar_seg(&it, t.text, p.faint)
 		}
 		it.tooltip = t.tooltip
 		add(lay, it)
@@ -617,11 +619,11 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		switch s.class {
 		case "co2-high":
 			it.bg, it.bg_alpha = p.red, 1
-			seg(&it, s.text, p.on_accent)
+			bar_seg(&it, s.text, p.on_accent)
 		case "co2-warn":
-			seg(&it, s.text, p.orange)
+			bar_seg(&it, s.text, p.orange)
 		case:
-			seg(&it, s.text, p.teal)
+			bar_seg(&it, s.text, p.teal)
 		}
 		it.tooltip = s.tooltip
 		add(lay, it)
@@ -641,10 +643,10 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 			col, font = p.orange, .Bold
 		case .Normal:
 		}
-		seg(&it, fmt.tprintf("%.1f", used), col, font)
-		seg(&it, fmt.tprintf(" / %.0f GiB", total), col, .Regular, PX * 0.82)
-		seg(&it, "  ", col)
-		seg(&it, ICON_MEM, col)
+		bar_seg(&it, fmt.tprintf("%.1f", used), col, font)
+		bar_seg(&it, fmt.tprintf(" / %.0f GiB", total), col, .Regular, PX * 0.82)
+		bar_seg(&it, "  ", col)
+		bar_seg(&it, ICON_MEM, col)
 		it.tooltip = fmt.tprintf("%.0f%% used", f64(bar_data.mem_used) / f64(bar_data.mem_total) * 100)
 		add(lay, it)
 	case .Clock:
@@ -661,7 +663,7 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 			it.pad, it.margin = 5, 0
 			it.icon = t.status == "NeedsAttention" && t.att_icon != nil ? t.att_icon : t.icon
 			it.icon_size = bar_cfg.tray_size
-			if it.icon == nil {seg(&it, t.title != "" ? strings.to_upper(t.title[:1], context.temp_allocator) : "?", p.muted, .Bold)}
+			if it.icon == nil {bar_seg(&it, t.title != "" ? strings.to_upper(t.title[:1], context.temp_allocator) : "?", p.muted, .Bold)}
 			if t.status == "NeedsAttention" {it.bg, it.bg_alpha = p.red, 0.35}
 			it.tooltip = t.tooltip != "" ? t.tooltip : t.title
 			add(lay, it)
@@ -672,10 +674,10 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		switch n.class {
 		case "unread":
 			it.bg, it.bg_alpha = p.purple, 0.14
-			seg(&it, n.text, p.purple, .Bold, 15)
-		case "dnd": seg(&it, n.text, p.faint, .Regular, 15)
-		case "off": seg(&it, n.text, p.off, .Regular, 15)
-		case:       seg(&it, n.text, p.muted, .Regular, 15)
+			bar_seg(&it, n.text, p.purple, .Bold, 15)
+		case "dnd": bar_seg(&it, n.text, p.faint, .Regular, 15)
+		case "off": bar_seg(&it, n.text, p.off, .Regular, 15)
+		case:       bar_seg(&it, n.text, p.muted, .Regular, 15)
 		}
 		it.tooltip = n.tooltip
 		add(lay, it)
@@ -683,15 +685,17 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		it := module_item(.Wlperch)
 		if bar_data.main.class == "memory-warning" {
 			it.bg, it.bg_alpha = p.red, 1
-			seg(&it, bar_data.main.text, p.on_accent, .Bold, 14)
+			bar_seg(&it, bar_data.main.text, p.on_accent, .Bold, 14)
 		} else {
 			it.bg, it.bg_alpha = p.accent, 0.16
-			seg(&it, ICON_TUNE_BAR, p.accent, .Regular, 17)
+			bar_seg(&it, ICON_TUNE_BAR, p.accent, .Regular, 17)
 		}
 		it.pad = 11
 		it.margin = 2
 		it.tooltip = bar_data.main.tooltip
 		add(lay, it)
+	case .Audio:
+		if it, ok := bar_audio_item(); ok {add(lay, it)}
 	}
 }
 
@@ -701,15 +705,15 @@ ws_style :: proc(it: ^Bar_Item, w: Bar_Ws, label: string, col: u32) {
 	switch {
 	case w.urgent:
 		it.bg, it.bg_alpha = p.red, 0.85
-		seg(it, label, p.on_accent, .Bold)
+		bar_seg(it, label, p.on_accent, .Bold)
 	case w.focused:
 		it.bg, it.bg_alpha = col, 1
-		seg(it, label, bar_on(col), .Bold)
+		bar_seg(it, label, bar_on(col), .Bold)
 	case w.visible:
 		it.line, it.line_alpha = bar_ink(col), 0.9
-		seg(it, label, p.text)
+		bar_seg(it, label, p.text)
 	case:
-		seg(it, label, bar_ink(col))
+		bar_seg(it, label, bar_ink(col))
 	}
 }
 
@@ -786,7 +790,7 @@ bar_clock_has_seconds :: proc() -> bool {return strings.contains(bar_cfg.clock, 
 @(private = "file")
 clock_segs :: proc(it: ^Bar_Item, format: string, col: u32) {
 	for r in bar_clock_text(format, bar_now()) {
-		seg(it, r[0], r[1] == "b" ? bar_pal.text : col, r[1] == "b" ? .Bold : .Regular)
+		bar_seg(it, r[0], r[1] == "b" ? bar_pal.text : col, r[1] == "b" ? .Bold : .Regular)
 	}
 }
 
@@ -834,8 +838,7 @@ Bar_Click :: struct {
 }
 
 // Open (or close) a panel of the daemon under the clicked item.
-@(private = "file")
-toggle_panel :: proc(panel: string, ck: Bar_Click) {
+bar_toggle_panel :: proc(panel: string, ck: Bar_Click) {
 	cmd := fmt.tprintf("toggle %s --at %s:%d:%d", panel, ck.output, int(ck.center), int(ck.width))
 	if ipc_send(cmd) {return}
 	// No daemon: start one with this panel.
@@ -878,7 +881,7 @@ bar_click :: proc(it: ^Bar_Item, ck: Bar_Click, open_menu: proc(t: ^Tray_Item, c
 		case:
 			switch ck.button {
 			case BTN_LEFT:   member = "PlayPause"
-			case BTN_RIGHT:  toggle_panel("main", ck)
+			case BTN_RIGHT:  bar_toggle_panel("main", ck)
 			}
 		}
 		if member != "" {
@@ -888,19 +891,25 @@ bar_click :: proc(it: ^Bar_Item, ck: Bar_Click, open_menu: proc(t: ^Tray_Item, c
 			sync.sema_post(&bar_data.wake)
 		}
 	case .Timer:
-		toggle_panel("time", ck)
+		bar_toggle_panel("time", ck)
 	case .Sensors:
-		toggle_panel("sensors", ck)
+		bar_toggle_panel("sensors", ck)
 	case .Memory:
-		toggle_panel("system", ck)
+		bar_toggle_panel("system", ck)
 	case .Clock, .Wlperch:
-		toggle_panel("main", ck)
+		bar_toggle_panel("main", ck)
 	case .Notifications:
 		if ck.button == BTN_RIGHT {
 			if !ipc_send("notify dnd") {return}
 			bar_data_poke()
 		} else {
-			toggle_panel("notifications", ck)
+			bar_toggle_panel("notifications", ck)
+		}
+	case .Audio:
+		switch ck.button {
+		case BTN_LEFT:   bar_toggle_panel("audio", ck)
+		case BTN_MIDDLE: bar_audio_toggle_mute()
+		case BTN_RIGHT:  if open_audio_menu_cb != nil {open_audio_menu_cb(ck)}
 		}
 	case .Tray:
 		t, _ := tray_find(it.key)
@@ -921,6 +930,7 @@ bar_click :: proc(it: ^Bar_Item, ck: Bar_Click, open_menu: proc(t: ^Tray_Item, c
 // The click a tray Activate fallback (menu) belongs to.
 pending_menu_click: Bar_Click
 open_tray_menu_cb: proc(t: ^Tray_Item)
+open_audio_menu_cb: proc(ck: Bar_Click)
 
 bar_scroll :: proc(it: ^Bar_Item, steps: int, horizontal: bool, output: string) {
 	if steps == 0 {return}
@@ -940,6 +950,8 @@ bar_scroll :: proc(it: ^Bar_Item, steps: int, horizontal: bool, output: string) 
 		sync.sema_post(&bar_data.wake)
 	case .Tray:
 		if t, _ := tray_find(it.key); t != nil {tray_scroll(t, i32(steps), horizontal)}
+	case .Audio:
+		if !horizontal {bar_audio_scroll(steps)}
 	case .Mode, .Scratchpad, .Window, .Idle, .Power_Profile, .Battery, .Timer, .Sensors, .Memory, .Clock, .Notifications, .Wlperch:
 	}
 }
@@ -989,7 +1001,6 @@ bar_mem_pulse_timeout :: proc(last: time.Tick) -> time.Duration {
 	return max(BAR_PULSE_FRAME - time.tick_since(last), 0)
 }
 
-@(private = "file")
 bar_mods_used :: proc() -> bit_set[Bar_Mod] {
 	set: bit_set[Bar_Mod]
 	for side in bar_cfg.sides {for m in side {set += {m}}}

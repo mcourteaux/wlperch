@@ -437,10 +437,14 @@ Menu_Node :: struct {
 	toggle:       string, // "" | checkmark | radio
 	toggle_state: i32,
 	children:     [dynamic]Menu_Node,
+	// The bar's own menus (audio): a second, smaller line and a font icon.
+	sublabel:     string,
+	glyph:        string, // not owned
 }
 
 menu_free :: proc(n: ^Menu_Node) {
 	delete(n.label)
+	delete(n.sublabel)
 	delete(n.icon)
 	delete(n.toggle)
 	for &ch in n.children {menu_free(&ch)}

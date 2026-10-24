@@ -109,7 +109,6 @@ emoji_can_type :: proc() -> bool {
 	return ok
 }
 
-@(private = "file")
 find_program :: proc(name: string) -> (string, bool) {
 	for dir in strings.split(posix_getenv("PATH"), ":", context.temp_allocator) {
 		p := strings.concatenate({dir, "/", name}, context.temp_allocator)

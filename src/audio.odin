@@ -61,6 +61,12 @@ audio_refresh_async :: proc() {
 	sync.sema_post(&refresh_sema)
 }
 
+// Called on the refresher thread after every read of the devices (the bar
+// uses it to redraw when what it shows changed).
+audio_on_change: proc()
+// The refresher's safety-net re-read when no event came (0: only on events).
+audio_safety_poll := 30 * time.Second
+
 @(private = "file")
 own :: proc(s: string) -> string {
 	c := strings.clone(s)
@@ -336,8 +342,13 @@ audio_start :: proc() {
 		for {
 			refresh()
 			wake_ui()
+			if audio_on_change != nil {audio_on_change()}
 			free_all(context.temp_allocator)
-			sync.sema_wait_with_timeout(&refresh_sema, 30 * time.Second)
+			if audio_safety_poll > 0 {
+				sync.sema_wait_with_timeout(&refresh_sema, audio_safety_poll)
+			} else {
+				sync.sema_wait(&refresh_sema)
+			}
 			// Debounce bursts of events.
 			time.sleep(60 * time.Millisecond)
 			for sync.sema_wait_with_timeout(&refresh_sema, 0) {}
@@ -345,12 +356,17 @@ audio_start :: proc() {
 	})
 	// Event listener.
 	thread.create_and_start(proc() {
+		first := true
 		for {
 			s, ok := stream_start({"pactl", "subscribe"})
 			if !ok {
 				time.sleep(5 * time.Second)
 				continue
 			}
+			// Back after the server went away (a PipeWire restart): what
+			// changed meanwhile came with no event.
+			if !first {audio_refresh_async()}
+			first = false
 			for {
 				line, lok := stream_read_line(&s)
 				if !lok {break}
