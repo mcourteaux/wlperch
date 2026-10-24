@@ -153,7 +153,7 @@ draw_time :: proc(w: f32) {
 		for _, b in breaks_week {n_week += b.count}
 		sub_heading(fmt.tprintf("Away from keyboard   ·   today %d×   ·   7 days %d×", n_today, n_week))
 		if n_week == 0 && !tracker.away {
-			label(fonts.ui, SZ_SMALL, col32(C_FAINT), fmt.tprintf("No breaks yet (a break = no input for %d min)", int(time.duration_minutes(tracker.idle))))
+			label(fonts.ui, SZ_SMALL, col32(C_FAINT), fmt.tprintf("No breaks yet (a break = no input for %s)", fmt_idle(tracker.idle)))
 		}
 		row :: proc(name, client: string, color: u32, bt, bw: Break_Stats, work_week: i64, inner: f32) {
 			rp := im.GetCursorScreenPos()

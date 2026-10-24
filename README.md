@@ -176,14 +176,19 @@ and it closes as soon as a real window arrives. If you close a placeholder
 yourself, that workspace is left alone until it disappears.
 
 Time counts while one of a project's workspaces is focused. Numbered
-workspaces are not counted. Counting pauses after `idle_minutes` without input
-(through the `ext-idle-notify-v1` protocol; idle inhibitors such as a playing
-video count as activity), and the idle time itself is not counted.
+workspaces are not counted. Counting pauses after `[timetracker] idle_seconds`
+without input (default 300; the older `idle_minutes` is still read), and the
+idle time itself is not counted. wlperch asks the compositor for its own
+`ext-idle-notify-v1` notification with that timeout, so it is independent of
+the screen lock: e.g. `idle_seconds = 60` for breaks while swayidle still locks
+after 300 s. Idle inhibitors (a fullscreen video with sway's `inhibit_idle`, an
+app holding an inhibitor, the bar's idle button) count as presence, as they do
+for swayidle: watching a talk or sitting in a call is not a break.
 
 Finished segments are appended to `~/.local/share/wlperch/timelog.tsv`, one
 per line: start and end (UTC, ISO 8601), project, client.
 
-**Breaks are tracked too.** Every walk-away (no input for `idle_minutes`) is
+**Breaks are tracked too.** Every walk-away (no input for `idle_seconds`) is
 logged as its own line with a fifth column `idle`. It runs from the moment
 input stopped to your return, and is attributed to the project whose workspace
 was focused when you left (or `(no project)`). The panel's "Away from keyboard"

@@ -4,7 +4,7 @@
 //
 // Log: <data>/timelog.tsv, one finished segment per line:
 //   2026-10-23T11:05:00Z<TAB>2026-10-23T12:40:10Z<TAB>Project<TAB>Client[<TAB>idle]
-// Breaks (no input for idle_minutes) are logged too, marked "idle", and
+// Breaks (no input for idle_seconds) are logged too, marked "idle", and
 // attributed to the project whose workspace was focused when you walked away.
 // The open segment is kept in <data>/timetracker.current (start, last heartbeat,
 // project) so a crash loses at most one heartbeat interval.
@@ -153,6 +153,12 @@ fmt_duration :: proc(secs: i64, with_seconds := false) -> string {
 	s := max(secs, 0)
 	if with_seconds {return fmt.tprintf("%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)}
 	return fmt.tprintf("%d:%02d", s / 3600, (s / 60) % 60)
+}
+
+// The idle timeout for display: "5 min", "90 s".
+fmt_idle :: proc(d: time.Duration) -> string {
+	s := i64(time.duration_seconds(d))
+	return s % 60 == 0 ? fmt.tprintf("%d min", s / 60) : fmt.tprintf("%d s", s)
 }
 
 // ---- Log -----------------------------------------------------------------

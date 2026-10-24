@@ -256,8 +256,11 @@ clock_format = %a %d %b  <b>%H:%M</b>
 tray_icon_size = 20
 
 [timetracker]
-# Minutes without input after which counting pauses (the idle time is not counted).
-idle_minutes = 5
+# Seconds without input after which you're on a break: counting pauses and the
+# break is logged from your last input. Independent of the screen lock (that's
+# swayidle's timeout); idle inhibitors (fullscreen video, the bar's idle
+# button) count as presence. The old idle_minutes is still honoured.
+idle_seconds = 300
 
 # Projects for time tracking. "wlperch track <project>" (or the Time panel)
 # creates one workspace per monitor ("<name> 1", "<name> 2", ...); time counts
@@ -542,7 +545,7 @@ config_load :: proc() {
 	c.sensors_bar_room = strings.clone(get(m, defaults, "sensors", "bar_room"))
 	sensors_load_defs(m)
 
-	tracker.idle = time.Duration(max(strconv.parse_int(get(m, defaults, "timetracker", "idle_minutes")) or_else 5, 1)) * time.Minute
+	tracker.idle = tracker_idle_timeout(m, defaults)
 	projects_load(string(src_for_projects(path)), m)
 
 	// Panels: from the user's file, or the built-in set if it defines none.
@@ -585,4 +588,23 @@ popup_placement :: proc() -> Popup_Placement {
 		output = config.output,
 		backdrop = config.close_on_click_outside,
 	}
+}
+
+// [timetracker] idle_seconds; idle_seconds used to be idle_minutes: still
+// honoured when idle_seconds isn't set.
+tracker_idle_timeout :: proc(m, defaults: ini.Map) -> time.Duration {
+	val :: proc(m: ini.Map, key: string) -> (string, bool) {
+		if sec, ok := m["timetracker"]; ok {
+			if v, has := sec[key]; has {return unquote(strings.trim_space(v)), true}
+		}
+		return "", false
+	}
+	dv, _ := val(defaults, "idle_seconds")
+	idle_s := strconv.parse_int(dv) or_else 300
+	if v, ok := val(m, "idle_seconds"); ok {
+		idle_s = strconv.parse_int(v) or_else idle_s
+	} else if v, ok := val(m, "idle_minutes"); ok {
+		if mins, mok := strconv.parse_int(v); mok {idle_s = mins * 60}
+	}
+	return time.Duration(clamp(idle_s, 5, 86400)) * time.Second
 }
