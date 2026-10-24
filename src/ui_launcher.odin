@@ -40,6 +40,7 @@ Launch_UI :: struct {
 	query:    string, // the query `rows` were built for (heap)
 	rows:     [dynamic]Row,
 	sel, top: int,
+	wheel:    f32, // unspent wheel motion (smooth scrolling sends fractions)
 	calc_ok:  bool,
 	calc_v:   Calc_Value,
 	copied:   string, // format label just copied from the calc row
@@ -351,8 +352,15 @@ draw_launcher :: proc(w: f32) {
 	im.Dummy({1, 6})
 	list := im.GetCursorScreenPos()
 	list_h := ROWS * ROW_H
-	if im.IsMouseHoveringRect(list, {list.x + w, list.y + list_h}) && io.MouseWheel != 0 {
-		lui.top = clamp(lui.top - int(io.MouseWheel * 3), 0, max(n - ROWS, 0))
+	// The wheel moves the selection (a row per notch); the view follows it.
+	// Scrolling only the view got undone by the follow-the-selection above.
+	if im.IsMouseHoveringRect(list, {list.x + w, list.y + list_h}) && io.MouseWheel != 0 && n > 0 {
+		lui.wheel += io.MouseWheel
+		steps := int(lui.wheel)
+		lui.wheel -= f32(steps)
+		lui.sel = clamp(lui.sel - steps, 0, n - 1)
+		if lui.sel < lui.top {lui.top = lui.sel}
+		if lui.sel >= lui.top + ROWS {lui.top = lui.sel - ROWS + 1}
 	}
 	lui.top = clamp(lui.top, 0, max(n - ROWS, 0))
 	d := dl()
