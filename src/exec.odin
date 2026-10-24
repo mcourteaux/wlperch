@@ -4,6 +4,7 @@ package main
 
 import "core:c"
 import "core:log"
+import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:sys/posix"
@@ -171,7 +172,18 @@ Stream :: struct {
 stream_start :: proc(argv: []string) -> (s: Stream, ok: bool) {
 	fds: [2]c.int
 	if pipe2(&fds, O_CLOEXEC) != 0 {return}
-	pid, spawned := spawn(argv, fds[1])
+	// A stream outlives nothing: if we die without cleaning up (SIGKILL,
+	// crash, exec), the kernel stops it. Plain SIGPIPE doesn't, since e.g.
+	// pactl ignores it and kept running for hours. The parent "thread" for
+	// PDEATHSIG is the long-lived reader thread that starts the stream.
+	full := argv
+	if os.exists("/usr/bin/setpriv") {
+		wrapped := make([dynamic]string, 0, len(argv) + 4, context.temp_allocator)
+		append(&wrapped, "/usr/bin/setpriv", "--pdeathsig", "TERM", "--")
+		append(&wrapped, ..argv)
+		full = wrapped[:]
+	}
+	pid, spawned := spawn(full, fds[1])
 	posix.close(posix.FD(fds[1]))
 	if !spawned {
 		posix.close(posix.FD(fds[0]))
