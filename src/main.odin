@@ -414,6 +414,8 @@ main :: proc() {
 	set_cloexec_nonblock(app.wake_w)
 	posix.signal(.SIGPIPE, auto_cast posix.SIG_IGN)
 	posix.signal(.SIGCHLD, auto_cast posix.SIG_DFL)
+	// Logout / shutdown: leave the main loop normally so state gets saved.
+	for sig in ([]posix.Signal{.SIGTERM, .SIGINT, .SIGHUP}) {posix.signal(sig, on_term_signal)}
 
 	config_load()
 	log.debugf("rss after config: %d kB", rss_kb())
@@ -426,6 +428,8 @@ main :: proc() {
 	im_init()
 
 	t0 = time.tick_now()
+	if !perf_resumed {perf_load()}
+	perf_start_saver()
 	services_start()
 	tracker_init()
 	placeholders_init()
@@ -440,10 +444,12 @@ main :: proc() {
 	}
 
 	app.running = true
-	for app.running {
+	for app.running && !term_requested {
 		loop_iteration()
 	}
+	if term_requested {log.info("terminating on signal")}
 
+	perf_save()
 	tracker_shutdown()
 	notifications_shutdown()
 	placeholders_destroy_all()
@@ -452,6 +458,14 @@ main :: proc() {
 }
 
 imgl_ready: bool
+
+term_requested: bool
+
+on_term_signal :: proc "c" (sig: posix.Signal) {
+	term_requested = true
+	b := u8(1)
+	posix.write(app.wake_w, &b, 1) // interrupt poll()
+}
 
 OPEN_ANIM :: 140 * time.Millisecond
 

@@ -10,26 +10,9 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 
-HISTORY_MAX :: 3600 // 1 h at 1 Hz (graphs zoom out this far)
 MAX_CORES :: 256
 
-History :: struct {
-	data:  [HISTORY_MAX]f32,
-	head:  int, // index of next write
-	count: int,
-}
-
-history_push :: proc(h: ^History, v: f32) {
-	h.data[h.head] = v
-	h.head = (h.head + 1) % HISTORY_MAX
-	h.count = min(h.count + 1, HISTORY_MAX)
-}
-
-// i = 0 is the oldest of the last n samples.
-history_get :: proc(h: ^History, n, i: int) -> f32 {
-	idx := (h.head - n + i + HISTORY_MAX * 2) % HISTORY_MAX
-	return h.data[idx]
-}
+// History, history_push, …: perf_history.odin
 
 Sysmon :: struct {
 	mu:          sync.Mutex,
@@ -54,9 +37,9 @@ Sysmon :: struct {
 	mem_cached:  u64, // page cache + reclaimable slab
 	swap_used:   u64,
 	swap_total:  u64,
-	mem:         History, // memory use in %
-	swap:        History, // swap use in %
-	vram:        History, // VRAM use in %
+	mem:         History, // memory in use, MiB
+	swap:        History, // swap in use, MiB
+	vram:        History, // VRAM in use, MiB
 	load:        [3]f32,  // 1/5/15 min load average
 	uptime:      f64,     // seconds
 }
@@ -135,7 +118,7 @@ nvml_sample :: proc() -> bool {
 	sysmon.gpu_now = f32(u.gpu)
 	history_push(&sysmon.gpu, f32(u.gpu))
 	sysmon.vram_used, sysmon.vram_total = m.used, m.total
-	if m.total > 0 {history_push(&sysmon.vram, f32(f64(m.used) / f64(m.total) * 100))}
+	if m.total > 0 {history_push(&sysmon.vram, f32(f64(m.used) / PERF_MIB))}
 	sysmon.gpu_temp = f32(temp)
 	sysmon.gpu_power = f32(power) / 1000
 	return true
@@ -177,7 +160,7 @@ drm_sample :: proc() -> bool {
 	sysmon.gpu_now = f32(busy)
 	history_push(&sysmon.gpu, f32(busy))
 	sysmon.vram_used, sysmon.vram_total = used, total
-	if total > 0 {history_push(&sysmon.vram, f32(f64(used) / f64(total) * 100))}
+	if total > 0 {history_push(&sysmon.vram, f32(f64(used) / PERF_MIB))}
 	return true
 }
 
@@ -283,8 +266,8 @@ cpu_sample :: proc() {
 	sysmon.swap_used = swap_total - swap_free
 	sysmon.load = load
 	sysmon.uptime = uptime
-	if mem_total > 0 {history_push(&sysmon.mem, f32(f64(sysmon.mem_used) / f64(mem_total) * 100))}
-	if swap_total > 0 {history_push(&sysmon.swap, f32(f64(sysmon.swap_used) / f64(swap_total) * 100))}
+	if mem_total > 0 {history_push(&sysmon.mem, f32(f64(sysmon.mem_used) / PERF_MIB))}
+	if swap_total > 0 {history_push(&sysmon.swap, f32(f64(sysmon.swap_used) / PERF_MIB))}
 }
 
 @(private = "file")

@@ -298,12 +298,12 @@ segmented :: proc(id: string, items: []string, active: int, accent: u32) -> int 
 
 // ---- History graphs ---------------------------------------------------------
 
-// Which stretch of the 1 Hz histories a set of graphs shows. Live (the
-// default) follows the newest sample; zooming or dragging into the past
-// freezes the view there until it's double-clicked.
+// Which stretch of the histories a set of graphs shows, in seconds before
+// now. Live (the default) follows the newest sample; zooming or dragging into
+// the past freezes the view there until it's double-clicked.
 Graph_View :: struct {
-	span:   f64,       // samples shown (0 = config.history_seconds)
-	back:   f64,       // age of the right edge when frozen (samples)
+	span:   f64,       // seconds shown (0 = config.history_seconds)
+	back:   f64,       // age of the right edge when frozen (seconds)
 	frozen: time.Tick, // when back was set; {} = live
 }
 perf_view: Graph_View // shared by the system panel's graphs so they stay aligned
@@ -312,7 +312,7 @@ GRAPH_MIN_SPAN :: 10
 
 view_span :: proc(v: ^Graph_View) -> f64 {return v.span > 0 ? v.span : f64(config.history_seconds)}
 
-// Age (in samples) of the view's right edge; grows while frozen so the view stays put.
+// Age (in seconds) of the view's right edge; grows while frozen so the view stays put.
 view_back :: proc(v: ^Graph_View) -> f64 {
 	if v.frozen == {} {return 0}
 	return v.back + time.duration_seconds(time.tick_since(v.frozen))
@@ -320,8 +320,9 @@ view_back :: proc(v: ^Graph_View) -> f64 {
 
 @(private = "file")
 view_set :: proc(v: ^Graph_View, span, back: f64) {
-	v.span = clamp(span, GRAPH_MIN_SPAN, HISTORY_MAX)
-	b := clamp(back, 0, HISTORY_MAX - v.span)
+	limit := graph_span_limit()
+	v.span = clamp(span, GRAPH_MIN_SPAN, limit)
+	b := clamp(back, 0, limit - v.span)
 	if b < 0.5 {
 		v.back, v.frozen = 0, {}
 	} else {
@@ -342,7 +343,7 @@ graph_view_input :: proc(v: ^Graph_View, id: string, size: Vec2, right_inset: f3
 		if wheel := im.GetIO().MouseWheel; wheel != 0 {
 			frac := f64(clamp((p.x + w - im.GetMousePos().x) / w, 0, 1))
 			anchor := back + frac * span
-			ns := clamp(span * (wheel > 0 ? 0.8 : 1.25), GRAPH_MIN_SPAN, HISTORY_MAX)
+			ns := clamp(span * (wheel > 0 ? 0.8 : 1.25), GRAPH_MIN_SPAN, graph_span_limit())
 			view_set(v, ns, anchor - frac * ns)
 		} else if wh := im.GetIO().MouseWheelH; wh != 0 {
 			// A notch pans a tenth of the view (>0 = left, into the past).
@@ -359,25 +360,35 @@ graph_view_input :: proc(v: ^Graph_View, id: string, size: Vec2, right_inset: f3
 	}
 }
 
-// One point per sample when zoomed in; when there are more samples than
-// pixels, one averaged point per pixel column.
+// How far the graphs zoom out: an hour, or back to the oldest stored sample
+// (at most 7 days). Reads the CPU history's counters without its lock.
+@(private = "file")
+graph_span_limit :: proc() -> f64 {
+	now := time.to_unix_seconds(time.now())
+	return clamp(f64(history_oldest_age(&sysmon.cpu, now)), HISTORY_MAX, HISTORY_SPAN_MAX)
+}
+
+// One point per second when zoomed in; when there are more seconds than
+// pixels, one averaged point per pixel column. Points with a NaN y are gaps
+// (no samples: suspended, daemon not running, rebooting).
 @(private = "file")
 graph_points :: proc(h: ^History, v: ^Graph_View, x1, w, y1, hgt, max_v: f32) -> []Vec2 {
 	if h.count < 2 {return nil}
 	span, back := view_span(v), view_back(v)
+	now := time.to_unix_seconds(time.now())
 	pad: f32 = 2
 	x_of := proc(age, back, span: f64, x1, w: f32) -> f32 {return x1 - w * f32((age - back) / span)}
 	y_of := proc(val, max_v, y1, hgt, pad: f32) -> f32 {return y1 - pad - (hgt - pad * 2) * clamp(val, 0, max_v) / max_v}
-	at := proc(h: ^History, age: int) -> f32 {return history_get(h, h.count, h.count - 1 - age)}
-	oldest := h.count - 1
+	oldest := history_oldest_age(h, now)
 	pts: [dynamic]Vec2
 	pts.allocator = context.temp_allocator
 	if span <= f64(w) {
 		// Include one sample beyond each edge so the line reaches the frame.
-		a0 := max(int(math.floor(back)) - 1, 0)
-		a1 := min(int(math.ceil(back + span)) + 1, oldest)
+		a0 := max(i64(math.floor(back)) - 1, 0)
+		a1 := min(i64(math.ceil(back + span)) + 1, oldest)
 		for a := a1; a >= a0; a -= 1 {
-			append(&pts, Vec2{x_of(f64(a), back, span, x1, w), y_of(at(h, a), max_v, y1, hgt, pad)})
+			val, _, ok := history_stats(h, a, a, now)
+			append(&pts, Vec2{x_of(f64(a), back, span, x1, w), ok ? y_of(val, max_v, y1, hgt, pad) : math.nan_f32()})
 		}
 	} else {
 		cols := int(w)
@@ -385,11 +396,10 @@ graph_points :: proc(h: ^History, v: ^Graph_View, x1, w, y1, hgt, max_v: f32) ->
 		for c in 0 ..< cols {
 			hi := back + f64(cols - c) * per // older edge of this column
 			lo := hi - per
-			a0, a1 := max(int(math.ceil(lo)), 0), min(int(math.ceil(hi)) - 1, oldest)
+			a0, a1 := max(i64(math.ceil(lo)), 0), min(i64(math.ceil(hi)) - 1, oldest)
 			if a0 > a1 {continue}
-			sum: f32
-			for a in a0 ..= a1 {sum += at(h, a)}
-			append(&pts, Vec2{x1 - w + f32(c) + 0.5, y_of(sum / f32(a1 - a0 + 1), max_v, y1, hgt, pad)})
+			val, _, ok := history_stats(h, a0, a1, now)
+			append(&pts, Vec2{x1 - w + f32(c) + 0.5, ok ? y_of(val, max_v, y1, hgt, pad) : math.nan_f32()})
 		}
 	}
 	return pts[:]
@@ -398,18 +408,16 @@ graph_points :: proc(h: ^History, v: ^Graph_View, x1, w, y1, hgt, max_v: f32) ->
 // Largest value inside the view (for auto-scaled graphs).
 history_view_max :: proc(h: ^History, v: ^Graph_View) -> f32 {
 	back := view_back(v)
-	m: f32
-	a0 := max(int(back), 0)
-	a1 := min(int(back + view_span(v)), h.count - 1)
-	for a in a0 ..= a1 {m = max(m, history_get(h, h.count, h.count - 1 - a))}
-	return m
+	_, m, ok := history_stats(h, i64(back), i64(back + view_span(v)), time.to_unix_seconds(time.now()))
+	return ok ? m : 0
 }
 
 @(private = "file")
 fmt_age :: proc(s: f64) -> string {
 	if s < 90 {return fmt.tprintf("%ds", int(s + 0.5))}
 	if s < 5400 {return fmt.tprintf("%d min", int(s / 60 + 0.5))}
-	return fmt.tprintf("%.1f h", s / 3600)
+	if s < 2 * 86400 {return fmt.tprintf("%.1f h", s / 3600)}
+	return fmt.tprintf("%.1f days", s / 86400)
 }
 
 Graph_Series :: struct {
@@ -418,7 +426,7 @@ Graph_Series :: struct {
 	fill:  bool,
 }
 
-// Area graphs of histories (1 Hz) in a zoomable view.
+// Area graphs of histories in a zoomable view; gaps stay empty.
 history_graph_multi :: proc(series: []Graph_Series, v: ^Graph_View, max_v: f32, size: Vec2) {
 	right_inset: f32 = 7 // keep the "now" marker fully inside the frame
 	p := im.GetCursorScreenPos()
@@ -441,6 +449,7 @@ history_graph_multi :: proc(series: []Graph_Series, v: ^Graph_View, max_v: f32, 
 			bot := col32(s.color, 0.02)
 			for i in 0 ..< len(pts) - 1 {
 				a, b := pts[i], pts[i + 1]
+				if math.is_nan(a.y) || math.is_nan(b.y) {continue}
 				im.DrawList_PrimReserve(d, 6, 6)
 				im.DrawList_PrimVtx(d, a, uv, top)
 				im.DrawList_PrimVtx(d, b, uv, top)
@@ -450,9 +459,19 @@ history_graph_multi :: proc(series: []Graph_Series, v: ^Graph_View, max_v: f32, 
 				im.DrawList_PrimVtx(d, {a.x, y1}, uv, bot)
 			}
 		}
-		im.DrawList_AddPolyline(d, &pts[0], i32(len(pts)), col32(s.color), 1.6)
-		if live {
-			last := pts[len(pts) - 1]
+		// One polyline per run of samples; a lone sample between gaps is a dot.
+		for i := 0; i < len(pts); {
+			if math.is_nan(pts[i].y) {i += 1; continue}
+			j := i
+			for j + 1 < len(pts) && !math.is_nan(pts[j + 1].y) {j += 1}
+			if j > i {
+				im.DrawList_AddPolyline(d, &pts[i], i32(j - i + 1), col32(s.color), 1.6)
+			} else {
+				im.DrawList_AddCircleFilled(d, pts[i], 1, col32(s.color))
+			}
+			i = j + 1
+		}
+		if last := pts[len(pts) - 1]; live && !math.is_nan(last.y) {
 			im.DrawList_AddCircleFilled(d, last, 3.5, col32(s.color))
 			if s.fill {im.DrawList_AddCircle(d, last, 6, col32(s.color, 0.35), 0, 1.5)}
 		}

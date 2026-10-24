@@ -14,7 +14,7 @@ import "core:sys/linux"
 import "core:sys/posix"
 
 @(private = "file")
-STATE_MAGIC :: u32(0x57_4c_57_34) // "WLW4" (bump when Saved_State changes)
+STATE_MAGIC :: u32(0x57_4c_57_36) // "WLW6" (bump when Saved_State changes)
 
 @(private = "file")
 Saved_State :: struct {
@@ -35,6 +35,7 @@ clear_cloexec :: proc(fd: posix.FD) {
 // Replace the process image with a fresh copy of ourselves. Only returns on failure.
 // `show_after`: the new image shows the popup right away (used by restart).
 reexec_self :: proc(show_after := false) {
+	perf_save() // in case the new image can't take the histories over (different version)
 	state := new(Saved_State, context.temp_allocator)
 	state.magic = STATE_MAGIC
 	{
@@ -120,8 +121,9 @@ resume_from_args :: proc() -> (ipc_fd: posix.FD, ok: bool, show: bool) {
 	if !ok1 || !ok2 {return -1, false, false}
 	set_cloexec_nonblock(posix.FD(ifd))
 
-	state: Saved_State
-	buf := ([^]u8)(&state)[:size_of(Saved_State)]
+	state := new(Saved_State) // ~0.5 MB: not on the stack
+	defer free(state)
+	buf := ([^]u8)(state)[:size_of(Saved_State)]
 	linux.lseek(linux.Fd(sfd), 0, .SET)
 	off := 0
 	for off < len(buf) {
@@ -140,6 +142,7 @@ resume_from_args :: proc() -> (ipc_fd: posix.FD, ok: bool, show: bool) {
 		thermals.gpu_temp_h = state.gpu_temp
 		thermals.cpu_power_h = state.cpu_power
 		thermals.gpu_power_h = state.gpu_power
+		perf_resumed = true
 	}
 	reap_children()
 	return posix.FD(ifd), true, show

@@ -92,7 +92,8 @@ draw_memory_card :: proc(w: f32) {
 		im.DrawList_AddRectFilled(dl(), {p.x + inner - tw - 12, p.y + 6}, {p.x + inner, p.y + 23}, col32(C_RED, 0.18), 8)
 		draw_text(fonts.bold, 11, {p.x + inner - tw - 6, p.y + 7}, col32(C_RED), tag)
 	}
-	history_graph(&sysmon.mem, &perf_view, accent, {inner, 80})
+	// MiB, against today's total (older samples may come from a different RAM size).
+	history_graph_multi({{&sysmon.mem, accent, true}}, &perf_view, f32(f64(total) / PERF_MIB), {inner, 80})
 
 	// Used | cache | free, as one stacked bar.
 	im.Dummy({1, 2})
