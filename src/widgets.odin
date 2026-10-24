@@ -144,6 +144,19 @@ glyph_ink_y :: proc(font: ^im.Font, size: f32, r: rune) -> (y0, y1: f32) {
 	return g.Y0, g.Y1
 }
 
+// Draw a single-glyph icon with its ink centred on c (icon fonts' advance
+// boxes don't match the drawn shape, so measure() centring is off).
+draw_icon_centered :: proc(font: ^im.Font, size: f32, c: [2]f32, col: u32, icon: string) {
+	baked := im.Font_GetFontBaked(font, size)
+	g := baked != nil ? im.FontBaked_FindGlyph(baked, im.Wchar(first_rune(icon))) : nil
+	if g == nil {
+		sz := measure(font, size, icon)
+		draw_text(font, size, {c.x - sz.x / 2, c.y - sz.y / 2}, col, icon)
+		return
+	}
+	draw_text(font, size, {math.round(c.x - (g.X0 + g.X1) / 2), math.round(c.y - (g.Y0 + g.Y1) / 2)}, col, icon)
+}
+
 sub_heading :: proc(s: string) {
 	im.Dummy({1, 2})
 	label(fonts.bold, SZ_SMALL, col32(C_FAINT), strings.to_upper(s, context.temp_allocator))

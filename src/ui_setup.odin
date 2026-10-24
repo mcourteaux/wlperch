@@ -235,8 +235,7 @@ stat_tile :: proc(id: string, w: f32, icon, caption, value, sub: string, accent:
 	TILE_H :: 51
 	if progress < 0 {p.y += 5}
 	im.DrawList_AddCircleFilled(dl(), {p.x + 17, p.y + 19}, 17, col32(accent, 0.16))
-	isz := measure(fonts.ui, 18, icon)
-	draw_text(fonts.ui, 18, {p.x + 17 - isz.x / 2, p.y + 19 - isz.y / 2}, col32(accent), icon)
+	draw_icon_centered(fonts.ui, 18, {p.x + 17, p.y + 19}, col32(accent), icon)
 	draw_text(fonts.ui, SZ_SMALL, {p.x + 46, p.y}, col32(C_MUTED), caption)
 	draw_text(fonts.bold, 20, {p.x + 46, p.y + 14}, col32(C_TEXT), value)
 	if sub != "" {
@@ -269,8 +268,7 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 
 	// Header: icon badge, title, state pill underneath.
 	im.DrawList_AddCircleFilled(dl(), {cp.x + 18, cp.y + 20}, 18, col32(inf.accent, 0.16))
-	isz := measure(fonts.ui, 19, inf.icon)
-	draw_text(fonts.ui, 19, {cp.x + 18 - isz.x / 2, cp.y + 20 - isz.y / 2}, col32(inf.accent), inf.icon)
+	draw_icon_centered(fonts.ui, 19, {cp.x + 18, cp.y + 20}, col32(inf.accent), inf.icon)
 	draw_text(fonts.bold, 16, {cp.x + 48, cp.y + 1}, col32(C_TEXT), inf.title)
 	stext, scol := state_pill(c.state)
 	ssz := measure(fonts.bold, 11, stext)
@@ -387,7 +385,7 @@ draw_setup :: proc() {
 	// ---- Header -------------------------------------------------------------
 	p := im.GetCursorScreenPos()
 	im.DrawList_AddCircleFilled(dl(), {p.x + 22, p.y + 22}, 22, col32(C_BLUE, 0.16))
-	draw_text(fonts.ui, 24, {p.x + 10, p.y + 9}, col32(C_BLUE), ICON_TUNE_BAR)
+	draw_icon_centered(fonts.ui, 24, {p.x + 22, p.y + 22}, col32(C_BLUE), ICON_TUNE_BAR)
 	draw_text(fonts.bold, 26, {p.x + 58, p.y - 2}, col32(C_TEXT), "wlperch")
 	// Components | Settings, right-aligned; the recommended install left of it.
 	tabs := []string{"Components", "Settings"}
