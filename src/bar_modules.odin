@@ -356,6 +356,7 @@ Bar_Seg :: struct {
 	px:    f32,
 	color: u32,
 	alpha: f32,
+	tnum:  bool, // tabular digits (numbers that change)
 }
 
 Bar_Item :: struct {
@@ -409,10 +410,10 @@ Bar_Layout :: struct {
 @(private = "file") BATTERY_ICONS := [5]string{"", "", "", "", ""}
 @(private = "file") BRIGHT_ICONS := [3]string{"\U000F00DE", "\U000F00DF", "\U000F00E0"}
 
-bar_seg :: proc(it: ^Bar_Item, text: string, color: u32, font := Bar_Font.Regular, px := PX, alpha: f32 = 1) {
+bar_seg :: proc(it: ^Bar_Item, text: string, color: u32, font := Bar_Font.Regular, px := PX, alpha: f32 = 1, tnum := false) {
 	if it.segs == nil {it.segs.allocator = context.temp_allocator}
 	// A copy: bar_data's strings change under the worker once the lock is let go.
-	append(&it.segs, Bar_Seg{strings.clone(text, context.temp_allocator), font, px, color, alpha})
+	append(&it.segs, Bar_Seg{strings.clone(text, context.temp_allocator), font, px, color, alpha, tnum})
 }
 
 module_item :: proc(mod: Bar_Mod) -> Bar_Item {
@@ -507,7 +508,7 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		it := module_item(.Scratchpad)
 		it.pad = 8
 		bar_seg(&it, ICON_WINDOWS, p.muted)
-		bar_seg(&it, fmt.tprintf(" %d", len(bsway.scratch)), p.muted)
+		bar_seg(&it, fmt.tprintf(" %d", len(bsway.scratch)), p.muted, tnum = true)
 		b := strings.builder_make(context.temp_allocator)
 		for s, i in bsway.scratch {
 			if i > 0 {strings.write_byte(&b, '\n')}
@@ -548,7 +549,7 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 	case .Backlight:
 		if bar_data.bl_pct < 0 {return}
 		it := module_item(.Backlight)
-		bar_seg(&it, fmt.tprintf("%d%% ", bar_data.bl_pct), p.yellow)
+		bar_seg(&it, fmt.tprintf("%d%% ", bar_data.bl_pct), p.yellow, tnum = true)
 		bar_seg(&it, BRIGHT_ICONS[clamp(bar_data.bl_pct * 3 / 101, 0, 2)], p.yellow)
 		it.tooltip = "Brightness: scroll to change"
 		add(lay, it)
@@ -568,9 +569,9 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		icon := BATTERY_ICONS[clamp(pct * 5 / 101, 0, 4)]
 		if charging {icon = ICON_CHARGING} else if plugged {icon = ICON_PLUG}
 		if battery_alt && bar_data.bat_time != "" {
-			bar_seg(&it, fmt.tprintf("%s ", bar_data.bat_time), col)
+			bar_seg(&it, fmt.tprintf("%s ", bar_data.bat_time), col, tnum = true)
 		} else {
-			bar_seg(&it, fmt.tprintf("%d%% ", pct), col)
+			bar_seg(&it, fmt.tprintf("%d%% ", pct), col, tnum = true)
 		}
 		bar_seg(&it, icon, col)
 		it.tooltip = fmt.tprintf("Battery %d%% · %s%s", pct, strings.to_lower(bar_data.bat_status, context.temp_allocator),
@@ -606,9 +607,9 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		if t.text == "" {return}
 		if t.class == "running" {
 			it.bg, it.bg_alpha = p.teal, 0.12
-			bar_seg(&it, t.text, p.teal, .Bold)
+			bar_seg(&it, t.text, p.teal, .Bold, tnum = true)
 		} else {
-			bar_seg(&it, t.text, p.faint)
+			bar_seg(&it, t.text, p.faint, tnum = true)
 		}
 		it.tooltip = t.tooltip
 		add(lay, it)
@@ -619,11 +620,11 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		switch s.class {
 		case "co2-high":
 			it.bg, it.bg_alpha = p.red, 1
-			bar_seg(&it, s.text, p.on_accent)
+			bar_seg(&it, s.text, p.on_accent, tnum = true)
 		case "co2-warn":
-			bar_seg(&it, s.text, p.orange)
+			bar_seg(&it, s.text, p.orange, tnum = true)
 		case:
-			bar_seg(&it, s.text, p.teal)
+			bar_seg(&it, s.text, p.teal, tnum = true)
 		}
 		it.tooltip = s.tooltip
 		add(lay, it)
@@ -643,8 +644,8 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 			col, font = p.orange, .Bold
 		case .Normal:
 		}
-		bar_seg(&it, fmt.tprintf("%.1f", used), col, font)
-		bar_seg(&it, fmt.tprintf(" / %.0f GiB", total), col, .Regular, PX * 0.82)
+		bar_seg(&it, fmt.tprintf("%.1f", used), col, font, tnum = true)
+		bar_seg(&it, fmt.tprintf(" / %.0f GiB", total), col, .Regular, PX * 0.82, tnum = true)
 		bar_seg(&it, "  ", col)
 		bar_seg(&it, ICON_MEM, col)
 		it.tooltip = fmt.tprintf("%.0f%% used", f64(bar_data.mem_used) / f64(bar_data.mem_total) * 100)
@@ -674,10 +675,10 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		switch n.class {
 		case "unread":
 			it.bg, it.bg_alpha = p.purple, 0.14
-			bar_seg(&it, n.text, p.purple, .Bold, 15)
-		case "dnd": bar_seg(&it, n.text, p.faint, .Regular, 15)
-		case "off": bar_seg(&it, n.text, p.off, .Regular, 15)
-		case:       bar_seg(&it, n.text, p.muted, .Regular, 15)
+			bar_seg(&it, n.text, p.purple, .Bold, 15, tnum = true)
+		case "dnd": bar_seg(&it, n.text, p.faint, .Regular, 15, tnum = true)
+		case "off": bar_seg(&it, n.text, p.off, .Regular, 15, tnum = true)
+		case:       bar_seg(&it, n.text, p.muted, .Regular, 15, tnum = true)
 		}
 		it.tooltip = n.tooltip
 		add(lay, it)
@@ -790,7 +791,7 @@ bar_clock_has_seconds :: proc() -> bool {return strings.contains(bar_cfg.clock, 
 @(private = "file")
 clock_segs :: proc(it: ^Bar_Item, format: string, col: u32) {
 	for r in bar_clock_text(format, bar_now()) {
-		bar_seg(it, r[0], r[1] == "b" ? bar_pal.text : col, r[1] == "b" ? .Bold : .Regular)
+		bar_seg(it, r[0], r[1] == "b" ? bar_pal.text : col, r[1] == "b" ? .Bold : .Regular, tnum = true)
 	}
 }
 

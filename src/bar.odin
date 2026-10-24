@@ -504,7 +504,7 @@ mark_all_dirty :: proc() {
 @(private = "file")
 item_width :: proc(it: ^Bar_Item) -> f32 {
 	w: f32
-	for s in it.segs {w += bar_text_width(s.font, s.px, s.text)}
+	for s in it.segs {w += bar_text_width(s.font, s.px, s.text, s.tnum)}
 	if it.icon != nil || it.icon_size > 0 {w += it.icon_size}
 	return max(w, it.min_w) + 2 * it.pad
 }
@@ -605,7 +605,7 @@ draw_bar :: proc(o: ^Bar_Output, cv: ^Bar_Canvas, lay: ^Bar_Layout) {
 		content := item_width(&it) - 2 * it.pad
 		if it.min_w > 0 {
 			raw: f32
-			for s in it.segs {raw += bar_text_width(s.font, s.px, s.text)}
+			for s in it.segs {raw += bar_text_width(s.font, s.px, s.text, s.tnum)}
 			x += (content - raw) / 2
 		}
 		if it.icon != nil {
@@ -614,8 +614,8 @@ draw_bar :: proc(o: ^Bar_Output, cv: ^Bar_Canvas, lay: ^Bar_Layout) {
 		}
 		for s in it.segs {
 			baseline := H / 2 + 0.31 * s.px
-			bar_text(cv, s.font, s.px, x, baseline, s.text, s.color, s.alpha)
-			x += bar_text_width(s.font, s.px, s.text)
+			bar_text(cv, s.font, s.px, x, baseline, s.text, s.color, s.alpha, s.tnum)
+			x += bar_text_width(s.font, s.px, s.text, s.tnum)
 		}
 	}
 	_ = W

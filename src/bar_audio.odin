@@ -125,11 +125,11 @@ bar_audio_item :: proc() -> (it: Bar_Item, ok: bool) {
 	if sink.mute {
 		it.bg, it.bg_alpha = p.red, 0.14
 		bar_seg(&it, icon, p.red)
-		bar_seg(&it, fmt.tprintf(" %d%%", v), p.faint)
+		bar_seg(&it, fmt.tprintf(" %d%%", v), p.faint, tnum = true)
 	} else {
 		col := v > 100 ? p.orange : p.soft
 		bar_seg(&it, icon, col)
-		bar_seg(&it, fmt.tprintf(" %d%%", v), col)
+		bar_seg(&it, fmt.tprintf(" %d%%", v), col, tnum = true)
 	}
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, dev_title(sink))
