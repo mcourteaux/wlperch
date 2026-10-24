@@ -1185,6 +1185,10 @@ config_reload :: proc() {
 		// The old string may still be in use on the worker: let it be.
 		config.sensors_bar_room = strings.clone(config_value(m, defaults, "sensors", "bar_room"))
 	}
+	// Projects (e.g. one renamed with `track rename`): the workspace pills follow.
+	// (The old strings are a few bytes: let them be.)
+	clear(&tracker.projects)
+	if src, err := os.read_entire_file(path, context.temp_allocator); err == nil {projects_load(string(src), m)}
 	same_outputs := len(old.outputs) == len(bar_cfg.outputs)
 	if same_outputs {for o, i in old.outputs {if o != bar_cfg.outputs[i] {same_outputs = false}}}
 	if old.bottom != bar_cfg.bottom || old.height != bar_cfg.height || !same_outputs {

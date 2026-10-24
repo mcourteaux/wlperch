@@ -130,13 +130,11 @@ project_workspace :: proc(p: Project, n: int) -> string {
 
 // ---- Time formatting -----------------------------------------------------
 
-@(private = "file")
 iso_utc :: proc(t: i64) -> string {
 	dt, _ := time.time_to_datetime(time.unix(t, 0))
 	return fmt.tprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
 }
 
-@(private = "file")
 parse_iso_utc :: proc(s: string) -> (unix: i64, ok: bool) {
 	if len(s) < 20 {return 0, false}
 	y := strconv.parse_int(s[0:4]) or_return
@@ -205,14 +203,19 @@ close_segment :: proc(end: i64) {
 	tracker.running = -1
 }
 
-// Read the log and recover a segment left open by a crash.
-tracker_init :: proc() {
+// Where the log and the state files live (also for `track rename` without a daemon).
+tracker_paths :: proc() {
 	dir := data_dir()
 	os.make_directory_all(dir)
 	tracker.log_path = strings.concatenate({dir, "/timelog.tsv"})
 	tracker.cur_path = strings.concatenate({dir, "/timetracker.current"})
 	tracker.lock_path = strings.concatenate({dir, "/timetracker.lock"})
 	tracker.away_path = strings.concatenate({dir, "/timetracker.away"})
+}
+
+// Read the log and recover a segment left open by a crash.
+tracker_init :: proc() {
+	tracker_paths()
 	tracker.lock = os.exists(tracker.lock_path)
 	if data, err := os.read_entire_file(tracker.log_path, context.temp_allocator); err == nil {
 		timelog_parse(string(data), &tracker.entries)

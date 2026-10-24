@@ -88,11 +88,32 @@ draw_time :: proc(w: f32) {
 		im.SetCursorScreenPos(hp)
 	}
 	start := -1
+	rename_go := false
 	for pr, i in tracker.projects {
 		rp := im.GetCursorScreenPos()
 		h: f32 = 34
-		clicked := im.InvisibleButton(cstr(fmt.tprintf("proj:%s", pr.key)), {inner, h})
+		PENCIL_W :: f32(28)
+		clicked := im.InvisibleButton(cstr(fmt.tprintf("proj:%s", pr.key)), {inner - PENCIL_W, h})
 		hovered := im.IsItemHovered()
+		// The pencil at the right end of the row: rename the project.
+		editing := ren.key == pr.key
+		im.SetCursorScreenPos({rp.x + inner - PENCIL_W + 2, rp.y + 3})
+		if im.InvisibleButton(cstr(fmt.tprintf("rename:%s", pr.key)), {PENCIL_W, h - 6}) {
+			if editing {rename_close()} else {rename_open(pr)}
+			editing = ren.key == pr.key
+		}
+		pencil_hovered := im.IsItemHovered()
+		if pencil_hovered {
+			im.SetMouseCursor(.Hand)
+			tip(fmt.tprintf("Rename %s: its time log, config.ini section\nand (if you like) its sway workspaces", pr.name))
+		}
+		row_hovered := im.IsMouseHoveringRect({rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h})
+		if row_hovered || editing {
+			pc := pencil_hovered || editing ? pr.color : C_FAINT
+			psz := measure(fonts.ui, 15, ICON_PENCIL)
+			draw_text(fonts.ui, 15, {rp.x + inner - PENCIL_W / 2 + 2 - psz.x / 2, rp.y + 8}, col32(pc), ICON_PENCIL)
+		}
+		im.SetCursorScreenPos({rp.x, rp.y + h})
 		d := dl()
 		active := i == tracker.running
 		if active {
@@ -116,10 +137,14 @@ draw_time :: proc(w: f32) {
 		}
 		tt := fmt_duration(totals_today[pr.name])
 		tsz := measure(fonts.mono, SZ_BODY, tt)
-		draw_text(fonts.mono, SZ_BODY, {rp.x + inner - tsz.x - 26, rp.y + 8}, col32(totals_today[pr.name] > 0 ? C_TEXT : C_FAINT), tt)
+		draw_text(fonts.mono, SZ_BODY, {rp.x + inner - tsz.x - 26 - PENCIL_W, rp.y + 8}, col32(totals_today[pr.name] > 0 ? C_TEXT : C_FAINT), tt)
 		icon := active ? ICON_MONITORS : ICON_PLAY
-		draw_text(fonts.ui, 15, {rp.x + inner - 16, rp.y + 8}, col32(hovered || active ? pr.color : C_FAINT, active && !hovered ? 0.6 : 1), icon)
+		draw_text(fonts.ui, 15, {rp.x + inner - 16 - PENCIL_W, rp.y + 8}, col32(hovered || active ? pr.color : C_FAINT, active && !hovered ? 0.6 : 1), icon)
+		if editing && draw_rename_editor(pr, inner) {rename_go = true}
 	}
+	// Applied after the list: a merge removes a project from it.
+	if rename_go {rename_apply()}
+	draw_rename_result(inner)
 	// Keep-alive toggle: placeholder windows hold empty project workspaces open.
 	{
 		kp := im.GetCursorScreenPos()
@@ -417,4 +442,227 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 		what := sg.idle ? (sg.project == NO_PROJECT ? "Break (no project)" : fmt.tprintf("Break during %s", sg.project)) : sg.project
 		tip(fmt.tprintf("%s\n%s – %s  (%s)", what, hm(sg.s), hm(sg.e), fmt_duration(sg.e - sg.s)))
 	}
+}
+
+// ---- Renaming a project -------------------------------------------------------
+
+@(private = "file")
+Ren :: struct {
+	key:        string, // project being renamed ("" = none)
+	old:        string,
+	color:      u32,
+	buf:        [128]u8,
+	focus:      bool,
+	workspaces: bool,
+	armed:      bool, // a merge: the first click arms, the second applies
+	// The preview, for this text and workspace choice.
+	plan_text:  string,
+	plan_ws:    bool,
+	plan_at:    time.Tick,
+	err:        string,
+	head:       string,
+	details:    [dynamic]string,
+	merge:      bool,
+	new_name:   string, // as it will be (an existing project's spelling when merging)
+	ws_n:       int,
+	result:     string,
+	result_ok:  bool,
+}
+@(private = "file")
+ren: Ren
+
+@(private = "file")
+rename_text :: proc() -> string {return strings.trim_space(string(cstring(&ren.buf[0])))}
+
+@(private = "file")
+rename_clear_plan :: proc() {
+	delete(ren.plan_text)
+	delete(ren.err)
+	delete(ren.head)
+	delete(ren.new_name)
+	ren.new_name = ""
+	for l in ren.details {delete(l)}
+	clear(&ren.details)
+	ren.plan_text, ren.err, ren.head = "", "", ""
+}
+
+@(private = "file")
+rename_open :: proc(pr: Project) {
+	rename_close()
+	ren.key = strings.clone(pr.key)
+	ren.old = strings.clone(pr.name)
+	ren.color = pr.color
+	ren.buf = {}
+	copy(ren.buf[:len(ren.buf) - 1], pr.name)
+	ren.focus = true
+	ren.armed = false
+	// The workspaces still carry the old name: renaming them is what keeps
+	// the project counting, so it's on unless you turn it off.
+	ren.workspaces = true
+	delete(ren.result)
+	ren.result = ""
+}
+
+@(private = "file")
+rename_close :: proc() {
+	delete(ren.key)
+	delete(ren.old)
+	ren.key, ren.old = "", ""
+	rename_clear_plan()
+}
+
+// Escape while renaming cancels the rename instead of closing the panel.
+time_rename_escape :: proc() -> bool {
+	if ren.key == "" {return false}
+	rename_close()
+	request_redraw()
+	return true
+}
+
+@(private = "file")
+rename_refresh_plan :: proc() {
+	text := rename_text()
+	if ren.plan_text == text && ren.plan_ws == ren.workspaces && (ren.head != "" || ren.err != "") && time.tick_since(ren.plan_at) < 3 * time.Second {return}
+	if ren.plan_text != text {ren.armed = false}
+	rename_clear_plan()
+	ren.plan_text = strings.clone(text)
+	ren.plan_ws = ren.workspaces
+	ren.plan_at = time.tick_now()
+	if text == ren.old {
+		ren.err = strings.clone("Type the new name")
+		return
+	}
+	p := rename_plan(ren.old, text)
+	ren.merge = p.merge
+	ren.new_name = strings.clone(p.new)
+	ren.ws_n = len(p.ws_moves)
+	if p.err != "" {
+		ren.err = strings.clone(p.err)
+		return
+	}
+	ren.head = strings.clone(rename_headline(p))
+	for l in rename_details(p, {workspaces = ren.workspaces}) {append(&ren.details, strings.clone(l))}
+}
+
+@(private = "file")
+rename_apply :: proc() {
+	text := strings.clone(rename_text(), context.temp_allocator)
+	report, ok := tracker_rename(ren.old, text, {merge = ren.merge, workspaces = ren.workspaces}, true)
+	rename_close()
+	delete(ren.result)
+	r, _ := strings.replace_all(strings.trim_space(report), "\n  ", "\n·  ", context.temp_allocator)
+	ren.result = strings.clone(r)
+	ren.result_ok = ok
+	request_redraw()
+}
+
+@(private = "file")
+wrapped :: proc(font: ^im.Font, size: f32, col: u32, s: string, width: f32) {
+	im.PushFontFloat(font, size)
+	im.PushStyleColor(.Text, col)
+	im.PushTextWrapPos(im.GetCursorPosX() + width)
+	b, e := str_range(s)
+	im.TextUnformatted(b, e)
+	im.PopTextWrapPos()
+	im.PopStyleColor()
+	im.PopFont()
+}
+
+// Under the project's row: the new name, what will change, confirm. Returns
+// true when the rename should be applied.
+@(private = "file")
+draw_rename_editor :: proc(pr: Project, inner: f32) -> bool {
+	PAD :: f32(12)
+	top := im.GetCursorScreenPos()
+	w := inner - 2 * PAD
+	im.SetCursorScreenPos({top.x + PAD, top.y + 10})
+	im.BeginGroup()
+	label(fonts.bold, SZ_SMALL, col32(C_MUTED), fmt.tprintf("Rename %s to", pr.name))
+	im.Dummy({1, 2})
+
+	fp := im.GetCursorScreenPos()
+	fe := fp + Vec2{w, SZ_BODY + 16}
+	field_fill(fp, fe, 8, col32(C_BG))
+	im.PushFontFloat(fonts.ui, SZ_BODY)
+	im.PushStyleVarImVec2(.FramePadding, {10, 8})
+	im.PushStyleVar(.FrameBorderSize, 0)
+	im.PushStyleColorImVec4(.FrameBg, {})
+	im.PushStyleColorImVec4(.FrameBgHovered, {})
+	im.PushStyleColorImVec4(.FrameBgActive, {})
+	if ren.focus {
+		im.SetKeyboardFocusHere()
+		ren.focus = false
+	}
+	im.SetNextItemWidth(w)
+	entered := im.InputTextWithHint("##rename", "New name", cstring(&ren.buf[0]), uint(len(ren.buf)), {.EnterReturnsTrue, .AutoSelectAll})
+	active := im.IsItemActive()
+	if active {im.SetNavCursorVisible(false)}
+	im.PopStyleVar(2)
+	im.PopStyleColor(3)
+	im.PopFont()
+	field_outline(fp, fe, 8, active ? col32(pr.color, 0.85) : col32(C_BORDER))
+	if entered {ren.focus = true} // keep typing after a refused Enter
+
+	rename_refresh_plan()
+	im.Dummy({1, 4})
+	go := false
+	if ren.err != "" {
+		wrapped(fonts.ui, SZ_SMALL, col32(ren.err == "Type the new name" ? C_FAINT : C_RED), ren.err, w)
+	} else {
+		wrapped(fonts.bold, SZ_SMALL + 1, col32(ren.merge ? C_ORANGE : C_TEXT), ren.head, w)
+		for l in ren.details {wrapped(fonts.ui, SZ_SMALL, col32(C_MUTED), fmt.tprintf("·  %s", l), w)}
+	}
+	if ren.ws_n > 0 {
+		im.Dummy({1, 4})
+		tp := im.GetCursorScreenPos()
+		if toggle_switch("##renws", ren.workspaces, pr.color) {ren.workspaces = !ren.workspaces}
+		draw_text(fonts.ui, SZ_SMALL, {tp.x + 48, tp.y + 3}, col32(ren.workspaces ? C_TEXT : C_MUTED), "Also rename its sway workspaces")
+		if !ren.workspaces {
+			wrapped(fonts.ui, SZ_SMALL, col32(C_ORANGE), fmt.tprintf("Off: workspaces named \"%s N\" stop counting as time for the project until you reopen it from this list.", pr.name), w)
+		}
+	}
+	im.Dummy({1, 6})
+	if ren.err == "" {
+		lbl := ren.merge ? (ren.armed ? "Click again to merge" : fmt.tprintf("Merge into %s", ren.new_name)) : "Rename"
+		accent := ren.merge ? C_ORANGE : pr.color
+		if pill_button("##rename-go", lbl, accent, true) || (entered && !ren.merge) {
+			if ren.merge && !ren.armed {ren.armed = true} else {go = true}
+		}
+		im.SameLine(0, 8)
+	}
+	if pill_button("##rename-cancel", "Cancel", C_MUTED) {rename_close()}
+	if !go && ren.key != "" {
+		im.SameLine(0, 12)
+		hp := im.GetCursorScreenPos()
+		draw_text(fonts.ui, 11, {hp.x, hp.y + 8}, col32(C_FAINT), "Backups of the log and config are kept")
+		im.NewLine()
+	}
+	im.EndGroup()
+	bot := im.GetItemRectMax().y + 10
+	field_outline({top.x, top.y + 2}, {top.x + inner, bot}, 10, col32(pr.color, 0.45))
+	im.SetCursorScreenPos({top.x, bot + 6})
+	im.Dummy({inner, 1})
+	return go
+}
+
+// The outcome of the last rename, until dismissed.
+@(private = "file")
+draw_rename_result :: proc(inner: f32) {
+	if ren.result == "" {return}
+	top := im.GetCursorScreenPos()
+	col: u32 = ren.result_ok ? C_GREEN : C_RED
+	im.SetCursorScreenPos({top.x + 34, top.y + 8})
+	im.BeginGroup()
+	wrapped(fonts.ui, SZ_SMALL, col32(C_TEXT), ren.result, inner - 70)
+	im.EndGroup()
+	bot := im.GetItemRectMax().y + 8
+	im.DrawList_AddRectFilled(dl(), top, {top.x + inner, bot}, col32(col, 0.10), 9)
+	draw_text(fonts.ui, 16, {top.x + 10, top.y + 8}, col32(col), ren.result_ok ? ICON_CHECK_CIRCLE : ICON_ALERT)
+	im.SetCursorScreenPos({top.x + inner - 30, top.y + 2})
+	if icon_button("##rename-result-close", ICON_CLOSE, C_MUTED, 28, tooltip = "Dismiss") {
+		delete(ren.result)
+		ren.result = ""
+	}
+	im.SetCursorScreenPos({top.x, bot + 6})
+	im.Dummy({inner, 1})
 }

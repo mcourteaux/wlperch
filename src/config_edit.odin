@@ -155,6 +155,114 @@ config_remove_value :: proc(section, key: string) -> bool {
 	return config_rewrite(proc(text: string, d: [3]string) -> string {return ini_remove_key(text, d[0], d[1])}, {section, key, ""})
 }
 
+// "[old]" -> "[new]": the header line keeps its indentation and anything after "]".
+ini_rename_section :: proc(text, old, new: string, allocator := context.temp_allocator) -> string {
+	lines := strings.split_after(text, "\n", context.temp_allocator)
+	b := strings.builder_make(allocator)
+	for line in lines {
+		l := strings.trim_space(line)
+		if name, ok := ini_header(l); ok && name == old {
+			indent := line[:strings.index(line, l)]
+			close := strings.index_byte(l, ']')
+			rest := close >= 0 ? l[close + 1:] : ""
+			fmt.sbprintf(&b, "%s[%s]%s%s", indent, new, rest, line[len(indent) + len(l):])
+			continue
+		}
+		strings.write_string(&b, line)
+	}
+	return strings.to_string(b)
+}
+
+// Drops [section]: its header, keys and blank lines. Comments stay (they may
+// describe the next section).
+ini_remove_section :: proc(text, section: string, allocator := context.temp_allocator) -> string {
+	lines := strings.split_after(text, "\n", context.temp_allocator)
+	b := strings.builder_make(allocator)
+	cur := ""
+	for line in lines {
+		l := strings.trim_space(line)
+		if name, ok := ini_header(l); ok {
+			cur = name
+			if name == section {continue}
+		}
+		if cur == section && (l == "" || ini_key(l) != "") {continue}
+		strings.write_string(&b, line)
+	}
+	return strings.to_string(b)
+}
+
+Config_Rename :: struct {
+	found:       bool,   // a [project.*] named `old`
+	section:     string, // its section ("project.wlwidgets")
+	new_section: string, // after the rename ("" = unchanged)
+	merged_into: string, // merge: the existing section of `new`; the old section is removed
+	new_name:    string, // `new`, or the existing project's spelling of it
+}
+
+// Rename the time-tracking project `old` (its `name`, or its key when it has
+// none) to `new` in config.ini's text. The section key follows when it was
+// the old name (lowercased, spaces -> dashes, if it was lowercase). If a
+// project called `new` (any case) exists, the old section is dropped instead:
+// a merge, keeping the existing project's colour and client.
+config_rename_project :: proc(text, old, new: string, allocator := context.temp_allocator) -> (out: string, info: Config_Rename) {
+	m, _ := ini.load_map_from_string(text, context.temp_allocator)
+	Sec :: struct {section, key, name: string}
+	secs: [dynamic]Sec
+	secs.allocator = context.temp_allocator
+	rest := text
+	for line in strings.split_lines_iterator(&rest) {
+		name, ok := ini_header(strings.trim_space(line))
+		if !ok || !strings.has_prefix(name, "project.") {continue}
+		pn := strings.trim_space(unquote(strings.trim_space(m[name]["name"])))
+		key := name[len("project."):]
+		append(&secs, Sec{name, key, pn != "" ? pn : key})
+	}
+	info.new_name = new
+	src, dst := -1, -1
+	for s, i in secs {
+		if src < 0 && s.name == old {src = i}
+	}
+	for s, i in secs {
+		if i != src && dst < 0 && strings.equal_fold(s.name, new) {dst = i}
+	}
+	if dst >= 0 {info.new_name = secs[dst].name}
+	if src < 0 {return text, info}
+	info.found = true
+	info.section = secs[src].section
+	if dst >= 0 {
+		info.merged_into = secs[dst].section
+		return ini_remove_section(text, info.section, allocator), info
+	}
+	out = ini_set_value(text, info.section, "name", new)
+	key := secs[src].key
+	if strings.equal_fold(key, old) {
+		nk, _ := strings.replace_all(new, " ", "-", context.temp_allocator)
+		if key == strings.to_lower(key, context.temp_allocator) {nk = strings.to_lower(nk, context.temp_allocator)}
+		ns := strings.concatenate({"project.", nk}, context.temp_allocator)
+		taken := false
+		for s in secs {if s.section == ns {taken = true}}
+		if nk != key && !taken {
+			out = ini_rename_section(out, info.section, ns)
+			info.new_section = ns
+		}
+	}
+	return strings.clone(out, allocator), info
+}
+
+// Write `data` to `path` via a temporary file renamed over it (readers never
+// see half a file), keeping the file's permissions.
+write_file_atomic :: proc(path, data: string) -> bool {
+	mode := os.Permissions_Default_File
+	if fi, err := os.stat(path, context.temp_allocator); err == nil {mode = fi.mode & os.Permissions_All}
+	tmp := strings.concatenate({path, ".wlperch-tmp"}, context.temp_allocator)
+	if os.write_entire_file(tmp, data, mode) != nil {return false}
+	if os.rename(tmp, path) != nil {
+		os.remove(tmp)
+		return false
+	}
+	return true
+}
+
 // ---- Settings offered in the setup window --------------------------------------
 
 Setting_Kind :: enum {

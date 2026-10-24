@@ -54,10 +54,17 @@ ipc_query :: proc(cmd: string, allocator := context.temp_allocator) -> (string, 
 	posix.setsockopt(fd, posix.SOL_SOCKET, .RCVTIMEO, &tv, size_of(tv))
 	line := strings.concatenate({cmd, "\n"}, context.temp_allocator)
 	posix.send(fd, raw_data(line), len(line), {})
-	buf: [512]u8
-	n := posix.recv(fd, &buf[0], len(buf), {})
-	if n <= 0 {return "", false}
-	return strings.clone(string(buf[:n]), allocator), true
+	// Until the daemon closes the connection (replies can be a few lines long).
+	out: [dynamic]u8
+	out.allocator = context.temp_allocator
+	buf: [4096]u8
+	for len(out) < 1 << 20 {
+		n := posix.recv(fd, &buf[0], len(buf), {})
+		if n <= 0 {break}
+		append(&out, ..buf[:n])
+	}
+	if len(out) == 0 {return "", false}
+	return strings.clone(string(out[:]), allocator), true
 }
 
 ipc_listen :: proc() -> posix.FD {

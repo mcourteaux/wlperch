@@ -86,7 +86,7 @@ draw_ui :: proc() -> f32 {
 		dnd_poll_async()
 	}
 
-	if im.IsKeyPressed(.Escape, false) {
+	if im.IsKeyPressed(.Escape, false) && !time_rename_escape() {
 		hide_requested = true
 	}
 

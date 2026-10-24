@@ -213,6 +213,20 @@ and how long you work on average before walking away ("every 42m"). The open seg
 written to `timetracker.current` every 30 s, so a crash loses at most that.
 Segments shorter than 5 s are dropped.
 
+**Renaming a project.** The pencil at the end of a project row in the Time
+panel, or `wlperch track rename [--dry-run] [--merge] [--workspaces] OLD NEW`.
+The name new time is logged under comes from config.ini (`name =` of the
+`[project.*]` section), and the workspaces `OLD 1`, `OLD 2` are what count as
+the project. A rename changes the log lines and the config section (colour and
+client kept) and, if you choose, the sway workspaces. Leave them alone and they
+stop counting until you reopen the project under its new name, so the panel
+renames them by default and the CLI does when given `--workspaces`. Names match
+exactly (`wl` never touches `wlwidgets`; case counts). Both files are backed up
+first as `*.before-rename-<time>` (copy them back and `wlperch restart` to undo).
+Renaming onto an existing project merges the two. The CLI needs `--merge` for
+that and the panel asks twice. Where the two overlap in time, the overlap counts
+once. `--dry-run` shows what would change.
+
 The panel shows:
 - the running timer;
 - the projects as quick-switch rows with today's totals;

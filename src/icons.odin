@@ -118,3 +118,4 @@ ICON_MAGNIFY :: "\U000F0349" // md-magnify
 ICON_CONSOLE :: "\U000F018D" // md-console
 ICON_EMOTICON :: "\U000F01F5" // md-emoticon-happy-outline
 ICON_RETURN :: "\U000F0311" // md-keyboard_return
+ICON_PENCIL :: "\U000F03EB" // md-pencil

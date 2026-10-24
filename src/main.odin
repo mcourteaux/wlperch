@@ -39,6 +39,11 @@ commands:
                            (to gather misplaced windows); each move extends it
   track lock [on|off]  group-lock monitors: they follow each other into/out of projects
   track keep [on|off]  keep empty project workspaces alive with placeholder windows
+  track rename [--dry-run] [--merge] [--workspaces] <old> <new>
+                   rename a project in the time log and config.ini (backups
+                   kept as *.before-rename-*); --workspaces also renames its
+                   sway workspaces ("old 1" -> "new 1"), --merge allows
+                   renaming onto an existing project (overlaps count once)
   media play-pause|play|pause|next|previous [player]
                    control the playing media player (MPRIS)
   notify dnd [on|off]  do not disturb (popups held; they wait in the Notifications panel)
@@ -153,6 +158,7 @@ hide_popup :: proc() {
 
 // Commands: toggle|show [panel], hide, quit, restart, daemon, ping.
 handle_command :: proc(line: string) -> string {
+	if strings.has_prefix(line, "track rename") {return track_rename_ipc(line)}
 	f := strings.fields(line, context.temp_allocator)
 	center := false
 	at: Popup_At
@@ -339,7 +345,9 @@ main :: proc() {
 	case "setup":
 		run_setup()
 		return
-	case "toggle", "show", "hide", "quit", "daemon", "restart", "track", "audio", "notify":
+	case "toggle", "show", "hide", "quit", "daemon", "restart", "audio", "notify":
+	case "track":
+		if len(os.args) > 2 && os.args[2] == "rename" {os.exit(track_rename_cli(os.args[3:]))}
 	case "media":
 		os.exit(media_cli(os.args[2:]))
 	case "calc":
