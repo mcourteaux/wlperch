@@ -688,7 +688,10 @@ build_background :: proc(o: ^Lock_Output, bw, bh: i32) {
 	W, H := int(bw), int(bh)
 	if o.blur.px != nil {
 		tint := theme_light ? config.lock_background_light : config.lock_background
-		blur_draw(o.bg, W, H, o.blur, tint, clamp(0.3 + config.lock_dim, 0, 0.9))
+		// ~1/3 tint at the default dim: the screen shows through, the clock
+		// stays readable. (0.3 + dim made a dark desktop look like a plain
+		// background.)
+		blur_draw(o.bg, W, H, o.blur, tint, clamp(0.15 + config.lock_dim * 0.5, 0, 0.9))
 		return
 	}
 	if lk.image != nil {
