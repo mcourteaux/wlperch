@@ -1,6 +1,6 @@
 // vptr: drive a virtual pointer for UI testing on wlroots compositors.
 //
-// usage: vptr <x> <y> <layout_w> <layout_h> [move|click|right|middle|scroll:<n>] [hold_ms]
+// usage: vptr <x> <y> <layout_w> <layout_h> [move|click|right|middle|scroll:<n>|drag:<x2>:<y2>] [hold_ms]
 //
 // Coordinates are absolute in the compositor's layout space. The pointer device
 // exists only while this tool runs, so `hold_ms` keeps it alive (e.g. to take a
@@ -36,7 +36,7 @@ now_ms :: proc() -> u32 {
 
 main :: proc() {
 	if len(os.args) < 5 {
-		fmt.eprintln("usage: vptr <x> <y> <layout_w> <layout_h> [move|click|right|middle|scroll:<n>] [hold_ms]")
+		fmt.eprintln("usage: vptr <x> <y> <layout_w> <layout_h> [move|click|right|middle|scroll:<n>|drag:<x2>:<y2>] [hold_ms]")
 		os.exit(2)
 	}
 	x := u32(strconv.parse_int(os.args[1]) or_else 0)
@@ -92,6 +92,26 @@ main :: proc() {
 		press(display, ptr, BTN_RIGHT)
 	case action == "middle":
 		press(display, ptr, BTN_MIDDLE)
+	case strings.has_prefix(action, "drag:"):
+		// Press, move to (x2, y2) in steps, release.
+		to := strings.split(action[5:], ":", context.temp_allocator)
+		x2 := len(to) > 0 ? u32(strconv.parse_int(to[0]) or_else int(x)) : x
+		y2 := len(to) > 1 ? u32(strconv.parse_int(to[1]) or_else int(y)) : y
+		wl.zwlr_virtual_pointer_v1_button(ptr, now_ms(), BTN_LEFT, wl.POINTER_BUTTON_STATE_PRESSED)
+		wl.zwlr_virtual_pointer_v1_frame(ptr)
+		wl.display_roundtrip(display)
+		time.sleep(80 * time.Millisecond)
+		for i in 1 ..= 20 {
+			ix := i32(x) + (i32(x2) - i32(x)) * i32(i) / 20
+			iy := i32(y) + (i32(y2) - i32(y)) * i32(i) / 20
+			wl.zwlr_virtual_pointer_v1_motion_absolute(ptr, now_ms(), u32(ix), u32(iy), w, h)
+			wl.zwlr_virtual_pointer_v1_frame(ptr)
+			wl.display_roundtrip(display)
+			time.sleep(15 * time.Millisecond)
+		}
+		wl.zwlr_virtual_pointer_v1_button(ptr, now_ms(), BTN_LEFT, wl.POINTER_BUTTON_STATE_RELEASED)
+		wl.zwlr_virtual_pointer_v1_frame(ptr)
+		wl.display_roundtrip(display)
 	case strings.has_prefix(action, "scroll:"):
 		n := strconv.parse_int(action[7:]) or_else 1
 		wl.zwlr_virtual_pointer_v1_axis_source(ptr, wl.POINTER_AXIS_SOURCE_WHEEL)

@@ -290,6 +290,13 @@ pointer_listener := wl.Pointer_Listener {
 			}
 			return
 		}
+		// The setup window (an xdg toplevel) drags by any empty spot, as if it
+		// had a title bar. Not forwarded to imgui: the compositor's move grab
+		// swallows the release.
+		if plat.win_toplevel != nil && plat.seat != nil && button == 0x110 && state == wl.POINTER_BUTTON_STATE_PRESSED && !im.IsAnyItemHovered() && !im.IsAnyItemActive() {
+			wl.xdg_toplevel_move(plat.win_toplevel, plat.seat, serial)
+			return
+		}
 		b: i32 = -1
 		switch button {
 		case 0x110: b = 0 // BTN_LEFT
