@@ -47,6 +47,7 @@ Comp_Id :: enum {
 	Lock,
 	Menu,
 	Theme,
+	Portal,
 	Bar,
 }
 
@@ -280,6 +281,8 @@ setup_check :: proc() {
 	lock_setup_check(&c[.Lock], detail)
 	// Launcher key bindings
 	menu_setup_check(&c[.Menu], detail)
+	// Desktop portal (apps' dark / light); before the theme card, which reads it
+	portal_setup_check(&c[.Portal], detail)
 	// Dark / light key bindings
 	theme_setup_check(&c[.Theme], detail)
 	// wlperch's bar instead of waybar

@@ -1268,3 +1268,12 @@ test_bar_clock_and_workspaces :: proc(t: ^testing.T) {
 	testing.expect_value(t, strings.join(names[:], ",", context.temp_allocator), "-1:1,-1:3,0:Alpha 1,0:Alpha 2,1:Beta 1,-1:music")
 	testing.expect_value(t, len(groups), 5)
 }
+
+@(test)
+test_portal_parse_scheme :: proc(t: ^testing.T) {
+	testing.expect_value(t, portal_parse_scheme("v u 1\n"), "dark")
+	testing.expect_value(t, portal_parse_scheme("v u 2"), "light")
+	testing.expect_value(t, portal_parse_scheme("v u 0"), "no preference")
+	testing.expect_value(t, portal_parse_scheme(""), "")
+	testing.expect_value(t, portal_parse_scheme("Call failed: Could not activate remote peer"), "")
+}

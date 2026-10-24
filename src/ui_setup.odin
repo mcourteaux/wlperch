@@ -29,6 +29,7 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	case .Lock:     return {ICON_LOCK, "Lock screen", "wlperch lock instead of swaylock: clock, notification count, media and battery. Switches swayidle and your lock key over (with backups).", C_BLUE, LOCK_CONF}
 	case .Menu:     return {ICON_APPS, "Launcher", "wlperch's app launcher instead of rofi/wofi/fuzzel: apps, a calculator and the panels as you type, \"> command\" runs one. Switches your launcher keys over (with backups).", C_GREEN, MENU_CONF}
 	case .Theme:    return {ICON_THEME, "Dark / light", "wlperch theme switches wlperch (and its bar), GTK apps, waybar, kitty, nvim and the wallpaper between dark and light (see [theme] in the settings). Switches your theme keys over (with backups), copying your theme script's settings.", C_YELLOW, THEME_CONF}
+	case .Portal:   return {ICON_THEME, "Desktop portal", "Apps that follow the system dark / light setting (Discord, browsers, Flatpaks) read it from xdg-desktop-portal, which needs systemd's graphical session. Starts it from sway (with sway-systemd when installed).", C_ORANGE, ""}
 	case .Bar:      return {ICON_MONITORS, "Bar", "wlperch's own bar instead of waybar: workspaces (project workspaces in their colour), tray, media, timer, sensors, notifications, clock. Switches sway's bar over (with backups).", C_TEAL, BAR_CONF}
 	case .Launcher: return {ICON_HOME, "App launcher entry", "Adds \"wlperch setup\" to your application launcher (rofi, wofi, fuzzel…).", C_YELLOW, ""}
 	}
@@ -178,6 +179,12 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 		}
 		append(&out, Action{"Toggle now", false, setup_toggle_theme, false})
 		if s == .Installed || s == .Outdated {append(&out, Action{"Switch back", false, setup_remove_theme, true})}
+	case .Portal:
+		st := portal_status
+		if !st.session && !st.elsewhere && !st.installed {append(&out, Action{"Start session", true, setup_install_portal, false})}
+		if !st.session && (st.installed || st.elsewhere) {append(&out, Action{"Start now", true, setup_start_portal_session, false})}
+		if !st.backend && portal_can_install_backend() {append(&out, Action{"Install " + PORTAL_BACKEND_PKG + " (root)", st.session, setup_install_portal_backend, false})}
+		if st.installed {append(&out, Action{"Switch back", false, setup_remove_portal, true})}
 	case .Bar:
 		switch s {
 		case .Missing:   append(&out, Action{"Use wlperch bar", true, setup_install_bar, false})
@@ -205,7 +212,7 @@ COLUMNS := [4]struct {
 	ids:   []Comp_Id,
 } {
 	{"Basics", {.Program, .Service, .Config}},
-	{"Desktop", {.Sway, .Menu, .Launcher}},
+	{"Desktop", {.Sway, .Menu, .Launcher, .Portal}},
 	{"Bar and look", {.Bar, .Waybar, .Theme}},
 	{"Extras", {.Notifications, .Lock, .Rapl}},
 }
