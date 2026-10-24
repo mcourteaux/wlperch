@@ -226,6 +226,12 @@ draw_header :: proc(width: f32) {
 		setup_launch()
 		hide_requested = true
 	}
+	im.SetCursorScreenPos({right - 92, y - 3})
+	if icon_button("##lock", ICON_LOCK, C_MUTED, 28, tooltip = "Lock the screen") {
+		// Hide first: the lock may capture the screen for its background.
+		hide_requested = true
+		launch_detached({"sh", "-c", `sleep 0.25; exec "$0" lock`, self_exe()})
+	}
 
 	// Panel tabs under the buttons, clear of the date.
 	date_w: f32 = ok ? measure(fonts.ui, SZ_BODY, "Wednesday, 30 September 2026").x + 24 : 0
