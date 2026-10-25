@@ -383,6 +383,9 @@ sample. This is a test hook: without the variable, `/proc/meminfo` is used.
 `wlperch lock` locks the session with the `ext-session-lock-v1` protocol
 (sway 1.8+), like swaylock. `wlperch lock -f` returns once the screen is
 locked, which is what swayidle's `before-sleep` needs.
+`wlperch lock --screen-off` also powers the monitors off once locked; the
+first key press or mouse movement turns them back on (the monitor button
+next to the lock button in the main panel does this).
 
 - **Focused monitor:** shows the clock and date (with the weather), the
   password field, Caps Lock and the keyboard layout, and a status row along

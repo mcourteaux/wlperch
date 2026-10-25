@@ -231,6 +231,11 @@ draw_header :: proc(width: f32) {
 		hide_requested = true
 		launch_detached({"sh", "-c", `sleep 0.25; exec "$0" lock`, self_exe()})
 	}
+	im.SetCursorScreenPos({right - 124, y - 3})
+	if icon_button("##lockoff", ICON_MONITOR_OFF, C_MUTED, 28, tooltip = "Lock and turn the monitors off\na key or the mouse turns them back on") {
+		hide_requested = true
+		launch_detached({"sh", "-c", `sleep 0.25; exec "$0" lock --screen-off`, self_exe()})
+	}
 
 	// Panel tabs under the buttons, clear of the date.
 	date_w: f32 = ok ? measure(fonts.ui, SZ_BODY, "Wednesday, 30 September 2026").x + 24 : 0

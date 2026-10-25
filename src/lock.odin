@@ -167,6 +167,12 @@ Locker :: struct {
 
 	wake_r, wake_w: posix.FD, // worker threads -> main loop
 	daemon_w:       posix.FD, // --daemonize: tell the parent we're locked
+	// --screen-off: monitors powered off once locked, back on at the first
+	// key press or pointer movement (sway doesn't do that by itself).
+	screen_off:     bool,
+	screens_off:    bool,
+	screens_woken:  bool, // set from input callbacks
+	off_done:       bool,
 	pam_service:    string,
 
 	image:          []u32, // decoded [lock] image (0xAARRGGBB), or nil
@@ -384,8 +390,8 @@ pointer_listener := wl.Pointer_Listener {
 		wl.pointer_set_cursor(self, serial, nil, 0, 0)
 	},
 	leave = proc "c" (data: rawptr, self: ^wl.Pointer, serial: u32, surface: ^wl.Surface) {},
-	motion = proc "c" (data: rawptr, self: ^wl.Pointer, t: u32, x, y: wl.Fixed) {},
-	button = proc "c" (data: rawptr, self: ^wl.Pointer, serial, t, button, state: u32) {},
+	motion = proc "c" (data: rawptr, self: ^wl.Pointer, t: u32, x, y: wl.Fixed) {lk.screens_woken = true},
+	button = proc "c" (data: rawptr, self: ^wl.Pointer, serial, t, button, state: u32) {lk.screens_woken = true},
 	axis = proc "c" (data: rawptr, self: ^wl.Pointer, t: u32, axis: u32, value: wl.Fixed) {},
 	frame = proc "c" (data: rawptr, self: ^wl.Pointer) {},
 	axis_source = proc "c" (data: rawptr, self: ^wl.Pointer, axis_source: u32) {},
@@ -530,6 +536,7 @@ keyboard_listener := wl.Keyboard_Listener {
 	key = proc "c" (data: rawptr, self: ^wl.Keyboard, serial, t, key, state: u32) {
 		context = g_lock_ctx
 		if lk.xkb_state == nil {return}
+		if state == wl.KEYBOARD_KEY_STATE_PRESSED {lk.screens_woken = true}
 		if state == wl.KEYBOARD_KEY_STATE_PRESSED {
 			eaten := !key_press(key)
 			// Only Backspace repeats: a held letter must not type a password.
@@ -1690,10 +1697,38 @@ capture_outputs :: proc() {
 	free_all(context.temp_allocator)
 }
 
-LOCK_USAGE :: `usage: wlperch lock [-f|--daemonize]
+LOCK_USAGE :: `usage: wlperch lock [-f|--daemonize] [--screen-off]
   Lock the session (ext-session-lock-v1) until the password is entered.
-  -f  fork once the screen is locked (for swayidle's before-sleep)
+  -f            fork once the screen is locked (for swayidle's before-sleep)
+  --screen-off  then power the monitors off; a key or the mouse wakes them
 `
+
+// --screen-off: power the monitors off a moment after locking (the lock
+// screen's first frame is up by then), and on again at the first input.
+// Input that arrived before the power-off doesn't count.
+SCREEN_OFF_DELAY_MS :: 300
+
+@(private = "file")
+screen_power_step :: proc() {
+	if !lk.screen_off || !lk.locked {return}
+	if !lk.off_done {
+		if time.tick_since(lk.lock_at) < SCREEN_OFF_DELAY_MS * time.Millisecond {return}
+		lk.off_done = true
+		lk.screens_woken = false
+		lk.screens_off = sway_command("output * power off")
+		if lk.screens_off {log.info("lock: monitors off")}
+		return
+	}
+	if lk.screens_off && lk.screens_woken {screens_on()}
+}
+
+@(private = "file")
+screens_on :: proc() {
+	if !lk.screens_off {return}
+	lk.screens_off = false
+	sway_command("output * power on")
+	log.info("lock: monitors on")
+}
 
 // `wlperch lock`: returns the exit code. 0 only after a successful unlock
 // (or, with --daemonize, in the parent once locked).
@@ -1715,6 +1750,7 @@ lock_main :: proc(args: []string) -> int {
 	for a in args {
 		switch a {
 		case "-f", "--daemonize": daemonize = true
+		case "--screen-off":      lk.screen_off = true
 		case "-h", "--help":
 			fmt.print(LOCK_USAGE)
 			return 0
@@ -1776,7 +1812,7 @@ lock_main :: proc(args: []string) -> int {
 	// The growing blur shows the screen almost sharp for a moment: only when
 	// someone locks by hand. Never with -f (swayidle's timeout and
 	// before-sleep), so a machine never wakes up to a readable screen.
-	lk.animate = config.lock_mode == .Blur && config.lock_blur_animate_ms > 0 && !daemonize
+	lk.animate = config.lock_mode == .Blur && config.lock_blur_animate_ms > 0 && !daemonize && !lk.screen_off
 	if config.lock_mode == .Blur {capture_outputs()}
 	prerender_outputs()
 
@@ -1817,6 +1853,7 @@ lock_main :: proc(args: []string) -> int {
 			left := time.tick_diff(time.tick_now(), lk.repeat_at)
 			timeout = min(timeout, max(int(time.duration_milliseconds(left)), 0) + 1)
 		}
+		if lk.screen_off && lk.locked && !lk.off_done {timeout = min(timeout, SCREEN_OFF_DELAY_MS)}
 		pfds := [3]posix.pollfd {
 			{fd = posix.FD(wl.display_get_fd(d)), events = {.IN}},
 			{fd = lk.wake_r, events = {.IN}},
@@ -1835,8 +1872,10 @@ lock_main :: proc(args: []string) -> int {
 		}
 		if lk.finished {
 			// The compositor ended the lock (or refused it).
+			screens_on()
 			return lk.locked ? 0 : 1
 		}
+		screen_power_step()
 
 		if .IN in pfds[1].revents {
 			buf: [64]u8
@@ -1849,6 +1888,7 @@ lock_main :: proc(args: []string) -> int {
 					switch b {
 					case 'y':
 						if lk.locked {
+							screens_on()
 							wl.ext_session_lock_v1_unlock_and_destroy(lk.lock)
 							wl.display_roundtrip(d)
 							log.info("unlocked")
