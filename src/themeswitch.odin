@@ -190,7 +190,7 @@ nvim_set_background :: proc(text, mode: string, allocator := context.temp_alloca
 	return strings.to_string(b)
 }
 
-@(private = "file")
+// ~/.local/share/wlperch/theme: "dark" or "light", rewritten in place.
 theme_mode_path :: proc() -> string {
 	dir := data_dir()
 	defer delete(dir)

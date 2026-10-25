@@ -582,11 +582,13 @@ running, the CLI switches the desktop itself and prints what it changed.
   `sway_colors = off` to leave sway's colours alone.
 - **Per mode** (`[theme.dark]`, `[theme.light]`; empty = leave alone):
   `wallpaper` (sway's output background), `kitty_theme` (every kitty window,
-  through `kitty +kitten themes`), `nvim_colorscheme` (writes `set background`
-  and `colorscheme` to `[theme] nvim_file`, `~/.vimrc.color` by default, for
-  nvim to source and watch; leave it empty for a colorscheme with both
-  variants, and `[theme] nvim_background = true` just flips `set background`
-  in that file), `icon_theme`, `kvantum_theme` (with
+  through `kitty +kitten themes`), `nvim_colorscheme` (the colorscheme, with
+  `background` set to match; running nvims follow through setup's **Neovim
+  theme** plugin, below, or through `[theme] nvim_file`, a vimscript file
+  wlperch writes for your config to source and watch, `~/.vimrc.color` by
+  default, empty = none; leave `nvim_colorscheme` empty for a colorscheme with
+  both variants, and `[theme] nvim_background = true` just flips
+  `background`), `icon_theme`, `kvantum_theme` (with
   `kvantummanager`), `vscode_theme` (`workbench.colorTheme` in the settings of
   Code, Code - OSS or VSCodium, when they set one) and `command` (anything
   else, through `sh -c`).
@@ -608,6 +610,24 @@ over:
   through the link. **Switch back** restores them.
 - **Without a theme key:** setup adds `config.d/wlperch-theme.conf` with
   `$mod+Shift+t` for `wlperch theme toggle`.
+
+**Setup → Neovim theme → Install** makes nvim follow the switch, also nvims
+that are already running:
+- **What it adds:** one file, `~/.local/share/nvim/site/plugin/wlperch-theme.lua`
+  (`stdpath('data')`, outside a dotfiles `~/.config/nvim`; nvim loads it at
+  startup, lazy.nvim keeps it). Your `init.lua` isn't edited.
+- **What it does:** at startup and whenever `~/.local/share/wlperch/theme`
+  changes, it reads the mode and the `[theme]` nvim keys of `config.ini`
+  (anew each time, so edits apply at the next switch) and sets `background`
+  and `colorscheme`. A colorscheme that fails to load gives one warning.
+  Running nvims pick up an Install or Update when restarted.
+- **No colour file:** Install empties `[theme] nvim_file`, so wlperch stops
+  writing `~/.vimrc.color` (not when `~/.vimrc` or `~/.vim/` reads it). The
+  file itself stays: if your config still sources it, that's harmless, as the
+  plugin applies the current mode at `VimEnter`, after `init.lua` (and after
+  lazy.nvim, which sources it from `lazy.setup()`); remove those
+  lines and the file when you like. **Remove** deletes the plugin and puts
+  `nvim_file` back.
 
 ### Bar
 

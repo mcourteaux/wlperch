@@ -262,11 +262,14 @@ dim_strength = 40
 # reloads when one of its files changed.
 links = ~/.config/waybar/colors.css, ~/.config/wofi/colors.css
 # Written for nvim ("set background" + "colorscheme") when nvim_colorscheme is
-# set below; have nvim source it (and watch it, to switch running editors).
+# set below; have nvim (or Vim) source it and watch it, to switch running
+# editors. Empty = none: setup's "Neovim theme" plugin reads the mode and
+# these keys itself, and empties this when installed (Remove restores it).
 nvim_file = ~/.vimrc.color
-# With no nvim_colorscheme for the mode, still flip "set background" in an
-# existing nvim_file (keeping its colorscheme line): for colorschemes with a
-# dark and a light variant (gruvbox, tokyonight, catppuccin, …).
+# With no nvim_colorscheme for the mode, still flip nvim's 'background' (in
+# an existing nvim_file, keeping its colorscheme line, and through the
+# plugin): for colorschemes with a dark and a light variant (gruvbox,
+# tokyonight, catppuccin, …).
 nvim_background = true
 
 # Per mode. Empty = leave alone. gtk_theme "auto" switches Adwaita <->

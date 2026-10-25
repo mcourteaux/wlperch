@@ -315,6 +315,8 @@ SETTINGS_GROUPS := [?]string{"Panel", "Clock and weather", "Bar", "Memory", "Not
 @(private = "file") CH_LOCK_BG :: []Setting_Choice{{"", "Auto"}, {"color", "Colour"}, {"image", "Picture"}, {"blur", "Blurred screen"}}
 
 THEME_HELP_SWAY :: `sway's titlebars and borders (client.* colours) in wlperch's palette for this mode, set over IPC and again after "swaymsg reload". One class can be changed with sway_client_<class> = border background text [indicator child_border] in config.ini.`
+NVIM_HELP_SCHEME :: `nvim colorscheme for this mode, with 'background' set to match. Running nvims follow with Setup's "Neovim theme" plugin, or by sourcing [theme] nvim_file.`
+NVIM_HELP_FILE :: `A vimscript file wlperch theme writes ("set background" + "colorscheme") for an nvim or Vim config to source and watch. Empty = none: Setup's "Neovim theme" plugin reads the mode and these settings itself, and empties this when installed (Remove restores it). Applies to both modes.`
 THEME_HELP_GTK :: `GTK theme for this mode. "auto" switches Adwaita <-> Adwaita-dark while one of those is in use; empty = leave alone.`
 
 @(rodata)
@@ -382,7 +384,7 @@ SETTINGS := [?]Setting {
 	{group = "Dark theme", section = "theme.dark", key = "gtk_theme", label = "GTK theme", kind = .Text, apply = .Theme, hint = "leave alone", help = THEME_HELP_GTK},
 	{group = "Dark theme", section = "theme.dark", key = "icon_theme", label = "Icon theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Icon theme name (gsettings icon-theme)."},
 	{group = "Dark theme", section = "theme.dark", key = "kitty_theme", label = "kitty theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "A theme name from \"kitty +kitten themes\" (all kitty windows)."},
-	{group = "Dark theme", section = "theme.dark", key = "nvim_colorscheme", label = "nvim colorscheme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Written with \"set background\" to the nvim file of [theme] nvim_file; have nvim source it."},
+	{group = "Dark theme", section = "theme.dark", key = "nvim_colorscheme", label = "nvim colorscheme", kind = .Text, apply = .Theme, hint = "leave alone", help = NVIM_HELP_SCHEME},
 	{group = "Dark theme", section = "theme.dark", key = "vscode_theme", label = "VS Code theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "VS Code's workbench.colorTheme, e.g. \"Default Dark Modern\"."},
 	{group = "Dark theme", section = "theme.dark", key = "kvantum_theme", label = "Kvantum theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Kvantum theme for Qt apps."},
 	{group = "Dark theme", section = "theme.dark", key = "sway_colors", label = "sway window colours", kind = .Choice, apply = .Theme, choices = CH_SWAY_COLORS, help = THEME_HELP_SWAY},
@@ -390,8 +392,9 @@ SETTINGS := [?]Setting {
 	{group = "Light theme", section = "theme.light", key = "gtk_theme", label = "GTK theme", kind = .Text, apply = .Theme, hint = "leave alone", help = THEME_HELP_GTK},
 	{group = "Light theme", section = "theme.light", key = "icon_theme", label = "Icon theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Icon theme name (gsettings icon-theme)."},
 	{group = "Light theme", section = "theme.light", key = "kitty_theme", label = "kitty theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "A theme name from \"kitty +kitten themes\" (all kitty windows)."},
-	{group = "Light theme", section = "theme.light", key = "nvim_colorscheme", label = "nvim colorscheme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Written with \"set background\" to the nvim file of [theme] nvim_file; have nvim source it."},
-	{group = "Light theme", section = "theme", key = "nvim_background", label = "nvim: flip background", kind = .Bool, apply = .Theme, help = "With no nvim colorscheme for a mode, still switch \"set background\" in the nvim file, for colorschemes with a dark and a light variant. Applies to both modes."},
+	{group = "Light theme", section = "theme.light", key = "nvim_colorscheme", label = "nvim colorscheme", kind = .Text, apply = .Theme, hint = "leave alone", help = NVIM_HELP_SCHEME},
+	{group = "Light theme", section = "theme", key = "nvim_background", label = "nvim: flip background", kind = .Bool, apply = .Theme, help = "With no nvim colorscheme for a mode, still switch nvim's 'background', for colorschemes with a dark and a light variant. Applies to both modes."},
+	{group = "Light theme", section = "theme", key = "nvim_file", label = "nvim colour file", kind = .Path, apply = .Theme, hint = "none", help = NVIM_HELP_FILE},
 	{group = "Light theme", section = "theme.light", key = "vscode_theme", label = "VS Code theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "VS Code's workbench.colorTheme, e.g. \"Default Dark Modern\"."},
 	{group = "Light theme", section = "theme.light", key = "kvantum_theme", label = "Kvantum theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Kvantum theme for Qt apps."},
 	{group = "Light theme", section = "theme.light", key = "sway_colors", label = "sway window colours", kind = .Choice, apply = .Theme, choices = CH_SWAY_COLORS, help = THEME_HELP_SWAY},

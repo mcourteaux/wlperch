@@ -4,9 +4,14 @@
 // The file goes into stdpath('data')/site/plugin/
 // (~/.local/share/nvim/site/plugin/wlperch-theme.lua): on nvim's default
 // runtimepath, kept there by lazy.nvim's rtp reset, and outside
-// ~/.config/nvim, which is often a dotfiles repo. Remove deletes it again;
-// nothing else is changed. It sources [theme] nvim_file at startup and
-// whenever it changes (contrib/nvim/wlperch-theme.lua).
+// ~/.config/nvim, which is often a dotfiles repo. It reads wlperch's own
+// state, the mode file (~/.local/share/wlperch/theme) and the [theme] nvim
+// keys of config.ini, so it needs no colour file (contrib/nvim/wlperch-theme.lua).
+//
+// Install also empties [theme] nvim_file, so wlperch theme stops writing
+// ~/.vimrc.color (unless plain Vim reads it); the old value is kept in
+// ~/.local/share/wlperch/nvim-backup/nvim_file and Remove puts it back.
+// The colour file itself is never deleted: the user's config may source it.
 package main
 
 import "core:encoding/ini"
@@ -22,12 +27,14 @@ NVIM_PLUGIN_TEMPLATE :: #load("../contrib/nvim/wlperch-theme.lua", string)
 NVIM_PLUGIN_MARK :: "-- Installed by wlperch setup"
 NVIM_PLUGIN_NAME :: "wlperch-theme.lua"
 
-// [theme] nvim_file as of the last check (for the card's file preview).
-nvim_theme_file: string
+// The plugin for this user, as of the last check (the card's file preview).
+nvim_plugin_preview: string
 
-// What the installer writes for this colour file.
-nvim_plugin_text :: proc(colour_file: string, allocator := context.temp_allocator) -> string {
-	out, _ := strings.replace(NVIM_PLUGIN_TEMPLATE, "@NVIM_FILE@", colour_file, 1, allocator)
+// What the installer writes: the template with the absolute paths of
+// wlperch's mode file and config.ini.
+nvim_plugin_text :: proc(mode_file, config_file: string, allocator := context.temp_allocator) -> string {
+	out, _ := strings.replace(NVIM_PLUGIN_TEMPLATE, "@MODE_FILE@", mode_file, 1, context.temp_allocator)
+	out, _ = strings.replace(out, "@CONFIG_FILE@", config_file, 1, allocator)
 	return out
 }
 
@@ -49,17 +56,45 @@ nvim_config_dir :: proc() -> string {
 	return fmt.tprintf("%s/%s", sway_config_home(), nvim_appname())
 }
 
-// [theme] nvim_file from config.ini (the setup process doesn't load the
-// config), ~ expanded; "" = wlperch doesn't write one.
-nvim_colour_file :: proc() -> string {
+// Where Install keeps the [theme] nvim_file it emptied.
+nvim_backup_path :: proc() -> string {
+	dir := data_dir()
+	defer delete(dir)
+	return fmt.tprintf("%s/nvim-backup/nvim_file", dir)
+}
+
+// The paths of this user's setup.
+Nvim_Paths :: struct {plugin, mode_file, config_file, backup, config_dir, home: string}
+
+@(private = "file")
+nvim_paths :: proc() -> Nvim_Paths {
+	cfg := config_path()
+	defer delete(cfg)
+	return {nvim_plugin_path(), theme_mode_path(), strings.clone(cfg, context.temp_allocator), nvim_backup_path(), nvim_config_dir(), os.get_env("HOME", context.temp_allocator)}
+}
+
+// [theme] nvim_file in config_file: as written (`set`: the key is there)
+// and ~-expanded, as wlperch theme uses it ("" = no colour file).
+nvim_file_setting :: proc(config_file, home: string) -> (raw: string, set: bool, path: string) {
 	defaults, _ := ini.load_map_from_string(DEFAULT_CONFIG, context.temp_allocator)
-	path := config_path()
-	defer delete(path)
-	m, _, ok := ini.load_map_from_path(path, context.temp_allocator)
+	m, _, ok := ini.load_map_from_path(config_file, context.temp_allocator)
 	if !ok {m = defaults}
-	v := config_value(m, defaults, "theme", "nvim_file")
-	if strings.has_prefix(v, "~/") {v = strings.concatenate({os.get_env("HOME", context.temp_allocator), v[1:]}, context.temp_allocator)}
-	return v
+	if s, has := m["theme"]; has && ok {_, set = s["nvim_file"]}
+	raw = config_value(m, defaults, "theme", "nvim_file")
+	path = raw
+	if strings.has_prefix(path, "~/") {path = strings.concatenate({home, path[1:]}, context.temp_allocator)}
+	return
+}
+
+// The emptied value Install kept: "unset" (the key wasn't in config.ini) or
+// "value\t<raw>". ok = false: none kept.
+@(private = "file")
+nvim_backup_read :: proc(backup: string) -> (raw: string, set, ok: bool) {
+	data, err := os.read_entire_file(backup, context.temp_allocator)
+	if err != nil {return}
+	t := strings.trim_right(string(data), "\n")
+	if strings.has_prefix(t, "value\t") {return t[len("value\t"):], true, true}
+	return "", false, true
 }
 
 // The first line of the user's nvim config (.lua / .vim files under dir,
@@ -67,11 +102,7 @@ nvim_colour_file :: proc() -> string {
 // or its file name (`vim.env.HOME .. '/.vimrc.color'`). Comment lines don't
 // count. file is relative to dir.
 nvim_config_ref :: proc(dir, colour_file, home: string) -> (file: string, line: int, found: bool) {
-	needles: [dynamic]string
-	needles.allocator = context.temp_allocator
-	append(&needles, colour_file)
-	if home != "" && len(colour_file) > len(home) && strings.has_prefix(colour_file, home) && colour_file[len(home)] == '/' {append(&needles, strings.concatenate({"~", colour_file[len(home):]}, context.temp_allocator))}
-	if base := colour_file[strings.last_index_byte(colour_file, '/') + 1:]; len(base) >= 4 {append(&needles, base)}
+	needles := colour_needles(colour_file, home)
 	budget := 2000 // files: a config with a vendored plugin tree is not searched forever
 	walk :: proc(dir, rel: string, needles: []string, depth: int, budget: ^int) -> (file: string, line: int, found: bool) {
 		entries, err := os.read_all_directory_by_path(dir, context.temp_allocator)
@@ -94,65 +125,114 @@ nvim_config_ref :: proc(dir, colour_file, home: string) -> (file: string, line: 
 				if budget^ < 0 {return}
 				data, rerr := os.read_entire_file(full, context.temp_allocator)
 				if rerr != nil || len(data) > 1 << 20 {continue}
-				for l, n in strings.split_lines(string(data), context.temp_allocator) {
-					t := strings.trim_space(l)
-					if strings.has_prefix(t, "--") || strings.has_prefix(t, "\"") {continue}
-					for nd in needles {
-						if strings.contains(t, nd) {return name, n + 1, true}
-					}
-				}
+				if l, ok := text_ref(string(data), needles); ok {return name, l, true}
 			}
 		}
 		return
 	}
-	return walk(dir, "", needles[:], 0, &budget)
+	return walk(dir, "", needles, 0, &budget)
+}
+
+// How a config can name the colour file: its full path, the ~ form, or its
+// file name (`vim.env.HOME .. '/.vimrc.color'`).
+@(private = "file")
+colour_needles :: proc(colour_file, home: string) -> []string {
+	needles: [dynamic]string
+	needles.allocator = context.temp_allocator
+	append(&needles, colour_file)
+	if home != "" && len(colour_file) > len(home) && strings.has_prefix(colour_file, home) && colour_file[len(home)] == '/' {append(&needles, strings.concatenate({"~", colour_file[len(home):]}, context.temp_allocator))}
+	if base := colour_file[strings.last_index_byte(colour_file, '/') + 1:]; len(base) >= 4 {append(&needles, base)}
+	return needles[:]
+}
+
+// The first non-comment line (1-based) of text with one of the needles.
+@(private = "file")
+text_ref :: proc(text: string, needles: []string) -> (line: int, found: bool) {
+	for l, n in strings.split_lines(text, context.temp_allocator) {
+		t := strings.trim_space(l)
+		if strings.has_prefix(t, "--") || strings.has_prefix(t, "\"") {continue}
+		for nd in needles {
+			if strings.contains(t, nd) {return n + 1, true}
+		}
+	}
+	return
+}
+
+// Plain Vim reading the colour file (~/.vimrc, ~/.vim/): then wlperch keeps
+// writing it, since the nvim plugin doesn't help Vim. "" = no.
+vim_colour_ref :: proc(colour_file, home: string) -> string {
+	if colour_file == "" || home == "" {return ""}
+	needles := colour_needles(colour_file, home)
+	if data, err := os.read_entire_file(fmt.tprintf("%s/.vimrc", home), context.temp_allocator); err == nil {
+		if l, ok := text_ref(string(data), needles); ok {return fmt.tprintf("~/.vimrc:%d", l)}
+	}
+	if f, l, ok := nvim_config_ref(fmt.tprintf("%s/.vim", home), colour_file, home); ok {return fmt.tprintf("~/.vim/%s:%d", f, l)}
+	return ""
 }
 
 nvim_setup_check :: proc(p: ^Component, add_detail: proc(c: ^Component, line: string)) {
-	colour := nvim_colour_file()
-	delete(nvim_theme_file)
-	nvim_theme_file = strings.clone(colour)
-	nvim_check_at(p, add_detail, nvim_plugin_path(), colour, nvim_config_dir(), nvim_installed())
+	ps := nvim_paths()
+	delete(nvim_plugin_preview)
+	nvim_plugin_preview = strings.clone(nvim_plugin_text(ps.mode_file, ps.config_file))
+	nvim_check_at(p, add_detail, ps, nvim_installed())
 }
 
-// The card for plugin file `path`, colour file `colour` and nvim config dir.
-nvim_check_at :: proc(p: ^Component, add_detail: proc(c: ^Component, line: string), path, colour, config_dir: string, have_nvim: bool) {
-	cur, rerr := os.read_entire_file(path, context.temp_allocator)
+// The card for these paths.
+nvim_check_at :: proc(p: ^Component, add_detail: proc(c: ^Component, line: string), ps: Nvim_Paths, have_nvim: bool) {
+	cur, rerr := os.read_entire_file(ps.plugin, context.temp_allocator)
 	have := rerr == nil
 	ours := have && strings.has_prefix(string(cur), NVIM_PLUGIN_MARK)
+	_, _, colour := nvim_file_setting(ps.config_file, ps.home)
+	// The colour file the user's config may still source: wlperch's, or the
+	// one Install emptied.
+	old := colour
+	if old == "" {
+		if raw, set, ok := nvim_backup_read(ps.backup); ok {
+			if !set {
+				defaults, _ := ini.load_map_from_string(DEFAULT_CONFIG, context.temp_allocator)
+				raw = config_value(defaults, defaults, "theme", "nvim_file")
+			}
+			old = strings.has_prefix(raw, "~/") ? strings.concatenate({ps.home, raw[1:]}, context.temp_allocator) : raw
+		}
+	}
 	ref_file, ref_line, ref := "", 0, false
-	if colour != "" {ref_file, ref_line, ref = nvim_config_ref(config_dir, colour, os.get_env("HOME", context.temp_allocator))}
+	if old != "" {ref_file, ref_line, ref = nvim_config_ref(ps.config_dir, old, ps.home)}
+	vim_ref := vim_colour_ref(colour, ps.home)
 	switch {
 	case ours:
-		p.state = string(cur) == nvim_plugin_text(colour) ? .Installed : .Outdated
-		add_detail(p, path)
+		p.state = string(cur) == nvim_plugin_text(ps.mode_file, ps.config_file) ? .Installed : .Outdated
+		add_detail(p, ps.plugin)
 		if p.state == .Outdated {
-			add_detail(p, "from an older wlperch, or [theme] nvim_file changed since; Update rewrites it")
+			add_detail(p, "from an older wlperch (one that sourced the nvim colour file); Update replaces it")
 		} else {
-			add_detail(p, fmt.tprintf("nvim re-sources %s whenever it changes", colour))
+			add_detail(p, fmt.tprintf("nvim reads %s and the [theme] nvim keys of %s whenever the mode changes", ps.mode_file, ps.config_file))
 		}
-		if ref {add_detail(p, fmt.tprintf("your config sources it too (%s:%d); twice is harmless", ref_file, ref_line))}
+		switch {
+		case colour != "" && vim_ref != "":
+			add_detail(p, fmt.tprintf("[theme] nvim_file stays %s: Vim reads it (%s)", colour, vim_ref))
+		case colour != "" && p.state == .Outdated:
+			add_detail(p, fmt.tprintf("Update also empties [theme] nvim_file, so wlperch theme stops writing %s (Remove restores it)", colour))
+		case colour != "":
+			add_detail(p, fmt.tprintf("[theme] nvim_file is set again: wlperch theme also writes %s; not needed, harmless", colour))
+		}
+		if ref {add_detail(p, fmt.tprintf("your config still sources %s (%s:%d): harmless, this plugin applies the current mode at VimEnter, after it; remove those lines and the file when you like", old, ref_file, ref_line))}
 	case have:
 		p.state = .Custom
-		add_detail(p, fmt.tprintf("%s exists but isn't wlperch's; left alone", path))
-	case colour == "":
-		p.state = .Unavailable
-		add_detail(p, "[theme] nvim_file is empty: wlperch theme doesn't write an nvim colour file")
+		add_detail(p, fmt.tprintf("%s exists but isn't wlperch's; left alone", ps.plugin))
 	case !have_nvim:
 		p.state = .Unavailable
 		add_detail(p, "nvim isn't installed")
 	case ref:
 		p.state = .Custom
-		add_detail(p, fmt.tprintf("your config already sources %s (%s:%d)", colour, ref_file, ref_line))
-		add_detail(p, "probably fine: wlperch theme rewrites it in place, so a watch on it keeps firing; Install adds one that also survives the file being replaced")
-		add_detail(p, fmt.tprintf("Install adds %s (outside your nvim config)", path))
+		add_detail(p, fmt.tprintf("your config sources %s (%s:%d), which wlperch theme writes", old, ref_file, ref_line))
+		add_detail(p, fmt.tprintf("Install replaces that: %s reads wlperch's mode and settings directly (your config is left alone)", ps.plugin))
+		if colour != "" && vim_ref == "" {add_detail(p, "Install also empties [theme] nvim_file, so wlperch theme stops writing it (Remove restores it)")}
 	case:
 		p.state = .Missing
-		add_detail(p, fmt.tprintf("adds %s (outside your nvim config; nvim loads it at startup)", path))
+		add_detail(p, fmt.tprintf("adds %s (outside your nvim config; nvim loads it at startup)", ps.plugin))
+		if colour != "" && vim_ref == "" {add_detail(p, fmt.tprintf("and empties [theme] nvim_file: no %s needed (Remove restores it)", colour))}
 	}
-	if colour != "" && p.state != .Unavailable && !os.exists(colour) {
-		add_detail(p, fmt.tprintf("%s doesn't exist yet: wlperch theme writes it once nvim_colorscheme is set under [theme.dark] / [theme.light]", colour))
-	}
+	if colour != "" && vim_ref != "" && !ours {add_detail(p, fmt.tprintf("[theme] nvim_file stays: Vim reads %s (%s)", colour, vim_ref))}
 }
 
 @(private = "file")
@@ -176,23 +256,53 @@ nvim_done :: proc(ok: bool, msg: string) {
 }
 
 // Never over a file of someone else's with the same name.
-nvim_install_at :: proc(path, colour: string) -> (ok: bool, msg: string) {
-	if colour == "" {return false, "[theme] nvim_file is empty"}
-	if cur, err := os.read_entire_file(path, context.temp_allocator); err == nil && !strings.has_prefix(string(cur), NVIM_PLUGIN_MARK) {
+nvim_install_at :: proc(ps: Nvim_Paths) -> (ok: bool, msg: string) {
+	if cur, err := os.read_entire_file(ps.plugin, context.temp_allocator); err == nil && !strings.has_prefix(string(cur), NVIM_PLUGIN_MARK) {
 		return false, "a file of that name exists and isn't wlperch's; left alone"
 	}
-	os.make_directory_all(path[:strings.last_index_byte(path, '/')])
-	if !write_through(path, nvim_plugin_text(colour)) {return false, fmt.tprintf("couldn't write %s", path)}
-	return true, "installed: nvims started from now on follow wlperch theme (restart running ones)"
+	os.make_directory_all(ps.plugin[:strings.last_index_byte(ps.plugin, '/')])
+	if !write_through(ps.plugin, nvim_plugin_text(ps.mode_file, ps.config_file)) {return false, fmt.tprintf("couldn't write %s", ps.plugin)}
+	msg = "installed: nvims started from now on follow wlperch theme (restart running ones)"
+	raw, set, colour := nvim_file_setting(ps.config_file, ps.home)
+	if colour == "" {return true, msg}
+	if vim_colour_ref(colour, ps.home) != "" {return true, fmt.tprintf("%s; [theme] nvim_file kept, Vim reads it", msg)}
+	// The old value first, so Remove can put it back.
+	os.make_directory_all(ps.backup[:strings.last_index_byte(ps.backup, '/')])
+	if !write_through(ps.backup, set ? fmt.tprintf("value\t%s\n", raw) : "unset\n") {return true, fmt.tprintf("%s; couldn't keep [theme] nvim_file, so left it", msg)}
+	text: string
+	if data, err := os.read_entire_file(ps.config_file, context.temp_allocator); err == nil {text = string(data)} else {text = default_config_text()}
+	os.make_directory_all(ps.config_file[:strings.last_index_byte(ps.config_file, '/')])
+	if !write_through(ps.config_file, ini_set_value(text, "theme", "nvim_file", "")) {
+		os.remove(ps.backup)
+		return true, fmt.tprintf("%s; couldn't empty [theme] nvim_file in config.ini", msg)
+	}
+	return true, fmt.tprintf("%s; [theme] nvim_file emptied (was %s), %s is no longer written", msg, raw, colour)
 }
 
-nvim_remove_at :: proc(path: string) -> (ok: bool, msg: string) {
-	cur, err := os.read_entire_file(path, context.temp_allocator)
-	if err != nil {return true, "already gone"}
-	if !strings.has_prefix(string(cur), NVIM_PLUGIN_MARK) {return false, "that file isn't wlperch's; left alone"}
-	if os.remove(path) != nil {return false, fmt.tprintf("couldn't remove %s", path)}
-	return true, "removed (nothing else was changed); running nvims keep following until restarted"
+// Deletes the plugin and puts back the nvim_file Install emptied, when it is
+// still empty. Nothing else is changed.
+nvim_remove_at :: proc(ps: Nvim_Paths) -> (ok: bool, msg: string) {
+	cur, err := os.read_entire_file(ps.plugin, context.temp_allocator)
+	if err == nil {
+		if !strings.has_prefix(string(cur), NVIM_PLUGIN_MARK) {return false, "that file isn't wlperch's; left alone"}
+		if os.remove(ps.plugin) != nil {return false, fmt.tprintf("couldn't remove %s", ps.plugin)}
+	}
+	msg = err == nil ? "removed; running nvims keep following until restarted" : "already gone"
+	raw, set, kept := nvim_backup_read(ps.backup)
+	if !kept {return true, msg}
+	if _, _, now := nvim_file_setting(ps.config_file, ps.home); now == "" {
+		data, rerr := os.read_entire_file(ps.config_file, context.temp_allocator)
+		if rerr == nil {
+			text := string(data)
+			out := set ? ini_set_value(text, "theme", "nvim_file", raw) : ini_remove_key(text, "theme", "nvim_file")
+			if !write_through(ps.config_file, out) {return true, fmt.tprintf("%s; couldn't restore [theme] nvim_file", msg)}
+			_, _, back := nvim_file_setting(ps.config_file, ps.home)
+			msg = fmt.tprintf("%s; [theme] nvim_file is %s again (written from the next switch)", msg, back)
+		}
+	}
+	os.remove(ps.backup)
+	return true, msg
 }
 
-setup_install_nvim :: proc() {nvim_done(nvim_install_at(nvim_plugin_path(), nvim_colour_file()))}
-setup_remove_nvim :: proc() {nvim_done(nvim_remove_at(nvim_plugin_path()))}
+setup_install_nvim :: proc() {nvim_done(nvim_install_at(nvim_paths()))}
+setup_remove_nvim :: proc() {nvim_done(nvim_remove_at(nvim_paths()))}
