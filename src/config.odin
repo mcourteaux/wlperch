@@ -87,6 +87,7 @@ Config :: struct {
 	// [theme], [theme.dark], [theme.light]
 	theme_links:        [dynamic]string,
 	theme_nvim_file:    string,
+	theme_nvim_background: bool,
 	theme_targets:      [Theme_Mode]Theme_Targets,
 }
 
@@ -263,6 +264,10 @@ links = ~/.config/waybar/colors.css, ~/.config/wofi/colors.css
 # Written for nvim ("set background" + "colorscheme") when nvim_colorscheme is
 # set below; have nvim source it (and watch it, to switch running editors).
 nvim_file = ~/.vimrc.color
+# With no nvim_colorscheme for the mode, still flip "set background" in an
+# existing nvim_file (keeping its colorscheme line): for colorschemes with a
+# dark and a light variant (gruvbox, tokyonight, catppuccin, …).
+nvim_background = true
 
 # Per mode. Empty = leave alone. gtk_theme "auto" switches Adwaita <->
 # Adwaita-dark only while one of those is in use.
@@ -641,6 +646,7 @@ config_load_theme :: proc(m, defaults: ini.Map) {
 	clear(&c.theme_links)
 	for l in split_list(get(m, defaults, "theme", "links"), ",") {append(&c.theme_links, expand_home(l))}
 	c.theme_nvim_file = expand_home(get(m, defaults, "theme", "nvim_file"))
+	c.theme_nvim_background = parse_bool(get(m, defaults, "theme", "nvim_background"), true)
 	for mode in Theme_Mode {
 		sec := mode == .Dark ? "theme.dark" : "theme.light"
 		t := &c.theme_targets[mode]

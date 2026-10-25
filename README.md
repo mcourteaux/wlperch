@@ -584,7 +584,9 @@ running, the CLI switches the desktop itself and prints what it changed.
   `wallpaper` (sway's output background), `kitty_theme` (every kitty window,
   through `kitty +kitten themes`), `nvim_colorscheme` (writes `set background`
   and `colorscheme` to `[theme] nvim_file`, `~/.vimrc.color` by default, for
-  nvim to source and watch), `icon_theme`, `kvantum_theme` (with
+  nvim to source and watch; leave it empty for a colorscheme with both
+  variants, and `[theme] nvim_background = true` just flips `set background`
+  in that file), `icon_theme`, `kvantum_theme` (with
   `kvantummanager`), `vscode_theme` (`workbench.colorTheme` in the settings of
   Code, Code - OSS or VSCodium, when they set one) and `command` (anything
   else, through `sh -c`).
