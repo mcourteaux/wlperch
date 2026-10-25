@@ -9,6 +9,7 @@ import "core:fmt"
 import "core:log"
 import "core:mem/virtual"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:thread"
@@ -38,6 +39,7 @@ GH_Notif :: struct {
 	url:    string, // web page (the API gives api.github.com links)
 	repo:   string,
 	at:     f64,
+	unread: bool,
 }
 
 GH_Run :: struct {
@@ -76,7 +78,8 @@ GH_Snapshot :: struct {
 	mine_count:  i64,
 	issues:      []GH_Item,
 	issue_count: i64,
-	notifs:      []GH_Notif,
+	notifs:      []GH_Notif, // recent, read ones included, newest first
+	unread:      int, // unread notifications (at most 50), which can be older than notifs
 	have_repo:   bool,
 	repo:        GH_Repo,
 }
@@ -193,9 +196,14 @@ update :: proc() {
 		return
 	}
 
-	// Unread notifications only (the default); never marked read from here.
-	nout, nok := run({"gh", "api", "notifications?per_page=50"}, 30 * time.Second, context.temp_allocator)
+	// Recent notifications, read ones included (all=true), newest first;
+	// never marked read from here.
+	nout, nok := run({"gh", "api", "notifications?all=true&per_page=50"}, 30 * time.Second, context.temp_allocator)
 	nv, _ := jparse(nout)
+	// The unread count separately: unread ones are often older than the 50
+	// most recent.
+	uout, uok := run({"gh", "api", "notifications?per_page=50", "--jq", "length"}, 30 * time.Second, context.temp_allocator)
+	unread_count := uok ? strconv.parse_int(strings.trim_space(uout)) or_else 0 : 0
 	runs_v: json.Value
 	if with_repo {
 		rout, rok := run({
@@ -214,6 +222,7 @@ update :: proc() {
 	{
 		context.allocator = virtual.arena_allocator(&snap.arena)
 		snapshot_fill(snap, data, nok ? nv : nil, runs_v)
+		snap.unread = unread_count
 	}
 
 	sync.guard(&github.mu)
@@ -226,7 +235,7 @@ update :: proc() {
 	github.error = ""
 	github.updated = time.now()
 	github.fetching = false
-	log.debugf("github: %d review requests, %d own PRs, %d issues, %d unread", snap.review_count, snap.mine_count, snap.issue_count, len(snap.notifs))
+	log.debugf("github: %d review requests, %d own PRs, %d issues, %d unread", snap.review_count, snap.mine_count, snap.issue_count, github_unread(snap))
 }
 
 @(private = "file")
@@ -254,14 +263,11 @@ snapshot_fill :: proc(s: ^GH_Snapshot, data, notifs, runs: json.Value) {
 			url    = github_web_url(jstr(jobj(subj, "url")), jstr(jobj(subj, "type")), repo),
 			repo   = strings.clone(repo),
 			at     = iso_unix(jstr(jobj(n, "updated_at"))),
+			unread = jbool(jobj(n, "unread")),
 		})
 	}
-	// Things addressed to you first, then the newest.
-	slice.stable_sort_by(ns[:], proc(a, b: GH_Notif) -> bool {
-		pa, pb := notif_direct(a.reason), notif_direct(b.reason)
-		if pa != pb {return pa}
-		return a.at > b.at
-	})
+	// Newest first.
+	slice.stable_sort_by(ns[:], proc(a, b: GH_Notif) -> bool {return a.at > b.at})
 	s.notifs = ns[:]
 
 	r := jobj(data, "repo")
@@ -334,6 +340,8 @@ items :: proc(search: json.Value) -> ([]GH_Item, i64) {
 }
 
 // Notifications about you (rather than threads you merely watch).
+github_unread :: proc(s: ^GH_Snapshot) -> int {return s.unread}
+
 notif_direct :: proc(reason: string) -> bool {
 	switch reason {
 	case "mention", "team_mention", "review_requested", "assign", "author", "comment", "approval_requested", "security_alert":

@@ -87,7 +87,7 @@ tile_next :: proc() {im.SameLine(0, 8)}
 
 // Item row: colored status icon, title, muted subline and an optional badge.
 @(private = "file")
-gh_row :: proc(id: string, icon: string, icon_col: u32, title, sub: string, badge := "", badge_col: u32 = C_MUTED) -> bool {
+gh_row :: proc(id: string, icon: string, icon_col: u32, title, sub: string, badge := "", badge_col: u32 = C_MUTED, dim := false) -> bool {
 	w := im.GetContentRegionAvail().x
 	h: f32 = 40
 	p := im.GetCursorScreenPos()
@@ -99,7 +99,7 @@ gh_row :: proc(id: string, icon: string, icon_col: u32, title, sub: string, badg
 	}
 	d := dl()
 	if hovered {im.DrawList_AddRectFilled(d, p, {p.x + w, p.y + h}, col32(C_OVERLAY, 0.05), 8)}
-	draw_text(fonts.ui, 18, {p.x + 10, p.y + h / 2 - 10}, col32(icon_col), icon)
+	draw_text(fonts.ui, 18, {p.x + 10, p.y + h / 2 - 10}, col32(icon_col, dim ? 0.5 : 1), icon)
 	tx := p.x + 38
 	right := p.x + w - 8
 	if badge != "" {
@@ -110,7 +110,7 @@ gh_row :: proc(id: string, icon: string, icon_col: u32, title, sub: string, badg
 		right = bx - 8
 	}
 	im.DrawList_PushClipRect(d, p, {right, p.y + h}, true)
-	draw_text(fonts.ui, SZ_BODY, {tx, p.y + 4}, col32(C_TEXT), title)
+	draw_text(fonts.ui, SZ_BODY, {tx, p.y + 4}, col32(dim ? C_MUTED : C_TEXT), title)
 	draw_text(fonts.ui, SZ_SMALL, {tx, p.y + 22}, col32(C_MUTED), sub)
 	im.DrawList_PopClipRect(d)
 	return clicked
@@ -196,7 +196,7 @@ draw_summary :: proc(w: f32) -> (open: string) {
 	tile_next()
 	if stat_tile("##gh-issues", fmt.tprint(s.issue_count), "Assigned issues", "", C_GREEN, s.issue_count > 0, tw) {open = "https://github.com/issues/assigned"}
 	tile_next()
-	unread := len(s.notifs)
+	unread := github_unread(s)
 	if stat_tile("##gh-unread", unread >= 50 ? "50+" : fmt.tprint(unread), "Unread", "", C_PURPLE, unread > 0, tw) {open = "https://github.com/notifications"}
 
 	if len(s.reviews) > 0 {
@@ -258,20 +258,21 @@ draw_inbox :: proc(w: f32) -> (open: string) {
 	if s == nil {return}
 	card_begin("github-inbox", w)
 	defer card_end()
-	unread := len(s.notifs)
+	// Newest first, read ones dimmed; the count is the unread ones.
+	unread := github_unread(s)
 	card_title(ICON_INBOX, "Inbox", C_PURPLE, unread == 0 ? "" : unread >= 50 ? "50+ unread" : fmt.tprintf("%d unread", unread))
-	if unread == 0 {
-		label(fonts.ui, SZ_BODY, col32(C_MUTED), "No unread notifications.")
+	if len(s.notifs) == 0 {
+		label(fonts.ui, SZ_BODY, col32(C_MUTED), "No recent notifications.")
 		return
 	}
-	n := min(unread, MAX_NOTIFS)
+	n := min(len(s.notifs), MAX_NOTIFS)
 	for it, i in s.notifs[:n] {
 		icon, col := notif_icon(it)
 		sub := fmt.tprintf("%s · %s · %s", short_repo(it.repo), notif_reason(it.reason), age_text(it.at))
-		if gh_row(fmt.tprintf("##gh-n%d", i), icon, col, it.title, sub) {open = it.url}
+		if gh_row(fmt.tprintf("##gh-n%d", i), icon, col, it.title, sub, it.unread ? "new" : "", C_PURPLE, dim = !it.unread) {open = it.url}
 	}
-	if unread > n {
-		if gh_row("##gh-nmore", ICON_INBOX, C_MUTED, fmt.tprintf("%d more", unread - n), "github.com/notifications") {open = "https://github.com/notifications"}
+	if len(s.notifs) > n {
+		if gh_row("##gh-nmore", ICON_INBOX, C_MUTED, "All notifications", "github.com/notifications") {open = "https://github.com/notifications"}
 	}
 	return
 }
