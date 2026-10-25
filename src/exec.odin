@@ -75,7 +75,7 @@ stop_children :: proc() {
 }
 
 @(private = "file")
-spawn :: proc(argv: []string, stdout_fd: c.int) -> (pid: posix.pid_t, ok: bool) {
+spawn :: proc(argv: []string, stdout_fd: c.int, env: [^]cstring = nil, stderr_too := false) -> (pid: posix.pid_t, ok: bool) {
 	cargv := make([]cstring, len(argv) + 1, context.temp_allocator)
 	for a, i in argv {cargv[i] = strings.clone_to_cstring(a, context.temp_allocator)}
 
@@ -88,7 +88,11 @@ spawn :: proc(argv: []string, stdout_fd: c.int) -> (pid: posix.pid_t, ok: bool) 
 	} else {
 		posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", 1, 0)
 	}
-	posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", 1, 0)
+	if stderr_too && stdout_fd >= 0 {
+		posix_spawn_file_actions_adddup2(&fa, stdout_fd, 2)
+	} else {
+		posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", 1, 0)
+	}
 
 	// We ignore SIGPIPE; children (shell scripts!) must get the default back.
 	attr: Spawn_Attr
@@ -102,7 +106,7 @@ spawn :: proc(argv: []string, stdout_fd: c.int) -> (pid: posix.pid_t, ok: bool) 
 
 	sync.guard(&children_mu)
 	if stopping {return 0, false}
-	if err := posix.posix_spawnp(&pid, cargv[0], &fa, &attr, raw_data(cargv), posix.environ); err != .NONE {
+	if err := posix.posix_spawnp(&pid, cargv[0], &fa, &attr, raw_data(cargv), env != nil ? env : posix.environ); err != .NONE {
 		log.debugf("spawn %v failed: %v", argv, err)
 		return 0, false
 	}
@@ -119,10 +123,32 @@ run :: proc(argv: []string, timeout := 10 * time.Second, allocator := context.al
 
 // Like run, but returns the exit code (-1 if it didn't exit normally or timed out).
 run_code :: proc(argv: []string, timeout := 10 * time.Second, allocator := context.allocator) -> (out: string, code: int) {
+	return run_code_env(argv, nil, false, timeout, allocator)
+}
+
+// Our environment with `set` ("NAME=value", replacing NAME) and without the
+// names in `unset`, for posix_spawn.
+env_with :: proc(set: []string, unset: []string = nil) -> [^]cstring {
+	out := make([dynamic]cstring, context.temp_allocator)
+	outer: for e := posix.environ; e != nil && e[0] != nil; e = e[1:] {
+		s := string(e[0])
+		name := s[:max(strings.index_byte(s, '='), 0)]
+		for kv in set {if strings.has_prefix(kv, name) && len(kv) > len(name) && kv[len(name)] == '=' {continue outer}}
+		for u in unset {if u == name {continue outer}}
+		append(&out, e[0])
+	}
+	for kv in set {append(&out, strings.clone_to_cstring(kv, context.temp_allocator))}
+	append(&out, nil)
+	return raw_data(out)
+}
+
+// run_code with an environment of its own (env_with; nil = ours) and,
+// with stderr_too, the child's error output in `out` as well.
+run_code_env :: proc(argv: []string, env: [^]cstring, stderr_too: bool, timeout := 10 * time.Second, allocator := context.allocator) -> (out: string, code: int) {
 	code = -1
 	fds: [2]c.int
 	if pipe2(&fds, O_CLOEXEC) != 0 {return}
-	pid, spawned := spawn(argv, fds[1])
+	pid, spawned := spawn(argv, fds[1], env, stderr_too)
 	posix.close(posix.FD(fds[1]))
 	rfd := posix.FD(fds[0])
 	defer posix.close(rfd)

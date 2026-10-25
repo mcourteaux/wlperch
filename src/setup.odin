@@ -52,6 +52,7 @@ Comp_Id :: enum {
 	Nvim,
 	Portal,
 	Bar,
+	Ssh,
 }
 
 Component :: struct {
@@ -292,6 +293,8 @@ setup_check :: proc() {
 	nvim_setup_check(&c[.Nvim], detail)
 	// wlperch's bar instead of waybar
 	bar_setup_check(&c[.Bar], detail)
+	// OpenSSH's agent for the SSH keys panel
+	ssh_setup_check(&c[.Ssh], detail)
 	// Launcher entry
 	{
 		p := &c[.Launcher]
@@ -354,7 +357,14 @@ bar_link_install :: proc() {
 	link := bar_link_path()
 	os.remove(link)
 	posix.symlink("wlperch", strings.clone_to_cstring(link, context.temp_allocator))
+	// SSH_ASKPASS takes one program too (wlperch passes itself to ssh-add
+	// anyway; this one is for setting SSH_ASKPASS by hand).
+	ask := askpass_link_path()
+	os.remove(ask)
+	posix.symlink("wlperch", strings.clone_to_cstring(ask, context.temp_allocator))
 }
+
+askpass_link_path :: proc() -> string {return strings.concatenate({home(), "/.local/bin/wlperch-askpass"}, context.temp_allocator)}
 
 setup_install_program :: proc() {
 	data, err := os.read_entire_file(setup.self_path, context.temp_allocator)
@@ -670,7 +680,10 @@ setup_install_recommended :: proc() {
 
 setup_remove_program :: proc() {
 	ok := os.remove(setup.bin_path) == nil
-	if ok {os.remove(bar_link_path())}
+	if ok {
+		os.remove(bar_link_path())
+		os.remove(askpass_link_path())
+	}
 	done(.Program, ok, ok ? "removed from ~/.local/bin (the sway file and launcher entry still point at it)" : "couldn't remove ~/.local/bin/wlperch")
 }
 
@@ -1024,10 +1037,10 @@ setup_enable_notifications :: proc() {
 }
 
 // Open the setup window as its own process (from a panel's ⚙ button).
-setup_launch :: proc() {
+setup_launch :: proc(tab := "") {
 	exe := setup_self_path()
 	if exe == "" {exe = "wlperch"}
-	launch_detached({exe, "setup"})
+	if tab != "" {launch_detached({exe, "setup", tab})} else {launch_detached({exe, "setup"})}
 }
 
 // ---- Main -------------------------------------------------------------------

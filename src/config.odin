@@ -62,6 +62,12 @@ Config :: struct {
 	github_repo:        string, // owner/name, optional
 	github_refresh:     time.Duration,
 
+	// [ssh]
+	ssh_lifetime:       int, // minutes a key stays unlocked (0 = until forgotten)
+	ssh_forget_on_lock: bool,
+	ssh_forget_on_idle: int, // minutes (0 = off)
+	ssh_keys:           [dynamic]string, // names / paths; empty = every key in ~/.ssh
+
 	// [lock]
 	lock_pam_service:   string, // "" = swaylock's PAM file when present, else login
 	lock_background:    u32,    // 0xRRGGBB
@@ -182,6 +188,20 @@ enabled = false
 repo =
 # Minutes between refreshes (opening the panel also refreshes stale data).
 refresh_minutes = 5
+
+[ssh]
+# SSH keys in OpenSSH's ssh-agent (the SSH keys panel, the bar's ssh module;
+# "wlperch setup" sets the agent up). Unlocking asks for the passphrase in
+# wlperch's own popup and adds the key for this many minutes (1-1440;
+# 0 = until forgotten, not recommended).
+lifetime = 60
+# Forget every key (ssh-add -D) when the screen locks with wlperch lock.
+forget_on_lock = true
+# Forget every key after this many minutes without input (0 = off).
+forget_on_idle = 0
+# Keys to list, by file name or path (e.g. id_ed25519, ~/.ssh/work_rsa),
+# comma separated. Empty = every private key in ~/.ssh.
+keys =
 
 [lock]
 # The lock screen ("wlperch lock"): clock, date, unread notification count,
@@ -315,10 +335,11 @@ height = 34
 outputs =
 # Modules per side, in order. Available: workspaces mode scratchpad window
 # idle power-profile backlight battery media audio timer sensors memory clock
-# tray notifications wlperch
+# tray ssh notifications wlperch
+# (ssh: a key icon while SSH keys are unlocked in the agent)
 left = workspaces mode scratchpad window
 center =
-right = idle power-profile backlight battery media audio timer sensors memory clock tray notifications wlperch
+right = idle power-profile backlight battery media audio timer sensors memory clock tray ssh notifications wlperch
 # strftime-like: %a %A %b %B %d %e %m %Y %H %I %M %S %p; <b>…</b> is bold.
 clock_format = %a %d %b  <b>%H:%M</b>
 # Tray icon size (logical pixels).
@@ -369,7 +390,7 @@ bar_room =
 # columns: module names per column, columns separated by "|".
 # Modules: quick audio network weather clocks displays bluetooth storage
 #          cpu gpu memory processes thermals sensors time notifications media
-#          calculator launcher
+#          calculator launcher ssh
 #          github github-repo github-inbox (need [github] enabled = true)
 # quick = night light, do not disturb, Bluetooth, project toggles, keyboard
 #         layouts and buttons that open the other panels.
@@ -406,6 +427,12 @@ title = Audio
 width = 520
 tab = false
 columns = audio
+
+[panel.ssh]
+title = SSH keys
+width = 560
+tab = false
+columns = ssh
 
 [panel.calc]
 title = Calculator
@@ -579,6 +606,12 @@ config_load :: proc() {
 	c.github = parse_bool(get(m, defaults, "github", "enabled"), false)
 	c.github_repo = strings.clone(get(m, defaults, "github", "repo"))
 	c.github_refresh = time.Duration(parse_int_lim(get(m, defaults, "github", "refresh_minutes"), LIM_GITHUB_REFRESH)) * time.Minute
+
+	c.ssh_lifetime = parse_int_lim(get(m, defaults, "ssh", "lifetime"), LIM_SSH_LIFETIME)
+	c.ssh_forget_on_lock = parse_bool(get(m, defaults, "ssh", "forget_on_lock"), true)
+	c.ssh_forget_on_idle = parse_int_lim(get(m, defaults, "ssh", "forget_on_idle"), LIM_SSH_IDLE)
+	clear(&c.ssh_keys)
+	for k in split_list(get(m, defaults, "ssh", "keys"), ",") {append(&c.ssh_keys, k)}
 
 	c.lock_pam_service = strings.clone(get(m, defaults, "lock", "pam_service"))
 	c.lock_background = parse_hex_color(get(m, defaults, "lock", "background"), 0x14161b)
@@ -790,6 +823,8 @@ LIM_BAR_VOLSTEP :: Int_Limits{1, 25, 5}
 LIM_LOCK_COUNTDOWN :: Int_Limits{0, 120, 15}
 LIM_LOCK_IDLE :: Int_Limits{0, 86400, 0}
 LIM_SETUP_DIM :: Int_Limits{5, 90, 40}
+LIM_SSH_LIFETIME :: Int_Limits{0, 1440, 60}
+LIM_SSH_IDLE :: Int_Limits{0, 1440, 0}
 
 parse_int_lim :: proc(s: string, l: Int_Limits) -> int {
 	return clamp(strconv.parse_int(strings.trim_space(s)) or_else l.fallback, l.lo, l.hi)

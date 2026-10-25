@@ -45,6 +45,7 @@ MODULES := [?]Module {
 	{"github", draw_github},
 	{"github-inbox", draw_github_inbox},
 	{"github-repo", draw_github_repo},
+	{"ssh", draw_ssh},
 }
 
 module_find :: proc(name: string) -> Module_Proc {
@@ -89,6 +90,7 @@ panel_icon :: proc(p: Panel) -> string {
 	case "calculator":                                               return ICON_CALC
 	case "launcher":                                                 return ICON_APPS
 	case "github":                                                   return ICON_GITHUB
+	case "ssh":                                                      return ICON_KEY
 	}
 	return ICON_TUNE
 }
@@ -146,6 +148,14 @@ panels_ensure_launcher :: proc() {
 		p := Panel{name = strings.clone("audio"), title = strings.clone("Audio"), width = 520, tab = false}
 		col: [dynamic]string
 		append(&col, strings.clone("audio"))
+		append(&p.columns, col)
+		append(&panels, p)
+	}
+	// The bar's ssh module and the quick settings tile open this one.
+	if panel_find("ssh") < 0 {
+		p := Panel{name = strings.clone("ssh"), title = strings.clone("SSH keys"), width = 560, tab = false}
+		col: [dynamic]string
+		append(&col, strings.clone("ssh"))
 		append(&p.columns, col)
 		append(&panels, p)
 	}

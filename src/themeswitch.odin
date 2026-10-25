@@ -232,19 +232,26 @@ theme_watch_open :: proc() -> linux.Fd {
 
 // Drains the watch: true when the mode file was written or replaced.
 theme_watch_changed :: proc(fd: linux.Fd) -> bool {
+	theme, _ := data_watch_changed(fd)
+	return theme
+}
+
+// The same watch: was the mode file, or the SSH key records (ssh.odin),
+// written or replaced?
+data_watch_changed :: proc(fd: linux.Fd) -> (theme, ssh: bool) {
 	buf: [4096]u8
-	hit := false
 	for {
 		n, err := linux.read(fd, buf[:])
 		if err != .NONE || n <= 0 {break}
 		for off := 0; off + size_of(linux.Inotify_Event) <= n; {
 			ev := (^linux.Inotify_Event)(&buf[off])
 			name := string(cstring(&buf[off + size_of(linux.Inotify_Event)])) if ev.len > 0 else ""
-			if name == "theme" {hit = true}
+			if name == "theme" {theme = true}
+			if name == SSH_RECORDS_NAME {ssh = true}
 			off += size_of(linux.Inotify_Event) + int(ev.len)
 		}
 	}
-	return hit
+	return
 }
 
 // Daemon start: wlperch's own colours, from the saved mode.

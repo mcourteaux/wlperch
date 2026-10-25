@@ -140,6 +140,7 @@ draw_quick :: proc(w: f32) {
 				"Turn the Bluetooth adapter on or off", proc(on: bool) {bluetooth_set_power(!on)}})
 		}
 	}
+	if t, ok := ssh_quick_tile(); ok {append(&tiles, t)}
 	if len(tracker.projects) > 0 {
 		append(&tiles, Tile_Def{"##q:lock", ICON_LINK, "Group lock", tracker.lock ? "Monitors together" : "Off", tracker.lock, true, C_TEAL,
 			"All monitors enter and leave a project's workspaces together", proc(on: bool) {tracker_set_lock(!on)}})

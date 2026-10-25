@@ -296,6 +296,9 @@ lock_listener := wl.Ext_Session_Lock_V1_Listener {
 		context = g_lock_ctx
 		lk.locked = true
 		log.info("session locked")
+		// [ssh] forget_on_lock: here, not in the daemon, so it happens
+		// whether or not the daemon runs.
+		if config.ssh_forget_on_lock {ssh_forget_all_async("screen locked")}
 		log.debugf("lock: timing: locked at +%.1f ms", since_lock())
 		if lk.daemon_w >= 0 {
 			b := u8(1)

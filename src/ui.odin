@@ -52,6 +52,7 @@ services_start :: proc() {
 	procs_start()
 	sensors_start()
 	github_start()
+	ssh_start()
 	displays_scan()
 	log.debugf("  rest: rss %d kB", rss_kb())
 }
@@ -65,6 +66,7 @@ on_show :: proc() {
 	bluetooth_refresh_async()
 	storage_on_show()
 	github_on_show()
+	ssh_on_show()
 	nightlight_poll()
 	dnd_poll_async()
 	displays_scan()

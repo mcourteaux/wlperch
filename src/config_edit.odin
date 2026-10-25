@@ -306,7 +306,7 @@ Setting :: struct {
 	old_scale:  int,              // old value * old_scale = new value (0 = 1)
 }
 
-SETTINGS_GROUPS := [?]string{"Panel", "Clock and weather", "Bar", "Memory", "Notifications", "Lock screen", "Lock screen info", "Idle lock", "Time tracking", "GitHub", "Launcher", "Setup window", "Dark theme", "Light theme"}
+SETTINGS_GROUPS := [?]string{"Panel", "Clock and weather", "Bar", "Memory", "Notifications", "Lock screen", "Lock screen info", "Idle lock", "Time tracking", "SSH keys", "GitHub", "Launcher", "Setup window", "Dark theme", "Light theme"}
 
 @(private = "file") CH_UNITS :: []Setting_Choice{{"metric", "Metric"}, {"imperial", "Imperial"}}
 @(private = "file") CH_BAR_POS :: []Setting_Choice{{"top", "Top"}, {"bottom", "Bottom"}}
@@ -370,6 +370,11 @@ SETTINGS := [?]Setting {
 	{group = "Notifications", section = "notifications", key = "hold_when_idle", label = "Hold popups when away after", kind = .Int, apply = .Daemon, ilim = LIM_NOTIF_HOLD_IDLE, step = 5, unit = "s", help = "After this long without input, popups stop timing out and wait for you; once you're back each gets its full time again. A playing video counts as activity. 0 = off."},
 	// Time tracking
 	{group = "Time tracking", section = "timetracker", key = "idle_seconds", label = "Break after", kind = .Int, apply = .Daemon, ilim = LIM_IDLE_SECONDS, step = 30, unit = "s", old_section = "timetracker", old_key = "idle_minutes", old_scale = 60},
+	// SSH keys
+	{group = "SSH keys", section = "ssh", key = "lifetime", label = "Keep keys unlocked for", kind = .Int, apply = .Daemon, ilim = LIM_SSH_LIFETIME, step = 15, unit = "min", help = "Unlocking a key (SSH keys panel) adds it to the agent for this long (ssh-add -t); then the agent forgets it. 0 = until forgotten, not recommended."},
+	{group = "SSH keys", section = "ssh", key = "forget_on_lock", label = "Forget keys when the screen locks", kind = .Bool, apply = .Lock, help = "wlperch lock empties the agent (ssh-add -D) as soon as the screen is locked."},
+	{group = "SSH keys", section = "ssh", key = "forget_on_idle", label = "Forget keys after idle", kind = .Int, apply = .Daemon, ilim = LIM_SSH_IDLE, step = 5, unit = "min", help = "Empties the agent after this long without input (a playing video counts as activity). 0 = off."},
+	{group = "SSH keys", section = "ssh", key = "keys", label = "Keys", kind = .Text, apply = .Daemon, hint = "every key in ~/.ssh", help = "The keys the panel lists, by file name or path, comma separated (e.g. id_ed25519, ~/.ssh/work). Empty = every private key in ~/.ssh."},
 	// GitHub
 	{group = "GitHub", section = "github", key = "enabled", label = "GitHub panel", kind = .Bool, apply = .Daemon, help = "Review requests, your pull requests with their checks, assigned issues and notifications, through the gh tool (log in once with \"gh auth login\"). Read-only."},
 	{group = "GitHub", section = "github", key = "repo", label = "Repository", kind = .Text, apply = .Daemon, hint = "owner/name"},

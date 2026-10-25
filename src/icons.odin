@@ -120,3 +120,7 @@ ICON_CONSOLE :: "\U000F018D" // md-console
 ICON_EMOTICON :: "\U000F01F5" // md-emoticon-happy-outline
 ICON_RETURN :: "\U000F0311" // md-keyboard_return
 ICON_PENCIL :: "\U000F03EB" // md-pencil
+ICON_KEY :: "\U000F0306" // md-key
+ICON_KEY_VARIANT :: "\U000F030B" // md-key_variant
+ICON_KEY_REMOVE :: "\U000F030A" // md-key_remove
+ICON_LOCK_OPEN :: "\U000F0340" // md-lock_open_outline

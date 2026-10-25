@@ -33,13 +33,16 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	case .Nvim:     return {ICON_PENCIL, "Neovim theme", "Makes Neovim follow wlperch theme: a small plugin file that reads wlperch's current mode and its [theme] nvim settings, and applies them when you switch. No ~/.vimrc.color needed. Doesn't edit your init.lua.", C_GREEN, nvim_plugin_preview}
 	case .Portal:   return {ICON_THEME, "Desktop portal", "GTK4 apps and Flatpaks read the system dark / light setting from xdg-desktop-portal, which needs systemd's graphical session (screen sharing and file pickers use it too). Starts it from sway (with sway-systemd when installed). Discord and Chrome follow the GTK theme without it.", C_ORANGE, ""}
 	case .Bar:      return {ICON_MONITORS, "Bar", "wlperch's own bar instead of waybar: workspaces (project workspaces in their colour), tray, media, timer, sensors, notifications, clock. Switches sway's bar over (with backups).", C_TEAL, BAR_CONF}
+	case .Ssh:      return {ICON_KEY, "SSH agent", "OpenSSH's own ssh-agent (not GNOME Keyring's), started by systemd on first use, for the SSH keys panel and the bar's key icon: unlock keys for a while ([ssh] lifetime), forget them when the screen locks. Sets SSH_AUTH_SOCK for your next login (with backups).", C_YELLOW, SSH_PROFILE_BLOCK}
 	case .Launcher: return {ICON_HOME, "App launcher entry", "Adds \"wlperch setup\" to your application launcher (rofi, wofi, fuzzel…).", C_YELLOW, ""}
 	}
 	return {}
 }
 
 @(private = "file")
-state_pill :: proc(s: Comp_State) -> (text: string, col: u32) {
+state_pill :: proc(s: Comp_State, id := Comp_Id.Program) -> (text: string, col: u32) {
+	if id == .Ssh && s == .Partial {return "log in again", C_ORANGE}
+	if id == .Ssh && s == .Outdated {return "partly set up", C_ORANGE}
 	switch s {
 	case .Installed:   return "installed", C_GREEN
 	case .Running:     return "running", C_GREEN
@@ -204,6 +207,23 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 		}
 		if s == .Installed || s == .Outdated || s == .Custom {append(&out, Action{"Restart bar", false, setup_restart_bar, false})}
 		if s == .Installed || s == .Outdated {append(&out, Action{"Switch back", false, setup_remove_bar, true})}
+	case .Ssh:
+		switch s {
+		case .Missing:   append(&out, Action{"Install", true, setup_install_ssh, false})
+		case .Outdated:  append(&out, Action{"Finish setup", true, setup_install_ssh, false})
+		case .Custom:    append(&out, Action{"Use OpenSSH's agent", false, setup_install_ssh, false})
+		case .Installed, .Partial, .Running, .Stopped, .Unavailable:
+		}
+		if s != .Unavailable {
+			ours, theirs := ssh_config_state()
+			if ours {
+				append(&out, Action{"Stop adding keys on use", false, setup_ssh_stop_add_keys, true})
+			} else if !theirs && (s == .Installed || s == .Partial) {
+				append(&out, Action{"Add keys on first use", false, setup_ssh_add_keys, false})
+			}
+		}
+		if s == .Installed || s == .Partial || s == .Custom {append(&out, Action{"Show keys", false, setup_ssh_show_keys, false})}
+		if s == .Installed || s == .Partial || s == .Outdated {append(&out, Action{"Remove", false, setup_remove_ssh, true})}
 	case .Lock:
 		switch s {
 		case .Missing:   append(&out, Action{"Use wlperch lock", true, setup_install_lock, false})
@@ -225,7 +245,7 @@ COLUMNS := [4]struct {
 	{"Basics", {.Program, .Service, .Config}},
 	{"Desktop", {.Sway, .Menu, .Launcher, .Portal}},
 	{"Bar and look", {.Bar, .Waybar, .Theme, .Nvim}},
-	{"Extras", {.Notifications, .Lock, .Rapl}},
+	{"Extras", {.Notifications, .Lock, .Ssh, .Rapl}},
 }
 
 @(private = "file")
@@ -293,7 +313,7 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 	im.DrawList_AddCircleFilled(dl(), {cp.x + 18, cp.y + 20}, 18, col32(inf.accent, 0.16))
 	draw_icon_centered(fonts.ui, 19, {cp.x + 18, cp.y + 20}, col32(inf.accent), inf.icon)
 	draw_text(fonts.bold, 16, {cp.x + 48, cp.y + 1}, col32(C_TEXT), inf.title)
-	stext, scol := state_pill(c.state)
+	stext, scol := state_pill(c.state, id)
 	ssz := measure(fonts.bold, 11, stext)
 	sx, sy := cp.x + 48, cp.y + 22
 	im.DrawList_AddCircleFilled(dl(), {sx + 9, sy + 9}, 3, col32(scol))

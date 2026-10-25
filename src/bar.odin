@@ -134,6 +134,7 @@ Bar :: struct {
 @(private = "file") ROW_SUB_H :: f32(42) // a row with a second line
 @(private = "file") SUB_PX :: f32(11.5)
 @(private = "file") AUDIO_MENU :: "@audio" // bar.menu_item of the audio module's menu
+@(private = "file") SSH_MENU :: "@ssh"
 @(private = "file") MENU_PAD :: f32(6)
 @(private = "file") MENU_ICON :: f32(16)
 
@@ -450,6 +451,13 @@ pointer_button :: proc(button: u32, pressed: bool) {
 			id := n.id
 			close_menu()
 			bar_audio_menu_activate(id)
+			mark_all_dirty()
+			return
+		}
+		if bar.menu_item == SSH_MENU {
+			id := n.id
+			close_menu()
+			bar_ssh_menu_activate(id)
 			mark_all_dirty()
 			return
 		}
@@ -997,6 +1005,17 @@ open_audio_menu :: proc(ck: Bar_Click) {
 	show_menu(o, bar_audio_menu(ck), AUDIO_MENU, .Audio)
 }
 
+// The ssh module's menu (bar_modules.odin builds and runs it).
+@(private = "file")
+open_ssh_menu :: proc(ck: Bar_Click) {
+	close_tooltip()
+	close_menu()
+	bar.tip_at = {}
+	o := bar.menu_out
+	if o == nil || o.surface == nil {return}
+	show_menu(o, bar_ssh_menu(ck), SSH_MENU, .Ssh)
+}
+
 @(private = "file")
 show_menu :: proc(o: ^Bar_Output, root: Menu_Node, item: string, mod: Bar_Mod) {
 	bar.menu_tree = root
@@ -1125,6 +1144,7 @@ bar_main :: proc(args: []string) -> int {
 	tray.on_media = bar_data_poke
 	open_tray_menu_cb = proc(t: ^Tray_Item) {open_menu(t)}
 	open_audio_menu_cb = open_audio_menu
+	open_ssh_menu_cb = open_ssh_menu
 	tray_start()
 	bar_data_start()
 	bar_audio_maybe_start()
@@ -1162,7 +1182,9 @@ theme_watch_start :: proc() {
 
 @(private = "file")
 theme_watch_read :: proc() {
-	if !theme_watch_changed(theme_fd) {return}
+	theme, ssh_records := data_watch_changed(theme_fd)
+	if ssh_records {bar_ssh_poke()}
+	if !theme {return}
 	light := theme_mode_load() == .Light
 	if light == theme_light {return}
 	bar_set_theme(light)

@@ -7,6 +7,7 @@ package main
 
 import "core:c"
 import "core:fmt"
+import "core:log"
 import "core:math"
 import "core:encoding/ini"
 import "core:os"
@@ -21,7 +22,7 @@ import "core:time/datetime"
 Bar_Mod :: enum u8 {
 	Workspaces, Mode, Scratchpad, Window,
 	Idle, Power_Profile, Backlight, Battery, Media, Timer, Sensors, Memory, Clock, Tray, Notifications, Wlperch,
-	Audio,
+	Audio, Ssh,
 }
 
 @(private = "file")
@@ -29,7 +30,7 @@ MOD_NAMES := [Bar_Mod]string {
 	.Workspaces = "workspaces", .Mode = "mode", .Scratchpad = "scratchpad", .Window = "window",
 	.Idle = "idle", .Power_Profile = "power-profile", .Backlight = "backlight", .Battery = "battery",
 	.Media = "media", .Timer = "timer", .Sensors = "sensors", .Memory = "memory", .Clock = "clock",
-	.Tray = "tray", .Notifications = "notifications", .Wlperch = "wlperch", .Audio = "audio",
+	.Tray = "tray", .Notifications = "notifications", .Wlperch = "wlperch", .Audio = "audio", .Ssh = "ssh",
 }
 
 Bar_Config :: struct {
@@ -110,6 +111,11 @@ Bar_Data :: struct {
 	bl_dev:         string,
 	bl_max:         int,
 	ppd:            string, // "" = no power-profiles-daemon
+	ssh_n:          int, // keys in the SSH agent (0: the module hides)
+	ssh_tip:        string,
+	ssh_next:       i64, // unix seconds the next key leaves the agent (0: none known)
+	ssh_check_at:   time.Tick, // look again then (after a menu action)
+	ssh_poke:       bool, // look now (the records file changed)
 	// Requests from the main thread.
 	cmd_media:      string,
 	cmd_ppd:        int, // +1 / -1: cycle
@@ -276,6 +282,25 @@ bar_data_start :: proc() {
 			}
 			if cmd_bl != 0 {
 				set_backlight(sys, bar_data.bl_dev, bar_data.bl_max, bar_data.bl_pct + cmd_bl)
+			}
+
+			ssh_now := false
+			{
+				sync.guard(&bar_data.mu)
+				if .Ssh in bar_mods_used() {
+					due := bar_data.ssh_check_at != {} && time.tick_diff(bar_data.ssh_check_at, time.tick_now()) >= 0
+					expired := bar_data.ssh_next > 0 && time.to_unix_seconds(time.now()) >= bar_data.ssh_next
+					ssh_now = tick % 30 == 0 || bar_data.ssh_poke || due || expired
+					if due {bar_data.ssh_check_at = {}}
+				}
+				bar_data.ssh_poke = false
+			}
+			if ssh_now {
+				n, tip, next := ssh_bar_sample()
+				sync.guard(&bar_data.mu)
+				if n != bar_data.ssh_n {changed = true}
+				bar_data.ssh_n, bar_data.ssh_next = n, next
+				changed |= set_s(&bar_data.ssh_tip, tip)
 			}
 
 			notif := status_notifications_item()
@@ -717,6 +742,14 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		add(lay, it)
 	case .Audio:
 		if it, ok := bar_audio_item(); ok {add(lay, it)}
+	case .Ssh:
+		if bar_data.ssh_n == 0 {return}
+		it := module_item(.Ssh)
+		it.bg, it.bg_alpha = p.yellow, 0.14
+		bar_seg(&it, ICON_KEY, p.yellow, .Regular, 16)
+		if bar_data.ssh_n > 1 {bar_seg(&it, fmt.tprintf(" %d", bar_data.ssh_n), p.yellow, .Bold, tnum = true)}
+		it.tooltip = bar_data.ssh_tip
+		add(lay, it)
 	}
 }
 
@@ -932,6 +965,11 @@ bar_click :: proc(it: ^Bar_Item, ck: Bar_Click, open_menu: proc(t: ^Tray_Item, c
 		case BTN_MIDDLE: bar_audio_toggle_mute()
 		case BTN_RIGHT:  if open_audio_menu_cb != nil {open_audio_menu_cb(ck)}
 		}
+	case .Ssh:
+		switch ck.button {
+		case BTN_LEFT:  bar_toggle_panel("ssh", ck)
+		case BTN_RIGHT: if open_ssh_menu_cb != nil {open_ssh_menu_cb(ck)}
+		}
 	case .Tray:
 		t, _ := tray_find(it.key)
 		if t == nil {return}
@@ -952,6 +990,7 @@ bar_click :: proc(it: ^Bar_Item, ck: Bar_Click, open_menu: proc(t: ^Tray_Item, c
 pending_menu_click: Bar_Click
 open_tray_menu_cb: proc(t: ^Tray_Item)
 open_audio_menu_cb: proc(ck: Bar_Click)
+open_ssh_menu_cb: proc(ck: Bar_Click)
 
 bar_scroll :: proc(it: ^Bar_Item, steps: int, horizontal: bool, output: string) {
 	if steps == 0 {return}
@@ -973,7 +1012,7 @@ bar_scroll :: proc(it: ^Bar_Item, steps: int, horizontal: bool, output: string) 
 		if t, _ := tray_find(it.key); t != nil {tray_scroll(t, i32(steps), horizontal)}
 	case .Audio:
 		if !horizontal {bar_audio_scroll(steps)}
-	case .Mode, .Scratchpad, .Window, .Idle, .Power_Profile, .Battery, .Timer, .Sensors, .Memory, .Clock, .Notifications, .Wlperch:
+	case .Mode, .Scratchpad, .Window, .Idle, .Power_Profile, .Battery, .Timer, .Sensors, .Memory, .Clock, .Notifications, .Wlperch, .Ssh:
 	}
 }
 
@@ -1026,4 +1065,55 @@ bar_mods_used :: proc() -> bit_set[Bar_Mod] {
 	set: bit_set[Bar_Mod]
 	for side in bar_cfg.sides {for m in side {set += {m}}}
 	return set
+}
+
+// ---- SSH keys ------------------------------------------------------------------------
+
+@(private = "file") SSH_MENU_FORGET :: 1
+@(private = "file") SSH_MENU_LOCK :: 2
+@(private = "file") SSH_MENU_PANEL :: 3
+@(private = "file") ssh_click: Bar_Click
+
+// The right-click menu's tree (freed by menu_free).
+bar_ssh_menu :: proc(ck: Bar_Click) -> (root: Menu_Node) {
+	ssh_click = ck
+	root.visible = true
+	node :: proc(id: i32, label, sublabel, glyph: string) -> Menu_Node {
+		return {id = id, label = strings.clone(label), sublabel = strings.clone(sublabel), glyph = glyph, enabled = true, visible = true}
+	}
+	append(&root.children, node(SSH_MENU_FORGET, "Forget all keys", "ssh-add -D: unlock them again to use them", ICON_KEY_REMOVE))
+	append(&root.children, node(SSH_MENU_LOCK, "Lock agent", "Asks for a password that unlocks it again", ICON_LOCK))
+	append(&root.children, Menu_Node{visible = true, separator = true})
+	append(&root.children, node(SSH_MENU_PANEL, "SSH keys…", "", ICON_KEY))
+	return
+}
+
+bar_ssh_menu_activate :: proc(id: i32) {
+	switch id {
+	case SSH_MENU_FORGET, SSH_MENU_LOCK:
+		cmd := id == SSH_MENU_FORGET ? "ssh forget-all" : "ssh lock"
+		if _, ok := ipc_query(cmd); !ok {
+			// No daemon: here, off the main thread (lock waits for the popup).
+			thread.create_and_start_with_data(rawptr(uintptr(id)), proc(data: rawptr) {
+				act := int(uintptr(data)) == SSH_MENU_FORGET ? Ssh_Action.Forget_All : Ssh_Action.Lock
+				_, msg := ssh_do(act, "", "", 0)
+				log.infof("wlperch bar: ssh: %s", msg)
+				sync.guard(&bar_data.mu)
+				bar_data.ssh_poke = true
+				sync.sema_post(&bar_data.wake)
+			}, init_context = context, self_cleanup = true)
+		}
+		// Look again once ssh-add is done (it doesn't always change the records).
+		sync.guard(&bar_data.mu)
+		bar_data.ssh_check_at = time.tick_add(time.tick_now(), 800 * time.Millisecond)
+	case SSH_MENU_PANEL:
+		bar_toggle_panel("ssh", ssh_click)
+	}
+}
+
+// The records file changed (the data-dir watch): look at the agent now.
+bar_ssh_poke :: proc() {
+	sync.guard(&bar_data.mu)
+	bar_data.ssh_poke = true
+	sync.sema_post(&bar_data.wake)
 }

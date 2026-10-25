@@ -61,6 +61,10 @@ commands:
   bar              the status bar (instead of waybar); run it from sway:
                    bar { swaybar_command wlperch-bar }
   bar restart      start a fresh bar; it takes over from the running one
+  ssh [status|unlock <key>|forget <key>|forget-all|lock|unlock-agent]
+                   SSH keys in the agent (unlock asks in wlperch's popup and
+                   adds the key for [ssh] lifetime minutes)
+  askpass <prompt> SSH_ASKPASS program: a passphrase popup (also as wlperch-askpass)
   lock [-f]        lock the screen (clock, notification count, media, battery);
                    -f forks once locked, for swayidle before-sleep
   sensors scan [seconds]  list the Tuya devices announcing themselves on the LAN
@@ -304,6 +308,8 @@ handle_command :: proc(line: string) -> string {
 		return countdown_preview(len(f) > 1 ? strconv.parse_int(f[1]) or_else 0 : 0)
 	case "theme":
 		return theme_command(f[1:])
+	case "ssh":
+		return ssh_command(f[1:])
 	case "daemon", "ping":
 	case:
 		return "unknown command\n"
@@ -331,6 +337,12 @@ main :: proc() {
 	level := os.get_env("WLPERCH_DEBUG", context.temp_allocator) != "" ? log.Level.Debug : log.Level.Info
 	context.logger = log.create_console_logger(level, {.Level, .Terminal_Color, .Time})
 
+	// ssh-add runs SSH_ASKPASS as one program name with the prompt as its
+	// argument: wlperch-askpass, or this binary marked by the environment.
+	if filepath.base(os.args[0]) == "wlperch-askpass" || os.get_env("WLPERCH_ASKPASS", context.temp_allocator) == "1" {
+		posix.unsetenv("WLPERCH_ASKPASS")
+		os.exit(askpass_main(os.args[1:]))
+	}
 	migrate_old_name()
 	// sway runs swaybar_command as one program name: "wlperch-bar" is the bar.
 	if filepath.base(os.args[0]) == "wlperch-bar" {
@@ -371,6 +383,10 @@ main :: proc() {
 		os.exit(displays_cli(os.args[2:]))
 	case "theme":
 		os.exit(theme_cli(os.args[2:]))
+	case "ssh":
+		os.exit(ssh_cli(os.args[2:]))
+	case "askpass":
+		os.exit(askpass_main(os.args[2:]))
 	case "sensors":
 		config_load()
 		os.exit(sensors_cli(os.args[2:]))
@@ -438,6 +454,7 @@ main :: proc() {
 
 	t0 := time.tick_now()
 	restrict_egl_vendor() // touches the environment: before any thread exists
+	ssh_session_env_init() // idem
 	if !platform_init() {os.exit(1)}
 	log.debugf("platform_init took %v, rss %d kB", time.tick_since(t0), rss_kb())
 
@@ -595,7 +612,7 @@ loop_iteration :: proc() {
 		if r := platform_key_repeat(); r >= 0 {
 			timeout = min(timeout < 0 ? max(int) : timeout, int(time.duration_milliseconds(r)) + 1)
 		}
-	} else if plat.egl_context != nil && config.release_gpu_after > 0 && !countdown_holds_reexec() {
+	} else if plat.egl_context != nil && config.release_gpu_after > 0 && !countdown_holds_reexec() && !ssh_busy() {
 		// Wake up to release GPU resources once we've been hidden long enough.
 		// (Not while the idle countdown holds it: its events wake us.)
 		left := config.release_gpu_after - time.tick_since(hidden_since)
@@ -623,6 +640,10 @@ loop_iteration :: proc() {
 	}
 	if ct := countdown_timeout(); ct >= 0 {
 		ms := int(time.duration_milliseconds(ct)) + 1
+		timeout = timeout < 0 ? ms : min(timeout, ms)
+	}
+	if st := ssh_timeout(); st >= 0 {
+		ms := int(time.duration_milliseconds(st)) + 1
 		timeout = timeout < 0 ? ms : min(timeout, ms)
 	}
 
@@ -672,8 +693,10 @@ loop_iteration :: proc() {
 	notifications_tick()
 	memwarn_tick()
 	countdown_tick()
+	ssh_tick()
 
-	if restart_requested {
+	// (Not while ssh-add waits for a passphrase: a re-exec would kill it.)
+	if restart_requested && !ssh_busy() {
 		restart_requested = false
 		was_visible := platform_visible()
 		hide_popup()
@@ -710,7 +733,7 @@ loop_iteration :: proc() {
 			last_render_second = sec
 			render_frame()
 		}
-	} else if plat.egl_context != nil && config.release_gpu_after > 0 && time.tick_since(hidden_since) >= config.release_gpu_after && !notifications_busy() && !memwarn_busy() && !countdown_holds_reexec() {
+	} else if plat.egl_context != nil && config.release_gpu_after > 0 && time.tick_since(hidden_since) >= config.release_gpu_after && !notifications_busy() && !memwarn_busy() && !countdown_holds_reexec() && !ssh_busy() {
 		// The GPU driver keeps its memory after eglTerminate; a fresh process image doesn't.
 		// (Not while notification popups are up: they'd vanish.)
 		notifications_save()

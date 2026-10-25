@@ -36,6 +36,7 @@ pressing <kbd>Esc</kbd>, closes it.
 | 🔔 **Notifications** | wlperch is the desktop notification server (see [Notifications](#notifications)): popups in the top-right corner, and this panel keeps the history of the last 7 days, grouped by day, with unread dots, action buttons for notifications the app still listens to, remove / clear all, and do not disturb. |
 | 🧮 **Calculator** | Type an expression and the result updates as you type: `sqrt(2) * 0x10`, `floor(7/2)`, `sin(pi/6)`, `5!`, `0xff & ~0b1010`, `2pi`. Shows it as decimal, hex, octal and binary (integers; negatives as 64-bit two's complement) and as IEEE-754: f64 and f32 bit patterns and a C hex float literal (`0x1.8p+1`). Click any of them to copy it. Integers stay exact up to 128 bits. Enter keeps the result as `ans` (an expression starting with an operator continues from it), Up/Down recall the history, RAD/DEG switches the angle unit, and **?** lists the syntax. It has its own popup for a key binding (`wlperch toggle calc`, which takes the keyboard right away), and `wlperch calc <expression>` prints every format in a terminal. |
 | 🔒 **Lock screen** | `wlperch lock` replaces swaylock (see [Lock screen](#lock-screen)): a big clock and date, the password field, Caps Lock and keyboard layout, and a status row with the unread notification count (and which apps), what's playing, the battery and connected Bluetooth devices. |
+| 🔑 **SSH keys** | Your keys in `~/.ssh` and whether OpenSSH's `ssh-agent` holds them, with the time left (see [SSH keys](#ssh-keys)). **Unlock** asks for the passphrase in wlperch's own popup and adds the key for an hour (`[ssh] lifetime`); **Forget**, **Forget all**, **Lock agent**. Keys are forgotten when the screen locks. A key icon in the bar while any key is unlocked. |
 | 💾 **Storage** | Each drive with its mounted volumes: free space and a fill bar (orange from 85 %, red from 95 %). Click a volume to open it in the file manager. External drives (USB / hotplug) also list unmounted volumes with a **Mount** button, and an **eject** button unmounts everything and powers the drive off (udisks, no root needed). Boot, EFI and swap partitions are hidden. While the popup is open, drives you plug in show up within a few seconds. |
 
 | Dark | Light |
@@ -99,8 +100,9 @@ switches in place. The first panel in the config is the default.
 | `calc` | calculator (no tab: `tab = false`; open it with a key binding) |
 | `launch`, `run` | launcher (no tab; added even when your config defines its own panels) |
 | `github` | github \| github-repo · github-inbox (only when `[github] enabled = true`) |
+| `ssh` | ssh (no tab; the quick settings tile and the bar's key icon open it; added even when your config defines its own panels) |
 
-Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time notifications media calculator launcher github github-repo github-inbox`.
+Modules: `quick audio network weather clocks displays bluetooth storage cpu gpu memory processes thermals sensors time notifications media calculator launcher ssh github github-repo github-inbox`.
 
 The system panel's graphs keep the last hour. Scroll over any of them to zoom
 (they zoom together); zooming out from the live view stays live. Dragging or
@@ -629,6 +631,70 @@ that are already running:
   lines and the file when you like. **Remove** deletes the plugin and puts
   `nvim_file` back.
 
+### SSH keys
+
+SSH keys in **OpenSSH's own `ssh-agent`** (not GNOME Keyring's), unlocked for
+a while instead of for the whole session.
+
+- **Panel** (`wlperch toggle ssh`, the quick settings tile, or the bar's key
+  icon): every private key in `~/.ssh` (a file with a matching `.pub`, or one
+  `ssh-keygen -l` recognises) with its type, size and fingerprint, and
+  whether the agent holds it. **Unlock** runs `ssh-add -t <lifetime> <key>`
+  and shows the time left; **Forget** (`ssh-add -d`), **Forget all**
+  (`ssh-add -D`), **Lock agent** / **Unlock agent** (`ssh-add -x` / `-X`).
+  Keys added some other way are listed too (as unlocked, without a time).
+  Without an agent it says so, with a button to set one up.
+- **Passphrase popup:** `ssh-add` runs with `SSH_ASKPASS` set to wlperch
+  (`SSH_ASKPASS_REQUIRE=force`, no terminal), so the passphrase is asked in a
+  small centred popup that takes the keyboard: dots in the field, dead keys
+  and compose work, Caps Lock is shown, Enter / Escape. A wrong passphrase
+  asks again with "Wrong passphrase". `wlperch askpass` (or the
+  `~/.local/bin/wlperch-askpass` link) is a general `SSH_ASKPASS` program:
+  it prints the text and exits 0, or exits 1 when cancelled; with
+  `SSH_ASKPASS_PROMPT=confirm` it asks Allow / Deny, with `none` it only
+  shows the message.
+- **Time left:** `ssh-add -l` doesn't tell, so wlperch notes when it added a
+  key and for how long in `~/.local/share/wlperch/ssh-agent` (fingerprints
+  and timestamps, nothing else). The bar looks at the agent every 30 s, right
+  after wlperch changes something, and right when the next key is due to
+  leave.
+- **When keys go:** after `[ssh] lifetime` minutes (default 60; the agent
+  itself removes them), when the screen locks with `wlperch lock`
+  (`forget_on_lock`, default on; the lock screen does it, so it works without
+  the daemon), and after `forget_on_idle` minutes without input (off by
+  default). All in the Settings tab under **SSH keys**.
+- **Security:** passphrases only ever exist in the askpass process, which
+  hands them to `ssh-add` over its pipe: never in the daemon, IPC, logs or
+  config. Its buffer is locked in memory where allowed, wiped after use, and
+  the process can't be traced or dumped; there is no clipboard. wlperch never
+  reads private key files (only `.pub` files, or `ssh-keygen -l` for keys
+  without one) and never turns on agent forwarding.
+
+**Setup → SSH agent → Install** sets OpenSSH's agent up:
+- `systemctl --user enable --now ssh-agent.socket` (Fedora's openssh unit;
+  the agent starts on first use, at `$XDG_RUNTIME_DIR/ssh-agent.socket`);
+- `~/.config/environment.d/50-wlperch-ssh-agent.conf` with `SSH_AUTH_SOCK`,
+  for systemd's user services and display-manager logins;
+- a marked block exporting `SSH_AUTH_SOCK` in your login shell's profile
+  (`~/.zprofile` for zsh, `~/.bash_profile` or `~/.profile` for bash; not in
+  SSH logins), backed up in `~/.local/share/wlperch/ssh-agent-backup/`. A
+  sway started from a TTY login inherits it, and with it every terminal and
+  app. Sway can't change its own environment, so **log out and back in**
+  once; until then apps started from wlperch's launcher already get the
+  socket, and the panel finds the agent by itself;
+- stale sockets of an earlier hand-started agent in `~/.ssh/agent/` are
+  removed when nothing listens on them.
+
+The card shows **log in again** until sway's environment has the socket, and
+**set up elsewhere** (naming it) when another agent such as GNOME Keyring or
+gpg-agent is active. **Add keys on first use** puts `AddKeysToAgent <lifetime>`
+at the top of `~/.ssh/config` (with a backup), so keys `ssh` loads go into
+the agent for that long. **Remove** puts every file back as it was and
+disables the socket again (when setup enabled it).
+
+The bar's `ssh` module is in the default `[bar] right` list; if your config
+sets its own list, add `ssh` to it (e.g. before `notifications`).
+
 ### Bar
 
 ![The bar: numbered workspaces, a project's workspaces in one pill, the window title, then media, volume, the project timer, memory, clock, tray, notifications and the wlperch button](docs/screenshots/bar.png)
@@ -658,7 +724,9 @@ bar {
   `[memory] bar_warn_percent`, red from `critical_percent`; a small graph of
   the last 2 minutes of CPU usage in front, CPU now / average / peak in the
   tooltip), clock (tooltip: this
-  month), tray, notifications (right click: do not disturb) and the wlperch
+  month), tray, ssh (a key while SSH keys are unlocked; tooltip: which, and
+  their time left; click: the SSH keys panel; right click: forget all, lock
+  the agent), notifications (right click: do not disturb) and the wlperch
   button. Modules without data (no battery, nothing playing) are hidden.
 - **Panels:** clicking the clock, memory, timer, sensors, bell or wlperch
   button opens that panel from the daemon under the clicked module
@@ -828,6 +896,7 @@ wlperch notify dnd [on|off]  # do not disturb (no argument: toggle)
 wlperch notify clear    # empty the notification history
 wlperch notify dismiss  # close the popups on screen
 wlperch notify status   # "<unread> <dnd 0|1> <serving 0|1>"
+wlperch ssh             # SSH keys in the agent (also: unlock <key>, forget <key>, forget-all, lock, unlock-agent)
 wlperch daemon     # start in the background without showing
 wlperch status     # waybar JSON for the bar button (see below)
 ```
@@ -938,6 +1007,12 @@ hold_when_idle = 5            # popups wait after this many s without input (0 =
 enabled = false               # GitHub panel via the gh CLI (run "gh auth login" first)
 repo =                        # optional owner/name to follow too (checks, runs, releases)
 refresh_minutes = 5
+
+[ssh]
+lifetime = 60                 # minutes an unlocked key stays in the agent (1-1440; 0 = until forgotten)
+forget_on_lock = true         # wlperch lock empties the agent (ssh-add -D)
+forget_on_idle = 0            # empty it after this many minutes without input (0 = off)
+keys =                        # names or paths to list, comma separated; empty = every key in ~/.ssh
 
 [lock]
 pam_service =                 # empty: "swaylock" if /etc/pam.d/swaylock exists, else "login"
@@ -1067,6 +1142,10 @@ src/setup_bar.odin       setup component: switch sway's bar from waybar/swaybar 
 src/config_edit.odin     config.ini edits that keep comments; the settings table, validated with config.odin's limits
 src/setup_settings.odin  setup's Settings tab: controls, debounced writes, restarting the daemon to apply
 src/setup_dim.odin       setup's dim around its window: layer surfaces with a rounded hole that follow sway's tree
+src/ssh.odin             SSH keys: ~/.ssh scan, ssh-add actions, the expiry records, the daemon's state, `wlperch ssh`
+src/ui_ssh.odin          the SSH keys card and its quick settings tile
+src/askpass.odin         `wlperch askpass`: the SSH_ASKPASS passphrase popup (own process, shm)
+src/setup_ssh.odin       setup component: OpenSSH's ssh-agent socket, SSH_AUTH_SOCK for the login, AddKeysToAgent
 ```
 
 ## Licenses
