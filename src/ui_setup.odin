@@ -444,10 +444,11 @@ draw_setup :: proc() {
 			accent:                    u32,
 			progress:                  f32,
 		} {
-			{ICON_CHECK, "Set up", fmt.tprintf("%d / %d", done, applicable), "components", C_BLUE, applicable > 0 ? f32(done) / f32(applicable) : 0},
+			// Green like the installed components once everything is set up.
+			{ICON_CHECK, "Set up", fmt.tprintf("%d / %d", done, applicable), "components", applicable > 0 && done == applicable ? C_GREEN : C_BLUE, applicable > 0 ? f32(done) / f32(applicable) : 0},
 			{ICON_POWER, "Daemon", svc_text, "", svc_col, -1},
 			{ICON_BELL, "Notifications", ntf_text, "", ntf_col, -1},
-			attention > 0 ? {ICON_ALERT, "Needs attention", fmt.tprintf("%d", attention), attention == 1 ? "component" : "components", C_ORANGE, -1} : {ICON_HOME, "Not installed", fmt.tprintf("%d", missing), "optional", C_MUTED, -1},
+			attention > 0 ? {ICON_ALERT, "Needs attention", fmt.tprintf("%d", attention), attention == 1 ? "component" : "components", C_ORANGE, -1} : missing > 0 ? {ICON_HOME, "Not installed", fmt.tprintf("%d", missing), "optional", C_MUTED, -1} : {ICON_CHECK, "Nothing left", "all set", "", C_GREEN, -1},
 		}
 		tile_h: f32 = 0
 		for t, i in tiles {
