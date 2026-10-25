@@ -30,11 +30,19 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	case .Lock:     return {ICON_LOCK, "Lock screen", "wlperch lock instead of swaylock: clock, notification count, media and battery. Switches swayidle and your lock key over (with backups).", C_BLUE, LOCK_CONF}
 	case .Menu:     return {ICON_APPS, "Launcher", "wlperch's app launcher instead of rofi/wofi/fuzzel: apps, a calculator and the panels as you type, \"> command\" runs one. Switches your launcher keys over (with backups).", C_GREEN, MENU_CONF}
 	case .Theme:    return {ICON_THEME, "Dark / light", "wlperch theme switches wlperch (and its bar), GTK apps, waybar, kitty, nvim and the wallpaper between dark and light (see [theme] in the settings). Switches your theme keys over (with backups), copying your theme script's settings.", C_YELLOW, THEME_CONF}
+	case .Nvim:     return {ICON_PENCIL, "Neovim theme", nvim_card_desc(), C_GREEN, nvim_plugin_text(nvim_theme_file)}
 	case .Portal:   return {ICON_THEME, "Desktop portal", "GTK4 apps and Flatpaks read the system dark / light setting from xdg-desktop-portal, which needs systemd's graphical session (screen sharing and file pickers use it too). Starts it from sway (with sway-systemd when installed). Discord and Chrome follow the GTK theme without it.", C_ORANGE, ""}
 	case .Bar:      return {ICON_MONITORS, "Bar", "wlperch's own bar instead of waybar: workspaces (project workspaces in their colour), tray, media, timer, sensors, notifications, clock. Switches sway's bar over (with backups).", C_TEAL, BAR_CONF}
 	case .Launcher: return {ICON_HOME, "App launcher entry", "Adds \"wlperch setup\" to your application launcher (rofi, wofi, fuzzel…).", C_YELLOW, ""}
 	}
 	return {}
+}
+
+@(private = "file")
+nvim_card_desc :: proc() -> string {
+	file := nvim_theme_file != "" ? nvim_theme_file : "your nvim colour file"
+	if h := os.get_env("HOME", context.temp_allocator); h != "" && len(file) > len(h) && strings.has_prefix(file, h) && file[len(h)] == '/' {file = strings.concatenate({"~", file[len(h):]}, context.temp_allocator)}
+	return fmt.tprintf("Makes running Neovim instances follow wlperch theme (dark / light): a small plugin file that re-sources %s whenever it changes. Doesn't edit your init.lua.", file)
 }
 
 @(private = "file")
@@ -181,6 +189,14 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 		}
 		append(&out, Action{"Toggle now", false, setup_toggle_theme, false})
 		if s == .Installed || s == .Outdated {append(&out, Action{"Switch back", false, setup_remove_theme, true})}
+	case .Nvim:
+		switch s {
+		case .Missing:   append(&out, Action{"Install", true, setup_install_nvim, false})
+		case .Custom:    if !os.exists(nvim_plugin_path()) {append(&out, Action{"Install", false, setup_install_nvim, false})}
+		case .Outdated:  append(&out, Action{"Update", true, setup_install_nvim, false})
+		case .Installed, .Running, .Stopped, .Unavailable, .Partial:
+		}
+		if s == .Installed || s == .Outdated {append(&out, Action{"Remove", false, setup_remove_nvim, true})}
 	case .Portal:
 		st := portal_status
 		if !st.session && !st.elsewhere && !st.installed {append(&out, Action{"Start session", true, setup_install_portal, false})}
@@ -215,7 +231,7 @@ COLUMNS := [4]struct {
 } {
 	{"Basics", {.Program, .Service, .Config}},
 	{"Desktop", {.Sway, .Menu, .Launcher, .Portal}},
-	{"Bar and look", {.Bar, .Waybar, .Theme}},
+	{"Bar and look", {.Bar, .Waybar, .Theme, .Nvim}},
 	{"Extras", {.Notifications, .Lock, .Rapl}},
 }
 

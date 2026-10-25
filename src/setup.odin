@@ -49,6 +49,7 @@ Comp_Id :: enum {
 	Lock,
 	Menu,
 	Theme,
+	Nvim,
 	Portal,
 	Bar,
 }
@@ -287,6 +288,8 @@ setup_check :: proc() {
 	portal_setup_check(&c[.Portal], detail)
 	// Dark / light key bindings
 	theme_setup_check(&c[.Theme], detail)
+	// nvim following the dark / light switch
+	nvim_setup_check(&c[.Nvim], detail)
 	// wlperch's bar instead of waybar
 	bar_setup_check(&c[.Bar], detail)
 	// Launcher entry
@@ -644,7 +647,8 @@ setup_take_notifications :: proc(take: bool) {
 	done(.Notifications, ok, ok ? fmt.tprintf("wlperch now shows notifications (%s masked)", strings.join(units, ", ", context.temp_allocator)) : fmt.tprintf("%s masked; start the background service to take over", strings.join(units, ", ", context.temp_allocator)))
 }
 
-// Program, config, sway, waybar (files + hook), launcher, then start the daemon.
+// Program, config, sway, waybar (files + hook), launcher, then start the
+// daemon; notifications and the nvim theme plugin when nothing else does those.
 setup_install_recommended :: proc() {
 	states: [Comp_Id]Comp_State
 	{
@@ -658,6 +662,8 @@ setup_install_recommended :: proc() {
 	if states[.Launcher] == .Missing {setup_install_launcher(true)}
 	if states[.Service] != .Running {setup_start_service(false)}
 	if states[.Notifications] == .Missing {setup_take_notifications(true)}
+	// One file outside the nvim config, only when nothing handles it yet.
+	if states[.Nvim] == .Missing {setup_install_nvim()}
 }
 
 // ---- Uninstall --------------------------------------------------------------
