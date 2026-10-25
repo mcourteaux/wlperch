@@ -504,7 +504,7 @@ mark_all_dirty :: proc() {
 @(private = "file")
 item_width :: proc(it: ^Bar_Item) -> f32 {
 	w: f32
-	for s in it.segs {w += bar_text_width(s.font, s.px, s.text, s.tnum)}
+	for s in it.segs {w += bar_seg_width(s)}
 	if it.icon != nil || it.icon_size > 0 {w += it.icon_size}
 	return max(w, it.min_w) + 2 * it.pad
 }
@@ -605,7 +605,7 @@ draw_bar :: proc(o: ^Bar_Output, cv: ^Bar_Canvas, lay: ^Bar_Layout) {
 		content := item_width(&it) - 2 * it.pad
 		if it.min_w > 0 {
 			raw: f32
-			for s in it.segs {raw += bar_text_width(s.font, s.px, s.text, s.tnum)}
+			for s in it.segs {raw += bar_seg_width(s)}
 			x += (content - raw) / 2
 		}
 		if it.icon != nil {
@@ -613,6 +613,14 @@ draw_bar :: proc(o: ^Bar_Output, cv: ^Bar_Canvas, lay: ^Bar_Layout) {
 			x += it.icon_size
 		}
 		for s in it.segs {
+			if s.graph > 0 {
+				// The text's height (about the digits' cap height + a bit), centred.
+				gh := min(f32(14), H - 2 * it.inset - 6)
+				vals := bar_cpu.vals
+				bar_sparkline(cv, {x, (H - gh) / 2, s.graph, gh}, vals[:bar_cpu.n], bar_cpu.cap, s.color)
+				x += s.graph
+				continue
+			}
 			baseline := H / 2 + 0.31 * s.px
 			bar_text(cv, s.font, s.px, x, baseline, s.text, s.color, s.alpha, s.tnum)
 			x += bar_text_width(s.font, s.px, s.text, s.tnum)
@@ -1120,6 +1128,7 @@ bar_main :: proc(args: []string) -> int {
 	tray_start()
 	bar_data_start()
 	bar_audio_maybe_start()
+	bar_cpu_configure()
 
 	for sig in ([]posix.Signal{.SIGTERM, .SIGINT, .SIGHUP}) {posix.signal(sig, bar_on_term)}
 	for {
@@ -1206,11 +1215,18 @@ config_reload :: proc() {
 	delete(old.clock)
 	bar.last_minute = -1 // the clock format may have gained or lost seconds
 	bar_audio_maybe_start()
+	bar_cpu_configure()
 	mark_all_dirty()
 	for p in popups {p.dirty = true}
 }
 
 @(private = "file") pulse_at: time.Tick
+
+// Sample only while a memory module shows the graph.
+@(private = "file")
+bar_cpu_configure :: proc() {
+	cpu_graph_configure(bar_cfg.cpu_graph && .Memory in bar_mods_used(), bar_cfg.cpu_interval)
+}
 
 // Until the clock text changes.
 @(private = "file")
@@ -1234,6 +1250,8 @@ bar_iteration :: proc() -> bool {
 		bar.last_minute = minute
 		mark_all_dirty()
 	}
+	// The CPU graph moves on once per sample.
+	if cpu_graph_tick() {mark_all_dirty()}
 	// The memory module pulses while it's orange: a few frames a second, only then.
 	if bar_mem_pulse_timeout(pulse_at) == 0 {
 		pulse_at = time.tick_now()
@@ -1257,6 +1275,7 @@ bar_iteration :: proc() -> bool {
 	pick(&timeout, bar_sway_timeout())
 	pick(&timeout, tray_timeout())
 	pick(&timeout, bar_mem_pulse_timeout(pulse_at))
+	pick(&timeout, cpu_graph_timeout())
 
 	sway_fd := bar_sway_fd()
 	bus_fd, bus_ev := tray_fd()

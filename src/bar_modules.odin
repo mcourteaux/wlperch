@@ -40,6 +40,9 @@ Bar_Config :: struct {
 	clock:       string,
 	tray_size:   f32,
 	volume_step: int, // percent per scroll step (audio)
+	cpu_graph:   bool, // CPU sparkline in the memory module
+	cpu_interval: int, // seconds per sample
+	cpu_width:   f32,
 }
 bar_cfg: Bar_Config
 
@@ -79,6 +82,9 @@ bar_config_load :: proc(m, defaults: ini.Map) {
 	b.clock = strings.clone(get(m, defaults, "clock_format"))
 	b.tray_size = f32(parse_int_lim(get(m, defaults, "tray_icon_size"), LIM_BAR_TRAY))
 	b.volume_step = parse_int_lim(get(m, defaults, "volume_step"), LIM_BAR_VOLSTEP)
+	b.cpu_graph = parse_bool_value(get(m, defaults, "cpu_graph")) or_else true
+	b.cpu_interval = parse_int_lim(get(m, defaults, "cpu_graph_interval"), LIM_BAR_CPU_INTERVAL)
+	b.cpu_width = f32(parse_int_lim(get(m, defaults, "cpu_graph_width"), LIM_BAR_CPU_WIDTH))
 }
 
 // ---- Data gathered off the main thread ----------------------------------------------
@@ -357,6 +363,11 @@ Bar_Seg :: struct {
 	color: u32,
 	alpha: f32,
 	tnum:  bool, // tabular digits (numbers that change)
+	graph: f32,  // > 0: the CPU sparkline this wide instead of text
+}
+
+bar_seg_width :: proc(s: Bar_Seg) -> f32 {
+	return s.graph > 0 ? s.graph : bar_text_width(s.font, s.px, s.text, s.tnum)
 }
 
 Bar_Item :: struct {
@@ -413,7 +424,7 @@ Bar_Layout :: struct {
 bar_seg :: proc(it: ^Bar_Item, text: string, color: u32, font := Bar_Font.Regular, px := PX, alpha: f32 = 1, tnum := false) {
 	if it.segs == nil {it.segs.allocator = context.temp_allocator}
 	// A copy: bar_data's strings change under the worker once the lock is let go.
-	append(&it.segs, Bar_Seg{strings.clone(text, context.temp_allocator), font, px, color, alpha, tnum})
+	append(&it.segs, Bar_Seg{strings.clone(text, context.temp_allocator), font, px, color, alpha, tnum, 0})
 }
 
 module_item :: proc(mod: Bar_Mod) -> Bar_Item {
@@ -644,11 +655,20 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 			col, font = p.orange, .Bold
 		case .Normal:
 		}
+		if bar_cfg.cpu_graph {
+			if it.segs == nil {it.segs.allocator = context.temp_allocator}
+			append(&it.segs, Bar_Seg{color = col, graph = bar_cfg.cpu_width})
+			bar_seg(&it, "   ", col)
+		}
 		bar_seg(&it, fmt.tprintf("%.1f", used), col, font, tnum = true)
 		bar_seg(&it, fmt.tprintf(" / %.0f GiB", total), col, .Regular, PX * 0.82, tnum = true)
 		bar_seg(&it, "  ", col)
 		bar_seg(&it, ICON_MEM, col)
 		it.tooltip = fmt.tprintf("%.0f%% used", f64(bar_data.mem_used) / f64(bar_data.mem_total) * 100)
+		if bar_cfg.cpu_graph && bar_cpu.n > 0 {
+			now, avg, peak := cpu_graph_stats(&bar_cpu)
+			it.tooltip = fmt.tprintf("Memory %s\nCPU %.0f %% (2 min avg %.0f %%, peak %.0f %%)", it.tooltip, now, avg, peak)
+		}
 		add(lay, it)
 	case .Clock:
 		it := module_item(.Clock)

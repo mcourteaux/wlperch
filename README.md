@@ -633,7 +633,9 @@ bar {
   (click / right click: next / previous), backlight (scroll), battery (click:
   time left), media (⏮ · track · ⏭; click: play/pause, scroll: skip, right
   click: main panel), project timer, sensors, memory (orange and pulsing from
-  `[memory] bar_warn_percent`, red from `critical_percent`), clock (tooltip: this
+  `[memory] bar_warn_percent`, red from `critical_percent`; a small graph of
+  the last 2 minutes of CPU usage in front, CPU now / average / peak in the
+  tooltip), clock (tooltip: this
   month), tray, notifications (right click: do not disturb) and the wlperch
   button. Modules without data (no battery, nothing playing) are hidden.
 - **Panels:** clicking the clock, memory, timer, sensors, bell or wlperch
@@ -648,7 +650,11 @@ bar {
   check marks, radio items, separators). Passive items are hidden; items
   asking for attention get a red background.
 - **Config:** `[bar]`: `position` (top/bottom), `height`, `outputs`, the
-  `left`/`center`/`right` module lists, `clock_format` and `tray_icon_size`.
+  `left`/`center`/`right` module lists, `clock_format`, `tray_icon_size`,
+  `volume_step`, and the memory module's CPU graph: `cpu_graph` (true/false),
+  `cpu_graph_interval` (seconds per sample, 1–30, default 2; the history
+  stays 2 minutes, and the bar redraws once per sample) and `cpu_graph_width`
+  (logical pixels, default 48).
 - **How it runs:** its own process (`wlperch-bar` in `ps`), not part of the
   daemon. The daemon re-executes itself to give GPU memory back, which would
   make a bar inside it disappear and come back, and a crash on either side
@@ -656,7 +662,8 @@ bar {
   GPU), and only when something it shows changes. Sway state comes from its
   own IPC subscription; the notification count from the daemon; MPRIS,
   battery, backlight (logind), power profile, memory, sensors and the timer
-  from a worker thread.
+  from a worker thread; the CPU graph reads `/proc/stat` itself on the main
+  loop, one history for all outputs.
 - **Dark / light:** follows `wlperch theme` (it watches the saved mode in
   `~/.local/share/wlperch/theme`, so this works with or without the daemon).
   Project colours are darkened as text in light mode; text on a solid project

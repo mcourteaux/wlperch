@@ -317,6 +317,12 @@ clock_format = %a %d %b  <b>%H:%M</b>
 tray_icon_size = 20
 # Volume change per scroll step of the audio module, in percent (never above 100 %).
 volume_step = 5
+# A small CPU usage graph (the last 2 minutes) in the memory module.
+cpu_graph = true
+# Seconds between CPU graph samples (1–30); the bar redraws once per sample.
+cpu_graph_interval = 2
+# Width of the CPU graph (logical pixels).
+cpu_graph_width = 48
 
 [timetracker]
 # Seconds without input after which you're on a break: counting pauses and the

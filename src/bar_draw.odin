@@ -280,3 +280,54 @@ bar_buffer_attach :: proc(b: ^Bar_Buffer, shm: ^wl.Shm, surface: ^wl.Surface, sc
 	wl.surface_attach(surface, buf, 0, 0)
 	wl.surface_damage_buffer(surface, 0, 0, i32(b.cv.w), i32(b.cv.h))
 }
+
+// A filled area chart of vals (0–100, oldest first) in r, slot cap - 1 at the
+// right edge, so a short history fills from the right. Drawn per device pixel
+// column: the fill up to the column's mean, a 1 px top line over the column's
+// min..max (anti-aliased, steep parts stay joined), a faint 0 % line where
+// there is no data yet. The box is snapped to device pixels.
+bar_sparkline :: proc(cv: ^Bar_Canvas, r: Bar_Rect, vals: []f32, cap: int, rgb: u32, fill_alpha: f32 = 0.24, line_alpha: f32 = 0.95) {
+	s := cv.s
+	x0, x1 := int(math.round(r.x * s)), int(math.round((r.x + r.w) * s))
+	y0, y1 := int(math.round(r.y * s)), int(math.round((r.y + r.h) * s))
+	if x1 - x0 < 2 || y1 - y0 < 2 || cap < 2 {return}
+	lw := max(math.round(s), 1) // line width, device px
+	top, bot := f32(y0) + lw / 2, f32(y1) - lw / 2 // the line's centre at 100 % / 0 %
+	yof :: proc(v, top, bot: f32) -> f32 {return bot - clamp(v, 0, 100) / 100 * (bot - top)}
+	n := len(vals)
+	first := f32(cap - n) // slot of the oldest sample
+	per := f32(cap - 1) / f32(x1 - x0) // slots per device column
+	at :: proc(vals: []f32, first, t: f32) -> f32 {
+		i := t - first
+		k := clamp(int(i), 0, len(vals) - 1)
+		if k + 1 >= len(vals) {return vals[len(vals) - 1]}
+		f := i - f32(k)
+		return vals[k] * (1 - f) + vals[k + 1] * f
+	}
+	cover :: proc(row: int, a, b: f32) -> f32 {return clamp(min(f32(row + 1), b) - max(f32(row), a), 0, 1)}
+	for cx in max(x0, 0) ..< min(x1, cv.w) {
+		tl, tr := f32(cx - x0) * per, f32(cx - x0 + 1) * per
+		if n == 0 || tr < first {
+			// No data yet: the 0 % line, faint.
+			for row in max(int(bot - lw / 2), 0) ..< min(y1, cv.h) {
+				blend(&cv.px[row * cv.w + cx], rgb, cover(row, bot - lw / 2, bot + lw / 2) * line_alpha * 0.3)
+			}
+			continue
+		}
+		tl = max(tl, first)
+		// The curve over this column: its ends and the samples inside.
+		va, vb := at(vals, first, tl), at(vals, first, tr)
+		lo, hi, sum, cnt := min(va, vb), max(va, vb), va + vb, f32(2)
+		for k := int(math.ceil(tl)); f32(k) < tr; k += 1 {
+			v := vals[clamp(k - (cap - n), 0, n - 1)]
+			lo, hi, sum, cnt = min(lo, v), max(hi, v), sum + v, cnt + 1
+		}
+		fill_top := yof(sum / cnt, top, bot)
+		la, lb := yof(hi, top, bot) - lw / 2, yof(lo, top, bot) + lw / 2
+		for row in max(y0, 0) ..< min(y1, cv.h) {
+			p := &cv.px[row * cv.w + cx]
+			if f := clamp(f32(row + 1) - fill_top, 0, 1); f > 0 {blend(p, rgb, f * fill_alpha)}
+			if l := cover(row, la, lb); l > 0 {blend(p, rgb, l * line_alpha)}
+		}
+	}
+}

@@ -167,12 +167,7 @@ drm_sample :: proc() -> bool {
 // ---- CPU ---------------------------------------------------------------------
 
 @(private = "file")
-Cpu_Times :: struct {
-	busy, total: u64,
-}
-
-@(private = "file")
-prev_cpu: [MAX_CORES + 1]Cpu_Times
+prev_cpu: [MAX_CORES + 1]Cpu_Jiffies
 @(private = "file")
 first_cpu_sample := true
 
@@ -202,18 +197,8 @@ cpu_sample :: proc() {
 	for line in strings.split_lines_iterator(&text) {
 		if !strings.has_prefix(line, "cpu") {break}
 		if n > MAX_CORES {break}
-		fields := strings.fields(line, context.temp_allocator)
-		t: Cpu_Times
-		for f, i in fields[1:] {
-			v, _ := strconv.parse_u64(f)
-			if i >= 8 {break} // guest time is already part of user
-			t.total += v
-			if i != 3 && i != 4 {t.busy += v} // idle, iowait
-		}
-		p := prev_cpu[n]
-		if p.total > 0 && t.total > p.total {
-			usage[n] = 100 * f32(t.busy - p.busy) / f32(t.total - p.total)
-		}
+		t, _ := cpu_jiffies_parse(line)
+		usage[n] = cpu_busy_pct(prev_cpu[n], t)
 		prev_cpu[n] = t
 		n += 1
 	}

@@ -339,6 +339,9 @@ SETTINGS := [?]Setting {
 	{group = "Bar", section = "bar", key = "clock_format", label = "Clock format", kind = .Text, apply = .Bar, help = "strftime-like: %a %A %b %B %d %e %m %Y %H %I %M %S %p; <b>…</b> is bold. %S shows seconds."},
 	{group = "Bar", section = "bar", key = "tray_icon_size", label = "Tray icon size", kind = .Int, apply = .Bar, ilim = LIM_BAR_TRAY, slider = true, unit = "px"},
 	{group = "Bar", section = "bar", key = "volume_step", label = "Volume scroll step", kind = .Int, apply = .Bar, ilim = LIM_BAR_VOLSTEP, slider = true, unit = "%", help = "Volume change per scroll step on the bar's audio module (it never goes above 100 %)."},
+	{group = "Bar", section = "bar", key = "cpu_graph", label = "CPU graph", kind = .Bool, apply = .Bar, help = "A small graph of the last 2 minutes of CPU usage in the memory module."},
+	{group = "Bar", section = "bar", key = "cpu_graph_interval", label = "CPU graph interval", kind = .Int, apply = .Bar, ilim = LIM_BAR_CPU_INTERVAL, slider = true, unit = "s", help = "Seconds between CPU graph samples; the bar redraws once per sample. A new interval starts the graph afresh."},
+	{group = "Bar", section = "bar", key = "cpu_graph_width", label = "CPU graph width", kind = .Int, apply = .Bar, ilim = LIM_BAR_CPU_WIDTH, slider = true, unit = "px"},
 	{group = "Bar", section = "bar", key = "outputs", label = "Outputs", kind = .Text, apply = .Bar, hint = "all outputs"},
 	{group = "Bar", section = "sensors", key = "bar_room", label = "Sensor room", kind = .Text, apply = .Bar, hint = "first room", help = "Room whose temperature the bar's sensors module shows (empty = the first)."},
 	// Memory
