@@ -20,6 +20,7 @@ IPC_GET_WORKSPACES :: 1
 IPC_GET_TREE :: 4
 IPC_GET_CONFIG :: 9
 EVENT_WORKSPACE :: 0x80000000
+EVENT_OUTPUT :: 0x80000001
 EVENT_WINDOW :: 0x80000003
 
 PLACEHOLDER_APP_ID :: "wlperch-placeholder"
@@ -52,6 +53,8 @@ Sway_State :: struct {
 	ws_windows:     map[string]int,      // workspace -> real windows (placeholders excluded)
 	placeholder_at: map[string]string,   // placeholder title -> workspace it is actually on
 	tree_seq:       int,
+	fs:             [dynamic]Fs_Cover,   // outputs a fullscreen view covers (fullscreen.odin)
+	fs_seq:         int,                 // bumped when fs changes
 }
 sway: Sway_State
 
@@ -241,6 +244,7 @@ sway_refresh_tree :: proc() {
 		for child in jarr(jobj(n, "nodes")) {walk(child, counts, at)}
 	}
 	walk(v, &counts, &at)
+	fullscreen_update(v)
 	sync.guard(&sway.mu)
 	for k in sway.ws_windows {delete(k)}
 	clear(&sway.ws_windows)
@@ -273,9 +277,12 @@ classify :: proc(type: u32, payload: string) -> bit_set[Event_Kind] {
 		v, _ := jparse(payload)
 		switch jstr(jobj(v, "change")) {
 		// "focus": a mouse-drag swap may only show up as focus changes.
-		case "new", "close", "move", "floating", "focus": return {.Tree}
+		// "fullscreen_mode": the outputs popups keep off (fullscreen.odin).
+		case "new", "close", "move", "floating", "focus", "fullscreen_mode": return {.Tree}
 		}
 		return {}
+	case EVENT_OUTPUT:
+		return {.Other, .Tree} // workspaces may have moved to another output
 	}
 	return {.Other}
 }

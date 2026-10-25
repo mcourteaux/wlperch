@@ -51,6 +51,11 @@ Notification :: struct {
 	expires:   time.Tick, // set once the popup is on screen
 	hover:     bool, // pointer on the popup: the timer refills instead of running out
 	rev:       int, // content revision (popups redraw when it changes)
+	// Over a fullscreen game with no other monitor (critical ones and OSDs
+	// only): a short look, then it waits for the game to leave fullscreen.
+	glimpse:   bool, // on screen for GLIMPSE at most; timeout is shortened
+	glimpse_timeout: time.Duration, // its own timeout, back when the game goes
+	glimpsed:  bool, // had its look; waits like the others
 }
 
 Notifs :: struct {
@@ -65,6 +70,9 @@ Notifs :: struct {
 	dirty_at: time.Tick,
 	version:  int, // bumped on every change (the center redraws)
 	path:     string,
+	fs_seq:   int, // fullscreen_seq() last placed for
+	fs_mode:  Fullscreen_Mode,
+	held:     bool, // every output is covered: popups wait (notify_popups_layout)
 }
 notifs: Notifs
 
@@ -594,6 +602,13 @@ notifications_tick :: proc() {
 		}
 		sd_bus_flush(notifs.bus)
 	}
+	// A fullscreen game came or went (or moved): popups re-place.
+	if s := fullscreen_seq(); s != notifs.fs_seq || config.notif_fullscreen != notifs.fs_mode {
+		if s != notifs.fs_seq {fullscreen_log()}
+		notifs.fs_seq, notifs.fs_mode = s, config.notif_fullscreen
+		notify_popups_layout()
+		request_redraw() // the center's "popups held" line
+	}
 	now := time.tick_now()
 	// Away (no input for a while): popups don't time out unseen. Back again:
 	// each one gets its full time to be read.
@@ -610,6 +625,13 @@ notifications_tick :: proc() {
 		if n.popup && n.expires != {} && !n.hover && !plat.away && time.tick_diff(n.expires, now) >= 0 {
 			// The popup goes; the notification stays in the center (unread),
 			// like dunst's history. Transient ones are gone for good.
+			if n.glimpse && !n.transient {
+				// Its look over the game is over: it waits for the game to go.
+				n.glimpsed = true
+				n.expires = {}
+				changed()
+				continue
+			}
 			n.popup = false
 			n.expires = {}
 			if n.transient {

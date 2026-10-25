@@ -284,7 +284,12 @@ handle_command :: proc(line: string) -> string {
 		sub := len(f) > 1 ? f[1] : "status"
 		switch sub {
 		case "status":
-			return fmt.tprintf("%d %d %d\n", notif_unread(), int(notifs.dnd), int(notifs.owner))
+			// unread dnd owner held cover outputs: cover is game / fullscreen / -,
+			// outputs the covered connectors popups keep off (comma-separated).
+			outs, game := fullscreen_blocked()
+			cover := len(outs) == 0 ? "-" : game ? "game" : "fullscreen"
+			list := len(outs) == 0 ? "-" : strings.join(outs, ",", context.temp_allocator)
+			return fmt.tprintf("%d %d %d %d %s %s\n", notif_unread(), int(notifs.dnd), int(notifs.owner), notif_held_count(), cover, list)
 		case "dnd":
 			mode := len(f) > 2 ? f[2] : "toggle"
 			switch mode {

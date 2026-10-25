@@ -312,6 +312,7 @@ SETTINGS_GROUPS := [?]string{"Panel", "Clock and weather", "Bar", "Memory", "Not
 @(private = "file") CH_BAR_POS :: []Setting_Choice{{"top", "Top"}, {"bottom", "Bottom"}}
 @(private = "file") CH_ANCHOR :: []Setting_Choice{{"top right", "Top right"}, {"top left", "Top left"}, {"top", "Top centre"}, {"bottom right", "Bottom right"}, {"bottom left", "Bottom left"}, {"bottom", "Bottom centre"}}
 @(private = "file") CH_SWAY_COLORS :: []Setting_Choice{{"auto", "wlperch palette"}, {"off", "Leave alone"}}
+@(private = "file") CH_NOTIF_FS :: []Setting_Choice{{"games", "Hold over games"}, {"all", "Hold over any fullscreen app"}, {"off", "Show over everything"}}
 @(private = "file") CH_LOCK_BG :: []Setting_Choice{{"", "Auto"}, {"color", "Colour"}, {"image", "Picture"}, {"blur", "Blurred screen"}}
 
 THEME_HELP_SWAY :: `sway's titlebars and borders (client.* colours) in wlperch's palette for this mode, set over IPC and again after "swaymsg reload". One class can be changed with sway_client_<class> = border background text [indicator child_border] in config.ini.`
@@ -368,6 +369,7 @@ SETTINGS := [?]Setting {
 	{group = "Idle lock", section = "lock", key = "idle_lock_seconds", label = "wlperch locks after", kind = .Int, apply = .Daemon, ilim = LIM_LOCK_IDLE, step = 30, unit = "s", help = "0 = swayidle locks on idle (the usual setup). A number: wlperch itself locks after this much idle time, for setups without an idle lock in swayidle. A swayidle lock that comes earlier still wins."},
 	// Notifications
 	{group = "Notifications", section = "notifications", key = "hold_when_idle", label = "Hold popups when away after", kind = .Int, apply = .Daemon, ilim = LIM_NOTIF_HOLD_IDLE, step = 5, unit = "s", help = "After this long without input, popups stop timing out and wait for you; once you're back each gets its full time again. A playing video counts as activity. 0 = off."},
+	{group = "Notifications", section = "notifications", key = "fullscreen", label = "Fullscreen", kind = .Choice, apply = .Daemon, choices = CH_NOTIF_FS, help = "Popups keep off a monitor covered by a fullscreen game (wine/Proton, Steam, gamescope, Lutris) or any fullscreen app: they show on another monitor, or wait with their timers paused until it leaves fullscreen. Critical ones still get a short glimpse when there's no other monitor. The low-memory card and the idle-lock countdown follow this too."},
 	// Time tracking
 	{group = "Time tracking", section = "timetracker", key = "idle_seconds", label = "Break after", kind = .Int, apply = .Daemon, ilim = LIM_IDLE_SECONDS, step = 30, unit = "s", old_section = "timetracker", old_key = "idle_minutes", old_scale = 60},
 	// SSH keys

@@ -56,6 +56,7 @@ Config :: struct {
 	// [notifications]
 	notifications:      bool, // serve org.freedesktop.Notifications
 	notif_hold_idle:    time.Duration, // popups wait while there's no input this long (0 = off)
+	notif_fullscreen:   Fullscreen_Mode, // popups keep off outputs a fullscreen game / app covers
 
 	// [github]
 	github:             bool,
@@ -177,6 +178,14 @@ enabled = true
 # input they stay put, and get their full time again once you're back
 # (0 = off). A playing video counts as activity, like for the screen lock.
 hold_when_idle = 5
+# Popups keep off a monitor where a game runs fullscreen: they show on
+# another monitor, or wait (timers paused) until the game leaves fullscreen.
+# Critical ones still get a short glimpse when there's no other monitor.
+# The low-memory card and the idle-lock countdown follow this too.
+#   games = fullscreen games only (wine/Proton, Steam, gamescope, Lutris)
+#   all   = any fullscreen app (video players, browsers too)
+#   off   = popups show over fullscreen apps
+fullscreen = games
 
 [github]
 # GitHub at a glance through the gh command line tool (log in once with
@@ -602,6 +611,7 @@ config_load :: proc() {
 
 	c.notifications = parse_bool(get(m, defaults, "notifications", "enabled"), true)
 	c.notif_hold_idle = time.Duration(parse_int_lim(get(m, defaults, "notifications", "hold_when_idle"), LIM_NOTIF_HOLD_IDLE)) * time.Second
+	c.notif_fullscreen = parse_fullscreen_mode(get(m, defaults, "notifications", "fullscreen"))
 
 	c.github = parse_bool(get(m, defaults, "github", "enabled"), false)
 	c.github_repo = strings.clone(get(m, defaults, "github", "repo"))

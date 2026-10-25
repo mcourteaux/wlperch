@@ -338,6 +338,28 @@ replace each other in place, show a progress bar and stay out of the history.
 still show); everything waits in the panel. Toggle it from the panel, the Quick
 settings tile, `wlperch notify dnd`, or right click on the bar bell.
 
+**Fullscreen games** keep popups off their monitor (`[notifications]
+fullscreen`, default `games`). Popups that would land there (on the focused
+monitor) show on another monitor instead, or, when every monitor is covered,
+wait with their timers paused and appear once the game leaves fullscreen
+(the newest four; the rest wait in the panel, unread). Critical notifications
+and volume/brightness indicators still get a 10 s glimpse over the game when
+there's no other monitor, then wait too. The low-memory card follows the same
+rule (its history entry is written right away), and the idle-lock countdown
+skips a covered monitor. A small gamepad next to the bar bell, and a line in
+the Notifications panel, tell you popups are being kept off a monitor.
+
+- **What counts as a game:** a fullscreen window (sway's `fullscreen_mode`,
+  per monitor's visible workspace, or global fullscreen over all of them) whose
+  X11 class is `steam_app_*`, `gamescope` or ends in `.exe`, or whose process
+  or one of its first parents is a wine / wine-preloader / wineserver /
+  gamescope process, a `*.exe` (wine names its processes after the program),
+  Proton or Steam's `reaper SteamLaunch`, or carries `SteamAppId`,
+  `SteamGameId`, `STEAM_COMPAT_APP_ID` or `LUTRIS_GAME_UUID` in its
+  environment. `/proc` is read once per new fullscreen window.
+- **`all`:** any fullscreen window (video players and browsers too).
+- **`off`:** popups show over fullscreen windows, as before.
+
 - **Rendering:** popups are drawn in software into shared memory, so a
   notification never wakes the GPU.
 - **Icons:** come from the app's image data, an image file (PNG/JPEG, or SVG
@@ -1002,6 +1024,7 @@ bar_room =                    # room shown by "wlperch status sensors" (empty = 
 [notifications]
 enabled = true                # serve desktop notifications (takes over from dunst/mako)
 hold_when_idle = 5            # popups wait after this many s without input (0 = off)
+fullscreen = games            # popups keep off a monitor with a fullscreen game (games | all | off)
 
 [github]
 enabled = false               # GitHub panel via the gh CLI (run "gh auth login" first)

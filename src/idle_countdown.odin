@@ -602,8 +602,11 @@ show :: proc(deadline: time.Tick) {
 	cd.deadline = deadline
 	cd.phase = .Shown
 	cd.last_frame, cd.last_vig = {}, {}
-	// Every output: the lock covers them all, and the user may be looking at any.
+	// Every output: the lock covers them all, and the user may be looking at
+	// any. Not over a fullscreen game ([notifications] fullscreen; it usually
+	// inhibits idle anyway, see sway's inhibit_idle).
 	for po in plat.outputs {
+		if fullscreen_blocks(po.conn) {continue}
 		o := new(Cd_Out)
 		o.output = po.output
 		o.surf = wl.compositor_create_surface(plat.compositor)

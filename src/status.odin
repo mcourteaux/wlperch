@@ -165,6 +165,18 @@ status_notifications_item :: proc() -> (it: Status_Item) {
 			case:
 				it.tooltip = "No new notifications"
 			}
+			// A fullscreen game keeps popups off its monitor: a small gamepad.
+			if owner && len(f) >= 6 && f[4] != "-" {
+				held, _ := strconv.parse_int(f[3])
+				what := f[4] == "game" ? "a game is" : "an app is"
+				outs, _ := strings.replace_all(f[5], ",", ", ", context.temp_allocator)
+				it.text = fmt.tprintf("%s %s", it.text, f[4] == "game" ? ICON_GAMEPAD : ICON_FULLSCREEN)
+				if held > 0 {
+					it.tooltip = fmt.tprintf("%s\n%d popup%s held while %s fullscreen on %s", it.tooltip, held, held == 1 ? "" : "s", what, outs)
+				} else {
+					it.tooltip = fmt.tprintf("%s\nPopups keep off %s while %s fullscreen there", it.tooltip, outs, what)
+				}
+			}
 		}
 	} else {
 		it.class = "off"

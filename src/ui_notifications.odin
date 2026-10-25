@@ -146,6 +146,18 @@ draw_notifications :: proc(w: f32) {
 		im.Dummy({inner, 28})
 	}
 
+	// A fullscreen game keeps popups off its monitor.
+	if outs, game := fullscreen_blocked(); len(outs) > 0 {
+		p := im.GetCursorScreenPos()
+		at := strings.join(outs, ", ", context.temp_allocator)
+		what := game ? "a game is" : "an app is"
+		held := notif_held_count()
+		msg := notifs.held ? fmt.tprintf("Popups held while %s fullscreen on %s%s", what, at, held > 0 ? fmt.tprintf(" · %d waiting", held) : "") : fmt.tprintf("Popups keep off %s while %s fullscreen there", at, what)
+		draw_text(fonts.ui, SZ_SMALL + 2, {p.x + 2, p.y}, col32(C_FAINT), game ? ICON_GAMEPAD : ICON_FULLSCREEN)
+		draw_text(fonts.ui, SZ_SMALL, {p.x + 24, p.y + 1}, col32(C_MUTED), msg)
+		im.Dummy({inner, 22})
+	}
+
 	shown := 0
 	for n in notifs.list {if !n.transient {shown += 1}}
 	if shown == 0 {

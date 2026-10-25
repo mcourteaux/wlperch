@@ -254,6 +254,8 @@ memwarn_busy :: proc() -> bool {return mw.surface != nil}
 Mw_Card :: struct {
 	surface:    ^wl.Surface,
 	layer:      ^wl.Zwlr_Layer_Surface_V1,
+	conn:       [32]u8, // output it's on ("" = the compositor's choice)
+	conn_len:   int,
 	configured: bool,
 	dirty:      bool,
 	w, h:       i32,
@@ -322,14 +324,15 @@ layer_listener := wl.Zwlr_Layer_Surface_V1_Listener {
 }
 
 @(private = "file")
-create :: proc() {
+create :: proc(place: Popup_Place) {
 	if plat.layer_shell == nil || plat.compositor == nil || plat.shm == nil {return}
+	mw.conn_len = place.output != nil ? copy(mw.conn[:], place.conn) : 0
 	mw.part = -1
 	mw.scale = output_scale()
 	mw.w = CARD_W + 2 * SHADOW_M
 	mw.h = card_height() + 2 * SHADOW_M
 	mw.surface = wl.compositor_create_surface(plat.compositor)
-	mw.layer = wl.zwlr_layer_shell_v1_get_layer_surface(plat.layer_shell, mw.surface, nil, wl.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "wlperch-memory-warning")
+	mw.layer = wl.zwlr_layer_shell_v1_get_layer_surface(plat.layer_shell, mw.surface, place.output, wl.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "wlperch-memory-warning")
 	wl.zwlr_layer_surface_v1_add_listener(mw.layer, &layer_listener, nil)
 	// Top centre: clear of the notification stack in the top-right corner.
 	wl.zwlr_layer_surface_v1_set_anchor(mw.layer, wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP)
@@ -532,17 +535,23 @@ memwarn_tick :: proc() {
 		destroy()
 		return
 	}
-	if mw.surface == nil {
-		// Wait for the first offender list so the card opens complete.
-		if sampled != episode {return}
-		create()
-		if mw.surface == nil {return}
-	}
-	if fresh {mw.dirty = true}
+	// Wait for the first offender list so the card opens complete.
+	if sampled != episode && mw.surface == nil {return}
+	// In the history even while a fullscreen game holds the card back.
 	if mw.logged != episode && mw.n > 0 {
 		mw.logged = episode
 		log_history()
 	}
+	// A fullscreen game covers its output ([notifications] fullscreen): off
+	// there, to another output or held until the game leaves fullscreen.
+	if mw.surface != nil && fullscreen_blocks(string(mw.conn[:mw.conn_len])) {destroy()}
+	if mw.surface == nil {
+		place := popup_place()
+		if !place.free {return}
+		create(place)
+		if mw.surface == nil {return}
+	}
+	if fresh {mw.dirty = true}
 	now := time.tick_now()
 	if mw.armed_len > 0 && time.tick_diff(mw.armed_at, now) >= CONFIRM {
 		mw.armed_len = 0

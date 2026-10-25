@@ -31,6 +31,7 @@ import "wl"
 @(private = "file") BAR_H :: 3 // timeout line along the bottom edge
 @(private = "file") BAR_FRAME :: 66 * time.Millisecond // at most ~15 line redraws a second
 @(private = "file") BAR_REFILL :: 2 * time.Second // hovering refills an empty bar in this long
+@(private = "file") GLIMPSE :: 10 * time.Second // on screen over a fullscreen game, at most
 
 @(private = "file") PX_APP :: 12.0
 @(private = "file") PX_SUMMARY :: 14.5
@@ -47,6 +48,7 @@ in_rect :: proc(r: Rect, x, y: f32) -> bool {return x >= r.x && x < r.x + r.w &&
 Popup :: struct {
 	id:          u32,
 	rev:         int, // notification content this was rendered from
+	conn:        string, // output it was put on ("" = the compositor's choice)
 	surface:     ^wl.Surface,
 	layer:       ^wl.Zwlr_Layer_Surface_V1,
 	w, h:        i32, // logical surface size (card + shadow margins)
@@ -465,16 +467,17 @@ output_scale :: proc() -> i32 {
 }
 
 @(private = "file")
-create :: proc(n: ^Notification) -> ^Popup {
+create :: proc(n: ^Notification, place: Popup_Place) -> ^Popup {
 	if plat.layer_shell == nil || plat.compositor == nil {return nil}
 	p := new(Popup)
 	p.id = n.id
+	p.conn = place.output != nil ? strings.clone(place.conn) : ""
 	p.part = -1
 	p.scale = output_scale()
 	p.h = layout(p, n) + 2 * SHADOW_M
 	p.w = CARD_W + 2 * SHADOW_M
 	p.surface = wl.compositor_create_surface(plat.compositor)
-	p.layer = wl.zwlr_layer_shell_v1_get_layer_surface(plat.layer_shell, p.surface, nil, wl.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "wlperch-notification")
+	p.layer = wl.zwlr_layer_shell_v1_get_layer_surface(plat.layer_shell, p.surface, place.output, wl.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "wlperch-notification")
 	wl.zwlr_layer_surface_v1_add_listener(p.layer, &layer_listener, p)
 	wl.zwlr_layer_surface_v1_set_anchor(p.layer, wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT)
 	wl.zwlr_layer_surface_v1_set_size(p.layer, u32(p.w), u32(p.h))
@@ -491,33 +494,102 @@ destroy :: proc(p: ^Popup) {
 	free_lines(p.summary)
 	free_lines(p.body)
 	delete(p.base)
+	delete(p.conn)
 	free(p)
 }
 
-// Match the set of popups to the notifications that want one: newest on top.
+// Show even when a fullscreen game covers every output: critical ones and
+// volume / brightness OSDs (what do not disturb lets through too).
+@(private = "file")
+passes_hold :: proc(n: ^Notification) -> bool {
+	return n.urgency == 2 || (n.tag != "" && n.value >= 0)
+}
+
+// Over a fullscreen game: a short look (GLIMPSE), then it waits.
+@(private = "file")
+start_glimpse :: proc(n: ^Notification) {
+	if n.glimpse || n.glimpsed {return}
+	n.glimpse = true
+	n.glimpse_timeout = n.timeout
+	if n.timeout == 0 || n.timeout > GLIMPSE {n.timeout = GLIMPSE}
+	n.expires = {}
+}
+
+@(private = "file")
+end_glimpse :: proc(n: ^Notification) {
+	if !n.glimpse && !n.glimpsed {return}
+	n.timeout = n.glimpse_timeout
+	n.glimpse, n.glimpsed = false, false
+	n.expires = {} // its full time, once on screen again
+}
+
+// Popups waiting for a fullscreen game to go (for the bar and the center).
+notif_held_count :: proc() -> int {
+	if !notifs.held {return 0}
+	c := 0
+	for n in notifs.list {if n.popup && (!passes_hold(n) || n.glimpsed) {c += 1}}
+	return c
+}
+
+// Match the set of popups to the notifications that want one: newest on top,
+// on the focused output unless a fullscreen game covers it ([notifications]
+// fullscreen): then on another output, or none at all (they wait, timers
+// paused, and appear once the game leaves fullscreen).
 notify_popups_layout :: proc() {
+	place := popup_place()
+	held := !place.free
+	if notifs.held && !held {
+		// Back from the game: the newest few pop up, the rest wait in the center.
+		c := 0
+		for i := len(notifs.list) - 1; i >= 0; i -= 1 {
+			n := notifs.list[i]
+			if !n.popup || n.transient || (passes_hold(n) && !n.glimpsed) {continue}
+			c += 1
+			if c > MAX_VISIBLE {n.popup = false}
+		}
+	}
+	notifs.held = held
+	if !held {
+		for n in notifs.list {end_glimpse(n)}
+	}
+
 	want: [dynamic]^Notification
 	want.allocator = context.temp_allocator
 	for i := len(notifs.list) - 1; i >= 0 && len(want) < MAX_VISIBLE; i -= 1 {
-		if notifs.list[i].popup {append(&want, notifs.list[i])}
+		n := notifs.list[i]
+		if !n.popup {continue}
+		if held && (!passes_hold(n) || n.glimpsed) {continue}
+		append(&want, n)
 	}
-	// Drop popups that are no longer wanted.
+	// Drop popups that are no longer wanted, or sit on an output a game now
+	// covers while another one is free (they move there).
 	for i := len(popups) - 1; i >= 0; i -= 1 {
+		p := popups[i]
 		keep := false
-		for n in want {if n.id == popups[i].id {keep = true}}
+		for n in want {if n.id == p.id {keep = true}}
+		covered := fullscreen_blocks(p.conn)
+		if keep && covered && !held {keep = false}
 		if !keep {
-			destroy(popups[i])
+			if n, _ := notif_find(p.id); n != nil && n.popup {
+				// Held or moving: the timer starts afresh where it shows next.
+				n.expires = {}
+				n.hover = false
+			}
+			destroy(p)
 			ordered_remove(&popups, i)
+		} else if covered {
+			if n, _ := notif_find(p.id); n != nil {start_glimpse(n)}
 		}
 	}
 	ordered: [dynamic]^Popup
-	top: i32 = TOP_MARGIN
+	tops := make(map[string]i32, 4, context.temp_allocator) // stacked per output
 	for n in want {
 		p: ^Popup
 		for q in popups {if q.id == n.id {p = q}}
 		if p == nil {
-			p = create(n)
+			p = create(n, place)
 			if p == nil {continue}
+			if held {start_glimpse(n)}
 			append(&popups, p)
 		} else if p.rev != n.rev {
 			// Replaced content: new size, redraw.
@@ -528,12 +600,13 @@ notify_popups_layout :: proc() {
 			}
 			p.dirty = true
 		}
+		top := tops[p.conn] or_else TOP_MARGIN
 		if p.top != top {
 			p.top = top
 			wl.zwlr_layer_surface_v1_set_margin(p.layer, top - SHADOW_M, RIGHT_MARGIN - SHADOW_M, 0, 0)
 			if p.configured && !p.dirty {wl.surface_commit(p.surface)}
 		}
-		top += p.h - 2 * SHADOW_M + GAP
+		tops[p.conn] = top + p.h - 2 * SHADOW_M + GAP
 		append(&ordered, p)
 	}
 	delete(popups)
