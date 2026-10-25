@@ -114,6 +114,25 @@ write_through :: proc(path, content: string) -> bool {
 	return os.rename(tmp, target) == nil
 }
 
+// Overwrite a file's contents in place (same inode, through symlinks), for
+// files an editor watches: an inotify watch follows the inode, so the
+// rename in write_through would be seen once and then never again (nvim's
+// fs_event watch on ~/.vimrc.color stops after the first theme switch).
+// Only for small files, where a reader seeing it half-written is no concern.
+write_in_place :: proc(path, content: string) -> bool {
+	cpath := strings.clone_to_cstring(path, context.temp_allocator)
+	fd := posix.open(cpath, {.WRONLY, .CREAT, .TRUNC, .CLOEXEC}, {.IRUSR, .IWUSR, .IRGRP, .IROTH})
+	if fd < 0 {return false}
+	defer posix.close(fd)
+	data := transmute([]u8)content
+	for len(data) > 0 {
+		n := posix.write(fd, raw_data(data), uint(len(data)))
+		if n <= 0 {return false}
+		data = data[n:]
+	}
+	return true
+}
+
 // base, or base.2, base.3…: never overwrite a backup.
 free_name :: proc(base: string) -> string {
 	if !os.exists(base) {return base}

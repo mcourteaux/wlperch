@@ -1,6 +1,9 @@
 // nvim_set_background: only the 'background' line of the nvim theme file changes.
 package main
 
+import "core:os"
+import "core:strings"
+import "core:sys/posix"
 import "core:testing"
 
 @(test)
@@ -16,4 +19,27 @@ test_nvim_set_background :: proc(t: ^testing.T) {
 	for c in cases {
 		testing.expect_value(t, nvim_set_background(c.in_, c.mode), c.want)
 	}
+}
+
+// The nvim colour file is rewritten in place: same inode (also through a
+// symlink), so an editor's inotify watch keeps firing on every switch.
+@(test)
+test_write_in_place_keeps_inode :: proc(t: ^testing.T) {
+	DIR :: "/tmp/wlperch-test/inplace"
+	dir := DIR
+	os.remove_all(dir)
+	os.make_directory_all(dir)
+	defer os.remove_all(dir)
+	target := DIR + "/vimrc.color"
+	link := DIR + "/link.color"
+	testing.expect(t, write_in_place(target, "set background=dark\n"))
+	testing.expect(t, posix.symlink(cstring(DIR + "/vimrc.color"), cstring(DIR + "/link.color")) == .OK)
+	st0: posix.stat_t
+	posix.stat(strings.clone_to_cstring(target, context.temp_allocator), &st0)
+	testing.expect(t, write_in_place(link, "set background=light\ncolorscheme x\n"))
+	st1: posix.stat_t
+	posix.stat(strings.clone_to_cstring(target, context.temp_allocator), &st1)
+	testing.expect_value(t, st1.st_ino, st0.st_ino)
+	data, _ := os.read_entire_file(target, context.temp_allocator)
+	testing.expect_value(t, string(data), "set background=light\ncolorscheme x\n")
 }
