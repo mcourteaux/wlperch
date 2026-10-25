@@ -75,6 +75,7 @@ Config :: struct {
 	lock_notifications: bool,
 	lock_media:         bool,
 	lock_bluetooth:     bool,
+	lock_all_monitors:  bool,
 
 	lock_background_light: u32, // used instead with the light theme (no image)
 	lock_countdown_seconds: int, // overlay before the idle lock; 0 = off (idle_countdown.odin)
@@ -217,6 +218,9 @@ blur_animate_from = 10
 show_notifications = true
 show_media = true
 show_bluetooth = true
+# Password field and status rows on every monitor (false: only the focused
+# one; the others show the clock).
+all_monitors = true
 # Countdown before the screen locks for inactivity: the screen dims from
 # its edges and a ring counts down; any key or mouse move cancels it (and
 # goes to your app as usual). 0 = off. It follows the lock timeout of
@@ -574,6 +578,7 @@ config_load :: proc() {
 	c.lock_notifications = parse_bool(get(m, defaults, "lock", "show_notifications"), true)
 	c.lock_media = parse_bool(get(m, defaults, "lock", "show_media"), true)
 	c.lock_bluetooth = parse_bool(get(m, defaults, "lock", "show_bluetooth"), true)
+	c.lock_all_monitors = parse_bool(get(m, defaults, "lock", "all_monitors"), true)
 
 	c.lock_background_light = parse_hex_color(get(m, defaults, "lock", "background_light"), 0xe9ebf0)
 	c.lock_countdown_seconds = parse_int_lim(get(m, defaults, "lock", "countdown_seconds"), LIM_LOCK_COUNTDOWN)

@@ -394,7 +394,9 @@ locked, which is what swayidle's `before-sleep` needs.
     (red at 20 % or less); hidden when none are connected or Bluetooth is
     off. While the screen is locked the daemon re-reads BlueZ at most every
     30 s.
-- **Other monitors:** show only the clock.
+- **Other monitors:** the same password field and status rows
+  (`all_monitors = true`, the default); typing goes to all of them at once.
+  With `all_monitors = false` they show only the clock.
 - **Password:** checked with PAM, in a separate thread so the clock keeps
   running. The PAM service is `swaylock` when `/etc/pam.d/swaylock` exists,
   else `login`; set `[lock] pam_service` to change it. After three wrong
@@ -915,6 +917,7 @@ blur_animate_from = 10        # ... starting at this % of the blur (0 = sharp; r
 show_notifications = true     # unread count + app names (never the text)
 show_media = true             # the playing track
 show_bluetooth = true         # connected Bluetooth devices and their battery
+all_monitors = true           # password field and status on every monitor (false: focused one only)
 
 [launcher]
 terminal =                    # for Terminal=true apps, e.g. "alacritty -e"; empty: $TERMINAL, sway's $term, …

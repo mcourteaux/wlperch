@@ -399,7 +399,9 @@ pointer_listener := wl.Pointer_Listener {
 
 @(private = "file")
 primary_dirty :: proc() {
-	if o := primary_output(); o != nil {o.dirty = true}
+	if config.lock_all_monitors {
+		for o in lk.outputs {o.dirty = true}
+	} else if o := primary_output(); o != nil {o.dirty = true}
 }
 
 @(private = "file")
@@ -859,6 +861,13 @@ build_background :: proc(o: ^Lock_Output, bw, bh: i32) {
 	}
 }
 
+// Whether o shows the password field and status rows ([lock] all_monitors),
+// or only the clock.
+@(private = "file")
+output_full :: proc(o: ^Lock_Output) -> bool {
+	return config.lock_all_monitors || o == primary_output()
+}
+
 @(private = "file")
 primary_output :: proc() -> ^Lock_Output {
 	// The focused output keeps the UI even before its surface is configured
@@ -1098,7 +1107,7 @@ render :: proc(o: ^Lock_Output) {
 	if m == posix.MAP_FAILED {return}
 	cv := Cv{px = ([^]u32)(m)[:bw * bh], w = int(bw), h = int(bh), s = f32(s)}
 	copy(cv.px, o.bg)
-	ui := lock_ui(o == primary_output())
+	ui := lock_ui(output_full(o))
 	draw_ui(&cv, f32(o.w), f32(o.h), &ui)
 	posix.munmap(m, uint(size))
 
@@ -1336,7 +1345,7 @@ anim_kick :: proc(o: ^Lock_Output) {
 	if buf < 0 {return} // again on the release
 	// Committed at the next frame callback, shown a refresh later.
 	t := o.anim_commit_t + 2 * anim_interval(o)
-	full := o.surface == nil ? o.pre.full : o == primary_output()
+	full := o.surface == nil ? o.pre.full : output_full(o)
 	tint, mix := frost_tint()
 	if !w.static_tried && (o.anim_frames >= 2 || t >= f64(config.lock_blur_animate_ms)) {
 		// The static picture, once the first (costlier) frames are out of
@@ -1561,7 +1570,7 @@ prerender_outputs :: proc() {
 			}
 		}
 		if p.w <= 0 || p.h <= 0 {continue}
-		p.full = have_primary ? o.conn == lk.primary : i == 0
+		p.full = config.lock_all_monitors || (have_primary ? o.conn == lk.primary : i == 0)
 		p.ui = lock_ui(p.full)
 		p.tint, p.mix = frost_tint()
 		if o.anim_src.img.px != nil {o.gang = blur_gang_start()}
@@ -1619,7 +1628,7 @@ commit_prerender :: proc(o: ^Lock_Output) -> bool {
 	if p.buffer == nil {return false}
 	buf := p.buffer
 	p.buffer = nil
-	if p.w != o.w || p.h != o.h || p.scale != max(o.scale, 1) || p.full != (o == primary_output()) {
+	if p.w != o.w || p.h != o.h || p.scale != max(o.scale, 1) || p.full != output_full(o) {
 		log.debugf("lock: %s configured %dx%d@%d, pre-rendered %dx%d@%d: rendering again", o.conn, o.w, o.h, o.scale, p.w, p.h, p.scale)
 		// Animated: the buffers are the wrong size, the static picture it is.
 		if p.anim {anim_end(o)} else {wl.buffer_destroy(buf)}
