@@ -220,3 +220,14 @@ test_config_set_value_file :: proc(t: ^testing.T) {
 	data, _ = os.read_entire_file(DIR + "/wlperch/config.ini", context.temp_allocator)
 	testing.expect(t, strings.has_prefix(string(data), "# mine\n[popup]\n# my width\n\n[system]"))
 }
+
+// Every setting's group is laid out by the Settings tab; a group missing from
+// SETTINGS_GROUPS would hide its rows.
+@(test)
+test_settings_groups_listed :: proc(t: ^testing.T) {
+	for s in SETTINGS {
+		found := false
+		for g in SETTINGS_GROUPS {if g == s.group {found = true}}
+		testing.expectf(t, found, "setting %s.%s: group %q is not in SETTINGS_GROUPS", s.section, s.key, s.group)
+	}
+}

@@ -320,7 +320,10 @@ group_look :: proc(g: string) -> Group_Look {
 	case "Clock and weather": return {ICON_CLOCK, C_CYAN}
 	case "Bar":               return {ICON_MONITORS, C_TEAL}
 	case "Memory":            return {ICON_MEMORY, C_ORANGE}
+	case "Notifications":     return {ICON_BELL, C_YELLOW}
 	case "Lock screen":       return {ICON_LOCK, C_BLUE}
+	case "Lock screen info":  return {ICON_LOCK, C_TEAL}
+	case "Idle lock":         return {ICON_PROGRESS_CLOCK, C_ORANGE}
 	case "Time tracking":     return {ICON_PROGRESS_CLOCK, C_GREEN}
 	case "GitHub":            return {ICON_GITHUB, C_PURPLE}
 	case "Launcher":          return {ICON_MAGNIFY, C_GREEN}
@@ -334,7 +337,7 @@ group_look :: proc(g: string) -> Group_Look {
 @(private = "file")
 group_when :: proc(g: string) -> string {
 	switch g {
-	case "Lock screen": return "next time the screen locks"
+	case "Lock screen", "Lock screen info": return "next time the screen locks"
 	case "Dark theme":  return theme_light ? "next switch to dark" : "applies right away"
 	case "Light theme": return theme_light ? "applies right away" : "next switch to light"
 	}

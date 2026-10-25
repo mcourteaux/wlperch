@@ -306,7 +306,7 @@ Setting :: struct {
 	old_scale:  int,              // old value * old_scale = new value (0 = 1)
 }
 
-SETTINGS_GROUPS := [?]string{"Panel", "Clock and weather", "Bar", "Memory", "Lock screen", "Time tracking", "GitHub", "Launcher", "Setup window", "Dark theme", "Light theme"}
+SETTINGS_GROUPS := [?]string{"Panel", "Clock and weather", "Bar", "Memory", "Notifications", "Lock screen", "Lock screen info", "Idle lock", "Time tracking", "GitHub", "Launcher", "Setup window", "Dark theme", "Light theme"}
 
 @(private = "file") CH_UNITS :: []Setting_Choice{{"metric", "Metric"}, {"imperial", "Imperial"}}
 @(private = "file") CH_BAR_POS :: []Setting_Choice{{"top", "Top"}, {"bottom", "Bottom"}}
@@ -355,12 +355,12 @@ SETTINGS := [?]Setting {
 	{group = "Lock screen", section = "lock", key = "screenshot_blur", label = "Screen blur strength", kind = .Int, apply = .Lock, ilim = LIM_LOCK_SCREENSHOT_BLUR, slider = true},
 	{group = "Lock screen", section = "lock", key = "blur_animate_ms", label = "Grow the screen blur over", kind = .Int, apply = .Lock, ilim = LIM_LOCK_BLUR_ANIMATE_MS, step = 100, unit = "ms", help = "Frosted-glass background only: the blur grows from the start strength below to the full strength in this time after locking; 0 = off. While it grows the screen stays partly readable, so it's off by default. Never animates when locked with -f (swayidle's timeout and before-sleep)."},
 	{group = "Lock screen", section = "lock", key = "blur_animate_from", label = "Start the blur at", kind = .Int, apply = .Lock, ilim = LIM_LOCK_BLUR_ANIMATE_FROM, slider = true, unit = "%", help = "Share of the full blur the animation starts at; 0 = sharp."},
-	{group = "Lock screen", section = "lock", key = "show_notifications", label = "Notification count", kind = .Bool, apply = .Lock},
-	{group = "Lock screen", section = "lock", key = "show_media", label = "Playing track", kind = .Bool, apply = .Lock, help = "Show what's playing, with play / pause."},
-	{group = "Lock screen", section = "lock", key = "show_bluetooth", label = "Bluetooth devices", kind = .Bool, apply = .Lock, help = "Connected devices with their battery, when the daemon runs."},
-	{group = "Lock screen", section = "lock", key = "all_monitors", label = "Password on every monitor", kind = .Bool, apply = .Lock, help = "Password field and status rows on every monitor; off: only the focused one, the others show the clock."},
-	{group = "Lock screen", section = "lock", key = "countdown_seconds", label = "Countdown before the idle lock", kind = .Int, apply = .Daemon, ilim = LIM_LOCK_COUNTDOWN, step = 5, unit = "s", help = "The screen dims and a ring counts down before it locks for inactivity; any key or mouse move cancels it. Follows swayidle's lock timeout and its idle inhibitors. 0 = off."},
-	{group = "Lock screen", section = "lock", key = "idle_lock_seconds", label = "wlperch locks after", kind = .Int, apply = .Daemon, ilim = LIM_LOCK_IDLE, step = 30, unit = "s", help = "0 = swayidle locks on idle (the usual setup). A number: wlperch itself locks after this much idle time, for setups without an idle lock in swayidle. A swayidle lock that comes earlier still wins."},
+	{group = "Lock screen info", section = "lock", key = "show_notifications", label = "Notification count", kind = .Bool, apply = .Lock},
+	{group = "Lock screen info", section = "lock", key = "show_media", label = "Playing track", kind = .Bool, apply = .Lock, help = "Show what's playing, with play / pause."},
+	{group = "Lock screen info", section = "lock", key = "show_bluetooth", label = "Bluetooth devices", kind = .Bool, apply = .Lock, help = "Connected devices with their battery, when the daemon runs."},
+	{group = "Lock screen info", section = "lock", key = "all_monitors", label = "Password on every monitor", kind = .Bool, apply = .Lock, help = "Password field and status rows on every monitor; off: only the focused one, the others show the clock."},
+	{group = "Idle lock", section = "lock", key = "countdown_seconds", label = "Countdown before the idle lock", kind = .Int, apply = .Daemon, ilim = LIM_LOCK_COUNTDOWN, step = 5, unit = "s", help = "The screen dims and a ring counts down before it locks for inactivity; any key or mouse move cancels it. Follows swayidle's lock timeout and its idle inhibitors. 0 = off."},
+	{group = "Idle lock", section = "lock", key = "idle_lock_seconds", label = "wlperch locks after", kind = .Int, apply = .Daemon, ilim = LIM_LOCK_IDLE, step = 30, unit = "s", help = "0 = swayidle locks on idle (the usual setup). A number: wlperch itself locks after this much idle time, for setups without an idle lock in swayidle. A swayidle lock that comes earlier still wins."},
 	// Notifications
 	{group = "Notifications", section = "notifications", key = "hold_when_idle", label = "Hold popups when away after", kind = .Int, apply = .Daemon, ilim = LIM_NOTIF_HOLD_IDLE, step = 5, unit = "s", help = "After this long without input, popups stop timing out and wait for you; once you're back each gets its full time again. A playing video counts as activity. 0 = off."},
 	// Time tracking
