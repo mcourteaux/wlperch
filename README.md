@@ -691,7 +691,10 @@ it:
 ./wlperch          # not installed yet and nothing running -> opens setup
 wlperch setup      # later: the same window (or the ⚙ button in a panel)
 wlperch setup settings  # straight to the Settings tab
+wlperch setup components  # straight to the Components tab
 ```
+
+Once every component is set up, the window opens on the Settings tab.
 
 ![The setup window's Components tab: status cards and one card per component with its actions](docs/screenshots/setup.png)
 

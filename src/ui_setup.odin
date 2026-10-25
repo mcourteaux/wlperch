@@ -222,6 +222,20 @@ COLUMNS := [4]struct {
 @(private = "file")
 is_done :: proc(s: Comp_State) -> bool {return s == .Installed || s == .Running || s == .Custom}
 
+// Every component that applies here is set up (the window then opens on
+// the Settings tab).
+setup_all_done :: proc() -> bool {
+	sync.guard(&setup.mu)
+	n := 0
+	for id in Comp_Id {
+		s := setup.comps[id].state
+		if s == .Unavailable {continue}
+		if !is_done(s) {return false}
+		n += 1
+	}
+	return n > 0
+}
+
 @(private = "file")
 needs_attention :: proc(s: Comp_State) -> bool {return s == .Outdated || s == .Partial || s == .Stopped}
 
@@ -283,7 +297,6 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 	if c.message != "" {
 		wrapped(fonts.ui, SZ_SMALL, c.msg_ok ? C_GREEN : C_RED, fmt.tprintf("%s %s", c.msg_ok ? ICON_CHECK : ICON_ALERT, c.message), inner)
 	}
-	if id == .Lock {lock_settings_ui(inner, inf.accent)}
 	if inf.preview != "" && show_preview[id] {
 		text := strings.trim_space(inf.preview)
 		im.PushStyleColorImVec4(.ChildBg, rgba(C_WELL))

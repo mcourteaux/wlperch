@@ -28,7 +28,9 @@ commands:
   daemon   start the background daemon without showing the popup
   quit     stop the running daemon
   setup    install / configure components (program, sway, waybar, udev rule…)
-  setup settings   the setup window on its Settings tab (common config.ini keys)
+  setup settings   the setup window on its Settings tab (common config.ini keys);
+                   the default once every component is set up
+  setup components the setup window on its Components tab
   restart  restart the daemon (new binary, re-read config); keeps graph history
   audio refresh    fix stuck audio: switch the output's card profile and back
   audio restart    restart PipeWire, WirePlumber and pipewire-pulse

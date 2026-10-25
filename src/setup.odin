@@ -1037,8 +1037,10 @@ run_setup :: proc() {
 	if !platform_init() {os.exit(1)}
 	im_init()
 	im.GetIO().ConfigInputTextCursorBlink = false // frames only on input
-	if len(os.args) > 2 && os.args[2] == "settings" {setup_tab = .Settings}
 	setup_check()
+	// "wlperch setup settings", or nothing left to install: open on Settings.
+	if len(os.args) > 2 && os.args[2] == "settings" || setup_all_done() {setup_tab = .Settings}
+	if len(os.args) > 2 && os.args[2] == "components" {setup_tab = .Components}
 	win_w, win_h := setup_window_size()
 	if !platform_open_window("wlperch setup", "wlperch-setup", win_w, win_h, SETUP_MIN_W, SETUP_MIN_H) {
 		log.error("couldn't open the setup window")
@@ -1060,7 +1062,6 @@ run_setup :: proc() {
 		for wl.display_prepare_read(d) != 0 {wl.display_dispatch_pending(d)}
 		wl.display_flush(d)
 		timeout := plat.redraw > 0 && !plat.frame_pending ? 0 : 1000
-		if wait := lock_settings_tick(); wait >= 0 {timeout = min(timeout, wait)}
 		if wait := settings_tick(); wait >= 0 {timeout = min(timeout, wait)}
 		if wait := setup_dim_timeout(); wait >= 0 {timeout = min(timeout, wait)}
 		pfds := [4]posix.pollfd {
