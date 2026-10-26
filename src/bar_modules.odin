@@ -644,6 +644,10 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		if t.class == "running" {
 			it.bg, it.bg_alpha = p.teal, 0.12
 			bar_seg(&it, t.text, p.teal, .Bold, tnum = true)
+		} else if t.class == "waiting" {
+			// Away, but a bridged break if you're back in time: dimmed, not ticking.
+			it.bg, it.bg_alpha = p.teal, 0.05
+			bar_seg(&it, t.text, p.muted, tnum = true)
 		} else {
 			bar_seg(&it, t.text, p.faint, tnum = true)
 		}

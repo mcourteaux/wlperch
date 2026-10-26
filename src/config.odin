@@ -368,6 +368,12 @@ cpu_graph_width = 48
 # swayidle's timeout); idle inhibitors (fullscreen video, the bar's idle
 # button) count as presence. The old idle_minutes is still honoured.
 idle_seconds = 300
+# Breaks shorter than this many minutes, between two stretches of work on the
+# same project, count as work for it (e.g. waiting for a build). 0 = off, up to
+# 120. A project can set its own: bridge_breaks in its [project.KEY] section,
+# or the pencil next to it in the Time panel. Applied when counting: the log
+# keeps every break, so a change applies to past days too and can be undone.
+bridge_breaks = 0
 
 # Projects for time tracking. "wlperch track <project>" (or the Time panel)
 # creates one workspace per monitor ("<name> 1", "<name> 2", ...); time counts
@@ -377,6 +383,7 @@ idle_seconds = 300
 # name = ACME
 # client = ACME Corp      ; omit for personal projects
 # color = #7aa2f7         ; optional
+# bridge_breaks = 10      ; optional: breaks under 10 min count as work
 
 [sensors]
 # Tuya WiFi sensors (thermo-hygrometers, air monitors, heaters), read over the
@@ -826,6 +833,7 @@ LIM_LOCK_BLUR_ANIMATE_FROM :: Int_Limits{0, 100, 10}
 LIM_LOCK_BLUR :: Int_Limits{0, 64, 0}
 LIM_LOCK_DIM :: Float_Limits{0, 1, 0.35}
 LIM_IDLE_SECONDS :: Int_Limits{5, 86400, 300}
+LIM_BRIDGE_BREAKS :: Int_Limits{0, 120, 0} // minutes
 LIM_NOTIF_HOLD_IDLE :: Int_Limits{0, 3600, 5}
 LIM_BAR_HEIGHT :: Int_Limits{20, 80, 34}
 LIM_BAR_TRAY :: Int_Limits{12, 48, 20}

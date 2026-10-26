@@ -10,7 +10,9 @@
 //   project  project,client,minutes,hours,days,type
 // Times are local; hours have two decimals and are computed from seconds
 // (sum them, don't sum the rounded minutes). type is work or break (breaks
-// only with --breaks).
+// only with --breaks). Short breaks bridged as work (bridge_breaks) count as
+// work; with --breaks, entry rows mark them type bridged (still worked hours),
+// day and project rows fold them into the work rows.
 package main
 
 import "core:fmt"
@@ -32,6 +34,7 @@ Export_Entry :: struct {
 	start, end:      i64,
 	project, client: string,
 	idle:            bool,
+	bridged:         bool, // set by export_csv: a short break counted as work
 }
 
 Export_Opts :: struct {
@@ -40,6 +43,7 @@ Export_Opts :: struct {
 	to:      i64, // exclusive; 0 = no end
 	group:   Export_Group,
 	breaks:  bool, // also the time away from the keyboard
+	bridge:  Bridge_Rules, // which breaks count as work (bridge_rules())
 }
 
 // The time log's lines (and a still-counting segment: "start\tend\tproject\tclient").
@@ -51,12 +55,14 @@ export_parse :: proc(log_text, current_text: string, out: ^[dynamic]Export_Entry
 		s, ok1 := parse_iso_utc(f[0])
 		e, ok2 := parse_iso_utc(f[1])
 		if !ok1 || !ok2 || e <= s {continue}
-		append(out, Export_Entry{s, e, f[2], len(f) > 3 ? f[3] : "", len(f) > 4 && f[4] == "idle"})
+		append(out, Export_Entry{s, e, f[2], len(f) > 3 ? f[3] : "", len(f) > 4 && f[4] == "idle", false})
 	}
 	if f := strings.split(strings.trim_space(current_text), "\t", context.temp_allocator); len(f) >= 3 {
 		s, ok1 := strconv.parse_i64(f[0])
 		e, ok2 := strconv.parse_i64(f[1])
-		if ok1 && ok2 && e > s {append(out, Export_Entry{s, e, f[2], len(f) > 3 ? f[3] : "", false})}
+		// Just started (no heartbeat yet) still counts: it decides whether the
+		// break before it is bridged.
+		if ok1 && ok2 && e >= s {append(out, Export_Entry{s, e, f[2], len(f) > 3 ? f[3] : "", false, false})}
 	}
 }
 
@@ -82,7 +88,8 @@ Export_Piece :: struct {
 	start, end:      i64,
 	day:             i64, // local midnight
 	project, client: string,
-	idle:            bool,
+	idle:            bool, // a break (not bridged)
+	bridged:         bool, // a short break counted as work
 }
 
 // Local midnight of the day after the one starting at `day` (DST-safe).
@@ -134,12 +141,17 @@ fmt_hours :: proc(secs: i64) -> string {return fmt.tprintf("%.2f", f64(secs) / 3
 @(private = "file")
 fmt_minutes :: proc(secs: i64) -> string {return fmt.tprintf("%d", (secs + 30) / 60)}
 
-// The entries in range, cut at local midnights, oldest first.
+// The entries in range, cut at local midnights, oldest first. Bridging looks
+// at the whole log (the work around a break may be outside the range or
+// another project's filter).
 @(private = "file")
 export_pieces :: proc(entries: []Export_Entry, o: Export_Opts) -> []Export_Piece {
 	out: [dynamic]Export_Piece
 	out.allocator = context.temp_allocator
-	for e in entries {
+	bridged := bridge_mask(entries, o.bridge)
+	for e, i in entries {
+		e := e
+		if bridged[i] {e.idle, e.bridged = false, true}
 		if e.idle && !o.breaks {continue}
 		if o.project != "" && e.project != o.project {continue}
 		a := max(e.start, o.from)
@@ -147,7 +159,7 @@ export_pieces :: proc(entries: []Export_Entry, o: Export_Opts) -> []Export_Piece
 		for a < b {
 			day := local_day_start(a)
 			end := min(b, next_local_day(day))
-			append(&out, Export_Piece{a, end, day, e.project, e.client, e.idle})
+			append(&out, Export_Piece{a, end, day, e.project, e.client, e.idle, e.bridged})
 			a = end
 		}
 	}
@@ -155,18 +167,54 @@ export_pieces :: proc(entries: []Export_Entry, o: Export_Opts) -> []Export_Piece
 	return out[:]
 }
 
+// Worked seconds in the range (and project) without bridging and with
+// o.bridge, and how many bridged breaks make the difference. The same
+// clipping as export_csv, so `with` equals its work_secs.
+export_bridge_summary :: proc(entries: []Export_Entry, o: Export_Opts) -> (without, with: i64, gaps: int) {
+	mask := bridge_mask(entries, o.bridge)
+	for e, i in entries {
+		if o.project != "" && e.project != o.project {continue}
+		a := max(e.start, o.from)
+		b := o.to > 0 ? min(e.end, o.to) : e.end
+		if b <= a {continue}
+		if !e.idle {
+			without += b - a
+			with += b - a
+		} else if mask[i] {
+			with += b - a
+			gaps += 1
+		}
+	}
+	return
+}
+
+// Every project bridges breaks shorter than `minutes` (an override, e.g.
+// `--bridge` or the export's slider), whatever config.ini says.
+bridge_rules_override :: proc(minutes: int) -> Bridge_Rules {
+	return {default_secs = i64(clamp(minutes, LIM_BRIDGE_BREAKS.lo, LIM_BRIDGE_BREAKS.hi)) * 60, gen = -1}
+}
+
+// "19:24 h → 20:05 h (+0:41 h from 12 bridged gaps)", or one total when
+// bridging changes nothing.
+fmt_bridge_summary :: proc(without, with: i64, gaps: int) -> string {
+	if with == without {return fmt.tprintf("%s h worked", fmt_duration(with))}
+	// The difference of the minutes shown, so the line adds up.
+	diff := (with / 60 - without / 60) * 60
+	return fmt.tprintf("%s h → %s h (+%s h from %d bridged gap%s)", fmt_duration(without), fmt_duration(with), fmt_duration(diff), gaps, gaps == 1 ? "" : "s")
+}
+
 // The CSV text, plus the exported work time (breaks excluded) and row count.
 export_csv :: proc(entries: []Export_Entry, o: Export_Opts, allocator := context.allocator) -> (csv: string, work_secs: i64, rows: int) {
 	pieces := export_pieces(entries, o)
 	for p in pieces {if !p.idle {work_secs += p.end - p.start}}
-	kind :: proc(idle: bool) -> string {return idle ? "break" : "work"}
+	kind :: proc(idle: bool, bridged := false) -> string {return idle ? "break" : bridged ? "bridged" : "work"}
 	b := strings.builder_make(allocator)
 	switch o.group {
 	case .Entries:
 		csv_row(&b, "date", "start", "end", "minutes", "hours", "project", "client", "type")
 		for p in pieces {
 			end := p.end == next_local_day(p.day) ? "24:00" : fmt_hm(p.end)
-			csv_row(&b, fmt_date(p.day), fmt_hm(p.start), end, fmt_minutes(p.end - p.start), fmt_hours(p.end - p.start), p.project, p.client, kind(p.idle))
+			csv_row(&b, fmt_date(p.day), fmt_hm(p.start), end, fmt_minutes(p.end - p.start), fmt_hours(p.end - p.start), p.project, p.client, kind(p.idle, p.bridged && o.breaks))
 			rows += 1
 		}
 	case .Day, .Project:
@@ -268,7 +316,12 @@ EXPORT_USAGE :: `usage: wlperch track export [options]
                               (no range: everything in the log)
   --project NAME              one project (default: all)
   --by entries|day|project    one row per entry (default), per day, or per project
-  --breaks                    also the time away from the keyboard (type=break)
+  --bridge MINUTES            count breaks shorter than this (0-120) as work
+                              for every project, instead of config.ini's
+                              bridge_breaks; 0 = no bridging
+  --breaks                    also the time away from the keyboard (type=break);
+                              entry rows of short breaks counted as work
+                              ([timetracker] bridge_breaks) get type=bridged
   -o FILE                     write to FILE instead of stdout
 `
 
@@ -290,7 +343,7 @@ resolve_project :: proc(entries: []Export_Entry, name: string) -> (string, bool)
 
 track_export_cli :: proc(args: []string) -> int {
 	o: Export_Opts
-	out_path, month, from_s, to_s: string
+	out_path, month, from_s, to_s, bridge_s: string
 	for i := 0; i < len(args); i += 1 {
 		a := args[i]
 		val :: proc(args: []string, i: ^int) -> (string, bool) {
@@ -306,6 +359,7 @@ track_export_cli :: proc(args: []string) -> int {
 		case "--project": o.project, ok = val(args, &i)
 		case "-o":        out_path, ok = val(args, &i)
 		case "--breaks":  o.breaks = true
+		case "--bridge":  bridge_s, ok = val(args, &i)
 		case "--by":
 			g: string
 			g, ok = val(args, &i)
@@ -364,7 +418,17 @@ track_export_cli :: proc(args: []string) -> int {
 		}
 		o.project = name
 	}
+	o.bridge = bridge_rules()
+	if bridge_s != "" {
+		m, mok := strconv.parse_int(bridge_s)
+		if !mok || m < LIM_BRIDGE_BREAKS.lo || m > LIM_BRIDGE_BREAKS.hi {
+			fmt.eprintfln("wlperch track export: --bridge takes minutes, 0 to %d: %q", LIM_BRIDGE_BREAKS.hi, bridge_s)
+			return 2
+		}
+		o.bridge = bridge_rules_override(m)
+	}
 	csv, work, rows := export_csv(entries[:], o, context.temp_allocator)
+	without, with, gaps := export_bridge_summary(entries[:], o)
 	if out_path == "" {
 		fmt.print(csv)
 	} else if os.write_entire_file(out_path, csv) != nil {
@@ -372,6 +436,8 @@ track_export_cli :: proc(args: []string) -> int {
 		return 1
 	}
 	fmt.eprintfln("%d rows, %s h worked (%s h)%s", rows, fmt_duration(work), fmt_hours(work), out_path != "" ? fmt.tprintf(" -> %s", out_path) : "")
+	how := bridge_s != "" ? fmt.tprintf("--bridge %s", bridge_s) : "bridge_breaks from config.ini"
+	fmt.eprintfln("bridging (%s): %s", how, fmt_bridge_summary(without, with, gaps))
 	return 0
 }
 

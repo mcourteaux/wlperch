@@ -8,12 +8,19 @@
 // attributed to the project whose workspace was focused when you walked away.
 // The open segment is kept in <data>/timetracker.current (start, last heartbeat,
 // project) so a crash loses at most one heartbeat interval.
+//
+// Bridging: a break shorter than the project's bridge_breaks minutes, between
+// two stretches of work on that same project, counts as work. The log keeps
+// what was recorded; bridging is applied when reading it (totals, timeline,
+// export, the bar), so changing the setting applies to the past too.
 package main
 
+import "base:runtime"
 import "core:encoding/ini"
 import "core:fmt"
 import "core:log"
 import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:sync"
@@ -27,12 +34,14 @@ Project :: struct {
 	name:   string,
 	client: string, // "" = personal
 	color:  u32,
+	bridge: int, // bridge_breaks in minutes; -1 = not set: the [timetracker] default
 }
 
 Time_Entry :: struct {
 	start, end: i64, // unix seconds
 	project:    string, // NO_PROJECT for breaks taken outside project workspaces
 	idle:       bool,   // a break (away from keyboard), not work
+	bridged:    bool,   // (views only) a short break counted as work, see bridge_mask
 }
 
 NO_PROJECT :: "(no project)"
@@ -58,6 +67,7 @@ Tracker :: struct {
 	log_path:   string,
 	cur_path:   string,
 	idle:       time.Duration,
+	bridge_default: int, // [timetracker] bridge_breaks, minutes (0 = off)
 
 	// Group lock: monitors follow each other into and out of project workspaces.
 	lock:         bool,
@@ -101,8 +111,17 @@ projects_load :: proc(src: string, m: ini.Map) {
 		}
 		if p.name == "" {p.name = p.key}
 		if c, ok := parse_hex_color(unquote(kv["color"])); ok {p.color = c}
+		p.bridge = -1
+		if v, has := kv["bridge_breaks"]; has && strings.trim_space(unquote(v)) != "" {
+			p.bridge = parse_int_lim(unquote(v), LIM_BRIDGE_BREAKS)
+		}
 		append(&tracker.projects, p)
 	}
+	tracker.bridge_default = 0
+	if sec, ok := m["timetracker"]; ok {
+		if v, has := sec["bridge_breaks"]; has {tracker.bridge_default = parse_int_lim(unquote(v), LIM_BRIDGE_BREAKS)}
+	}
+	bridge_rules_update()
 }
 
 project_find :: proc(name: string) -> int {
@@ -171,7 +190,7 @@ append_entry :: proc(e: Time_Entry, client: string) {
 	}
 	defer os.close(f)
 	os.write_string(f, line)
-	append(&tracker.entries, Time_Entry{e.start, e.end, strings.clone(e.project), e.idle})
+	append(&tracker.entries, Time_Entry{e.start, e.end, strings.clone(e.project), e.idle, false})
 }
 
 timelog_parse :: proc(data: string, out: ^[dynamic]Time_Entry) {
@@ -182,7 +201,7 @@ timelog_parse :: proc(data: string, out: ^[dynamic]Time_Entry) {
 		s, ok1 := parse_iso_utc(f[0])
 		e, ok2 := parse_iso_utc(f[1])
 		if !ok1 || !ok2 || e <= s {continue}
-		append(out, Time_Entry{s, e, strings.clone(f[2]), len(f) > 4 && f[4] == "idle"})
+		append(out, Time_Entry{s, e, strings.clone(f[2]), len(f) > 4 && f[4] == "idle", false})
 	}
 }
 
@@ -197,7 +216,7 @@ close_segment :: proc(end: i64) {
 	if tracker.running < 0 {return}
 	p := tracker.projects[tracker.running]
 	if end - tracker.seg_start >= MIN_SEGMENT {
-		append_entry({tracker.seg_start, end, p.name, false}, p.client)
+		append_entry({tracker.seg_start, end, p.name, false, false}, p.client)
 	}
 	os.remove(tracker.cur_path)
 	tracker.running = -1
@@ -226,7 +245,7 @@ tracker_init :: proc() {
 			s, _ := strconv.parse_i64(f[0])
 			e, _ := strconv.parse_i64(f[1])
 			client := len(f) > 3 ? f[3] : ""
-			if e - s >= MIN_SEGMENT {append_entry({s, e, f[2], false}, client)}
+			if e - s >= MIN_SEGMENT {append_entry({s, e, f[2], false, false}, client)}
 		}
 		os.remove(tracker.cur_path)
 	}
@@ -236,7 +255,7 @@ tracker_init :: proc() {
 		if len(f) >= 3 {
 			s, _ := strconv.parse_i64(f[0])
 			e, _ := strconv.parse_i64(f[1])
-			if e > s {append_entry({s, e, f[2], true}, len(f) > 3 ? f[3] : "")}
+			if e > s {append_entry({s, e, f[2], true, false}, len(f) > 3 ? f[3] : "")}
 		}
 		os.remove(tracker.away_path)
 	}
@@ -318,7 +337,7 @@ close_away :: proc(end: i64) {
 	if !tracker.away {return}
 	tracker.away = false
 	if end > tracker.away_start {
-		append_entry({tracker.away_start, end, tracker.away_project, true}, tracker.away_client)
+		append_entry({tracker.away_start, end, tracker.away_project, true, false}, tracker.away_client)
 	}
 	os.remove(tracker.away_path)
 	request_redraw()
@@ -511,43 +530,222 @@ local_day_start :: proc(t: i64) -> i64 {
 	return (t + off) / 86400 * 86400 - off
 }
 
-// Seconds per project between [from, to), including the running segment.
+// ---- Bridging short breaks ------------------------------------------------
+
+// Work and a break this close together count as back to back (restarts and
+// visits shorter than MIN_SEGMENT leave small holes in the log).
+BRIDGE_SLACK :: 60
+
+// Bridge thresholds per project name, in seconds; projects not listed (e.g.
+// only in an old log) get the default. A value, so callers and tests can
+// pass their own.
+Bridge_Rules :: struct {
+	default_secs: i64,
+	names:        []string,
+	secs:         []i64,
+	gen:          int, // changes whenever the rules do
+}
+
+// A project's bridging threshold in minutes (its own, else the default).
+project_bridge :: proc(p: Project) -> int {return p.bridge >= 0 ? p.bridge : tracker.bridge_default}
+
+bridge_limit :: proc(r: Bridge_Rules, project: string) -> i64 {
+	if project == NO_PROJECT {return 0}
+	for n, i in r.names {if n == project {return r.secs[i]}}
+	return r.default_secs
+}
+
+// The rules of the loaded projects. Kept apart from tracker.projects because
+// the bar's worker thread reads them (status_timer_item) while its main
+// thread reloads the config.
+@(private = "file")
+bridge_global: struct {
+	mu:    sync.Mutex,
+	rules: Bridge_Rules,
+}
+
+// Rebuild the rules from tracker.projects and the default (after loading the
+// config, a rename or a change in the Time panel).
+bridge_rules_update :: proc() {
+	context.allocator = runtime.default_allocator()
+	sync.guard(&bridge_global.mu)
+	r := &bridge_global.rules
+	for n in r.names {delete(n)}
+	delete(r.names)
+	delete(r.secs)
+	names := make([]string, len(tracker.projects))
+	secs := make([]i64, len(tracker.projects))
+	for p, i in tracker.projects {
+		names[i] = strings.clone(p.name)
+		secs[i] = i64(p.bridge >= 0 ? p.bridge : tracker.bridge_default) * 60
+	}
+	r.names, r.secs = names, secs
+	r.default_secs = i64(tracker.bridge_default) * 60
+	r.gen += 1
+}
+
+// A copy of the current rules (temp-allocated).
+bridge_rules :: proc() -> Bridge_Rules {
+	sync.guard(&bridge_global.mu)
+	r := bridge_global.rules
+	out := Bridge_Rules{default_secs = r.default_secs, gen = r.gen}
+	out.names = make([]string, len(r.names), context.temp_allocator)
+	out.secs = make([]i64, len(r.secs), context.temp_allocator)
+	for n, i in r.names {out.names[i] = strings.clone(n, context.temp_allocator)}
+	copy(out.secs, r.secs)
+	return out
+}
+
+// Which entries are bridged: breaks (idle) of project P, back to back with each
+// other, together shorter than P's limit, right after work on P and right
+// before work on P. A break between two projects, at the end of the day (no
+// work on P after it) or still in progress stays a break. `entries` needs a
+// start, end, project and idle field and may be in any order. Every place that
+// counts time goes through this, so the panel, export and bar agree.
+bridge_mask :: proc(entries: []$T, rules: Bridge_Rules, allocator := context.temp_allocator) -> []bool {
+	mask := make([]bool, len(entries), allocator)
+	any := rules.default_secs > 0
+	for s in rules.secs {any ||= s > 0}
+	if !any {return mask}
+	Ord :: struct {
+		start: i64,
+		i:     int,
+	}
+	ord := make([]Ord, len(entries), context.temp_allocator)
+	for e, i in entries {ord[i] = {e.start, i}}
+	slice.sort_by(ord, proc(a, b: Ord) -> bool {return a.start < b.start || (a.start == b.start && a.i < b.i)})
+	n := len(ord)
+	for k := 0; k < n; {
+		first := entries[ord[k].i]
+		if !first.idle {
+			k += 1
+			continue
+		}
+		// The run of breaks starting here.
+		j := k
+		run_end := first.end
+		for j + 1 < n {
+			x := entries[ord[j + 1].i]
+			if !x.idle || x.project != first.project || x.start - run_end > BRIDGE_SLACK {break}
+			j += 1
+			run_end = max(run_end, x.end)
+		}
+		limit := bridge_limit(rules, first.project)
+		if limit > 0 && run_end - first.start < limit && k > 0 && j + 1 < n {
+			prev := entries[ord[k - 1].i]
+			next := entries[ord[j + 1].i]
+			before := !prev.idle && prev.project == first.project && abs(first.start - prev.end) <= BRIDGE_SLACK
+			after := !next.idle && next.project == first.project && next.start - run_end <= BRIDGE_SLACK
+			if before && after {
+				for m in k ..= j {mask[ord[m].i] = true}
+			}
+		}
+		k = j + 1
+	}
+	return mask
+}
+
+// Entries with the bridged flag set (a temp copy).
+tracker_bridge :: proc(entries: []Time_Entry, rules: Bridge_Rules) -> []Time_Entry {
+	out := slice.clone(entries, context.temp_allocator)
+	for b, i in bridge_mask(out, rules) {out[i].bridged = b}
+	return out
+}
+
+// The mask for the daemon's own log, recomputed only when the log, the
+// running segment, the break in progress or the rules change.
+@(private = "file")
+view_cache: struct {
+	mask:                   [dynamic]bool,
+	n, running, gen:        int,
+	seg_start, away_start:  i64,
+	away, valid:            bool,
+}
+
+// The log as it counts: recorded entries, the segment counting now and the
+// break in progress (both up to `now`), with bridged breaks flagged. Temp-allocated.
+tracker_view :: proc(now: i64) -> []Time_Entry {
+	v := make([dynamic]Time_Entry, 0, len(tracker.entries) + 2, context.temp_allocator)
+	append(&v, ..tracker.entries[:])
+	if tracker.running >= 0 {append(&v, Time_Entry{tracker.seg_start, now, tracker.projects[tracker.running].name, false, false})}
+	if tracker.away {append(&v, Time_Entry{tracker.away_start, now, tracker.away_project, true, false})}
+	rules := bridge_rules()
+	c := &view_cache
+	if !c.valid || c.n != len(tracker.entries) || c.running != tracker.running || c.seg_start != tracker.seg_start || c.away != tracker.away || c.away_start != tracker.away_start || c.gen != rules.gen || len(c.mask) != len(v) {
+		m := bridge_mask(v[:], rules)
+		if c.mask.allocator.procedure == nil {c.mask.allocator = runtime.default_allocator()}
+		resize(&c.mask, len(m))
+		copy(c.mask[:], m)
+		c.n, c.running, c.seg_start, c.away, c.away_start, c.gen, c.valid = len(tracker.entries), tracker.running, tracker.seg_start, tracker.away, tracker.away_start, rules.gen, true
+	}
+	for &e, i in v {e.bridged = c.mask[i]}
+	return v[:]
+}
+
+// Where the stretch counting now began: back through bridged breaks and
+// back-to-back pieces of the same project (so after a bridged break the
+// timer includes the gap).
+tracker_stretch_start :: proc(view: []Time_Entry) -> i64 {
+	if tracker.running < 0 {return 0}
+	name := tracker.projects[tracker.running].name
+	s := tracker.seg_start
+	for _ in 0 ..< 1000 {
+		found := false
+		for e in view {
+			if e.project != name || (e.idle && !e.bridged) || e.start >= s || e.end < s - BRIDGE_SLACK || e.end > s + BRIDGE_SLACK {continue}
+			s = e.start
+			found = true
+			break
+		}
+		if !found {break}
+	}
+	return s
+}
+
+// The break in progress may still be bridged: you walked away from a project
+// with bridging on and the window hasn't passed. Returns how long is left.
+tracker_waiting :: proc(now: i64) -> (left: i64, ok: bool) {
+	if !tracker.away {return}
+	limit := bridge_limit(bridge_rules(), tracker.away_project)
+	if limit <= 0 || now - tracker.away_start >= limit {return}
+	return limit - (now - tracker.away_start), true
+}
+
+// Seconds per project between [from, to), including the running segment and
+// bridged breaks.
 tracker_totals :: proc(from, to: i64) -> map[string]i64 {
 	out := make(map[string]i64, 16, context.temp_allocator)
-	add :: proc(out: ^map[string]i64, project: string, s, e, from, to: i64) {
-		a := max(s, from)
-		b := min(e, to)
-		if b > a {out[project] = out[project] + (b - a)}
-	}
-	for e in tracker.entries {
-		if !e.idle {add(&out, e.project, e.start, e.end, from, to)}
-	}
-	if tracker.running >= 0 {
-		add(&out, tracker.projects[tracker.running].name, tracker.seg_start, time.to_unix_seconds(time.now()), from, to)
+	for e in tracker_view(time.to_unix_seconds(time.now())) {
+		if e.idle && !e.bridged {continue}
+		a := max(e.start, from)
+		b := min(e.end, to)
+		if b > a {out[e.project] = out[e.project] + (b - a)}
 	}
 	return out
 }
 
 Break_Stats :: struct {
-	count: int, // breaks that started in the range
-	secs:  i64, // time away within the range
+	count:   int, // breaks that started in the range
+	secs:    i64, // time away within the range
+	bridged: int, // short breaks in the range counted as work (not in count/secs)
 }
 
 // Breaks per project (NO_PROJECT for breaks outside project workspaces),
 // including the one in progress.
 tracker_breaks :: proc(from, to: i64) -> map[string]Break_Stats {
 	out := make(map[string]Break_Stats, 16, context.temp_allocator)
-	add :: proc(out: ^map[string]Break_Stats, project: string, s, e, from, to: i64) {
-		b := out[project]
-		if s >= from && s < to {b.count += 1}
-		lo, hi := max(s, from), min(e, to)
-		if hi > lo {b.secs += hi - lo}
-		if b.count > 0 || b.secs > 0 {out[project] = b}
+	for e in tracker_view(time.to_unix_seconds(time.now())) {
+		if !e.idle {continue}
+		b := out[e.project]
+		if e.bridged {
+			if e.start >= from && e.start < to {b.bridged += 1}
+		} else {
+			if e.start >= from && e.start < to {b.count += 1}
+			lo, hi := max(e.start, from), min(e.end, to)
+			if hi > lo {b.secs += hi - lo}
+		}
+		if b.count > 0 || b.secs > 0 || b.bridged > 0 {out[e.project] = b}
 	}
-	for e in tracker.entries {
-		if e.idle {add(&out, e.project, e.start, e.end, from, to)}
-	}
-	if tracker.away {add(&out, tracker.away_project, tracker.away_start, time.to_unix_seconds(time.now()), from, to)}
 	return out
 }
 
@@ -616,4 +814,21 @@ tracker_pin_tick :: proc() {
 
 notify :: proc(summary, body: string) {
 	run_async({"notify-send", "-a", "wlperch", "-t", "3000", summary, body})
+}
+
+// Count breaks shorter than `minutes` as work for this project: written to
+// its [project.KEY] section (the bar follows config.ini by itself).
+tracker_set_bridge :: proc(index, minutes: int) -> bool {
+	if index < 0 || index >= len(tracker.projects) {return false}
+	m := clamp(minutes, LIM_BRIDGE_BREAKS.lo, LIM_BRIDGE_BREAKS.hi)
+	pr := &tracker.projects[index]
+	ok := config_set_value(fmt.tprintf("project.%s", pr.key), "bridge_breaks", fmt.tprintf("%d", m))
+	if !ok {
+		log.errorf("time tracking: couldn't write bridge_breaks for %s to config.ini", pr.name)
+		return false
+	}
+	pr.bridge = m
+	bridge_rules_update()
+	request_redraw()
+	return true
 }

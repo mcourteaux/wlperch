@@ -196,37 +196,60 @@ status_notifications_loop :: proc() {
 }
 
 // "⏱ NeonRAW 1:23" (today's time on the project being counted), or a dim
-// clock when nothing is counted. Needs clocks_init (local day start).
+// clock when nothing is counted. While you're away from a project that
+// bridges short breaks and might still come back in time, it shows the
+// project dimmed ("waiting"): the gap is added when you're back, not ticked
+// up meanwhile. Needs clocks_init (local day start) and the projects loaded
+// (bridge_rules).
 status_timer_item :: proc() -> (it: Status_Item) {
 	dir := data_dir()
 	defer delete(dir)
 	cur_path := strings.concatenate({dir, "/timetracker.current"}, context.temp_allocator)
+	away_path := strings.concatenate({dir, "/timetracker.away"}, context.temp_allocator)
 	log_path := strings.concatenate({dir, "/timelog.tsv"}, context.temp_allocator)
 	it = {text = ICON_CLOCK, class = "idle", tooltip = "Time tracking: not on a project workspace"}
-	if data, err := os.read_entire_file(cur_path, context.temp_allocator); err == nil {
+	now := time.to_unix_seconds(time.now())
+	// A fresh heartbeat: the daemon is counting (or away, for the break file).
+	read_state :: proc(path: string, now: i64) -> (start: i64, project: string, ok: bool) {
+		data, err := os.read_entire_file(path, context.temp_allocator)
+		if err != nil {return}
 		f := strings.split(strings.trim_space(string(data)), "\t", context.temp_allocator)
-		if len(f) >= 3 {
-			start, _ := strconv.parse_i64(f[0])
-			beat, _ := strconv.parse_i64(f[1])
-			now := time.to_unix_seconds(time.now())
-			if now - beat < 90 { // heartbeat is fresh: the daemon is counting
-				project := f[2]
-				total := now - start
-				entries: [dynamic]Time_Entry
-				entries.allocator = context.temp_allocator
-				if ld, lerr := os.read_entire_file(log_path, context.temp_allocator); lerr == nil {
-					timelog_parse(string(ld), &entries)
-				}
-				day := local_day_start(now)
-				for e in entries {
-					if e.project == project && !e.idle && e.end > day {total += e.end - max(e.start, day)}
-					delete(e.project)
-				}
-				it.text = fmt.tprintf("%s %s %s", ICON_CLOCK, project, fmt_duration(total))
-				it.class = "running"
-				it.tooltip = fmt.tprintf("%s: %s today", project, fmt_duration(total))
-			}
-		}
+		if len(f) < 3 {return}
+		s, _ := strconv.parse_i64(f[0])
+		beat, _ := strconv.parse_i64(f[1])
+		return s, f[2], now - beat < 90
+	}
+	start, project, running := read_state(cur_path, now)
+	away_start, away_project, away := read_state(away_path, now)
+	rules := bridge_rules()
+	waiting := !running && away && away_project != NO_PROJECT && bridge_limit(rules, away_project) > now - away_start
+	if !running && !waiting {return}
+	entries: [dynamic]Time_Entry
+	entries.allocator = context.temp_allocator
+	if ld, lerr := os.read_entire_file(log_path, context.temp_allocator); lerr == nil {
+		context.allocator = context.temp_allocator // the project names too
+		timelog_parse(string(ld), &entries)
+	}
+	if running {append(&entries, Time_Entry{start, now, project, false, false})}
+	if waiting {
+		project = away_project
+		append(&entries, Time_Entry{away_start, now, project, true, false})
+	}
+	day := local_day_start(now)
+	total: i64
+	mask := bridge_mask(entries[:], rules)
+	for e, i in entries {
+		if e.project == project && (!e.idle || mask[i]) && e.end > day {total += e.end - max(e.start, day)}
+	}
+	if running {
+		it.text = fmt.tprintf("%s %s %s", ICON_CLOCK, project, fmt_duration(total))
+		it.class = "running"
+		it.tooltip = fmt.tprintf("%s: %s today", project, fmt_duration(total))
+	} else {
+		limit := bridge_limit(rules, project)
+		it.text = fmt.tprintf("%s %s %s", ICON_CLOCK, project, fmt_duration(total))
+		it.class = "waiting"
+		it.tooltip = fmt.tprintf("%s: %s today\nAway %s: back within %s and it counts as work\n(breaks under %d min bridge on %s)", project, fmt_duration(total), fmt_duration(now - away_start, true), fmt_duration(limit - (now - away_start), true), limit / 60, project)
 	}
 	return
 }

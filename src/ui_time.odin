@@ -40,12 +40,29 @@ draw_time :: proc(w: f32) {
 		draw_text(fonts.bold, 22, {p.x + 22, p.y + 2}, col32(C_TEXT), pr.name)
 		sub := pr.client != "" ? pr.client : "personal"
 		draw_text(fonts.ui, SZ_SMALL, {p.x + 22, p.y + 30}, col32(C_MUTED), fmt.tprintf("%s   ·   today %s", sub, fmt_duration(totals_today[pr.name])))
-		el := fmt_duration(now - tracker.seg_start, true)
+		// Since the stretch began: after a bridged break that includes the gap.
+		el := fmt_duration(now - tracker_stretch_start(tracker_view(now)), true)
 		esz := measure(fonts.mono, 24, el)
 		draw_text(fonts.mono, 24, {p.x + inner - esz.x, p.y + 4}, col32(pr.color), el)
 		cap := "counting"
 		csz := measure(fonts.ui, SZ_SMALL, cap)
 		draw_text(fonts.ui, SZ_SMALL, {p.x + inner - csz.x, p.y + 32}, col32(C_GREEN), cap)
+	} else if left, waiting := tracker_waiting(now); waiting {
+		// Away from a project that bridges short breaks: not counting (yet).
+		// Back on it within the window and the gap is added at once.
+		pi := project_find(tracker.away_project)
+		col: u32 = pi >= 0 ? tracker.projects[pi].color : C_TEAL
+		im.DrawList_AddCircle(dl(), {p.x + 7, p.y + 16}, 6, col32(col, 0.8), 0, 1.5)
+		draw_text(fonts.bold, 22, {p.x + 22, p.y + 2}, col32(C_MUTED), tracker.away_project)
+		limit := bridge_limit(bridge_rules(), tracker.away_project)
+		draw_text(fonts.ui, SZ_SMALL, {p.x + 22, p.y + 30}, col32(C_FAINT), fmt.tprintf("back within %s and the wait counts as work (breaks < %d min)", fmt_duration(left, true), limit / 60))
+		el := fmt_duration(now - tracker.away_start, true)
+		esz := measure(fonts.mono, 24, el)
+		draw_text(fonts.mono, 24, {p.x + inner - esz.x, p.y + 4}, col32(col, 0.45), el)
+		cap := "waiting…"
+		csz := measure(fonts.ui, SZ_SMALL, cap)
+		draw_text(fonts.ui, SZ_SMALL, {p.x + inner - csz.x, p.y + 32}, col32(C_MUTED), cap)
+		request_redraw(1) // the countdown
 	} else {
 		msg := tracker.paused_idle ? "Paused — you were away" : "Not on a project workspace"
 		col: u32 = tracker.paused_idle ? C_ORANGE : C_MUTED
@@ -106,7 +123,7 @@ draw_time :: proc(w: f32) {
 		pencil_hovered := im.IsItemHovered()
 		if pencil_hovered {
 			im.SetMouseCursor(.Hand)
-			tip(fmt.tprintf("Rename %s: its time log, config.ini section\nand (if you like) its sway workspaces", pr.name))
+			tip(fmt.tprintf("Edit %s: count its short breaks as work,\nor rename it (time log, config.ini section\nand, if you like, its sway workspaces)", pr.name))
 		}
 		row_hovered := im.IsMouseHoveringRect({rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h})
 		if row_hovered || editing {
@@ -132,9 +149,16 @@ draw_time :: proc(w: f32) {
 		if hovered && im.IsMouseClicked(.Right) {tracker_pin(i)}
 		im.DrawList_AddCircleFilled(d, {rp.x + 6, rp.y + h / 2}, 5, col32(pr.color, active ? 1 : 0.7))
 		draw_text(active ? fonts.bold : fonts.ui, SZ_BODY, {rp.x + 20, rp.y + 8}, col32(C_TEXT), pr.name)
-		if pr.client != "" {
-			nsz := measure(active ? fonts.bold : fonts.ui, SZ_BODY, pr.name)
-			draw_text(fonts.ui, SZ_SMALL, {rp.x + 28 + nsz.x, rp.y + 10}, col32(C_FAINT), pr.client)
+		{
+			nx := rp.x + 28 + measure(active ? fonts.bold : fonts.ui, SZ_BODY, pr.name).x
+			if pr.client != "" {
+				draw_text(fonts.ui, SZ_SMALL, {nx, rp.y + 10}, col32(C_FAINT), pr.client)
+				nx += measure(fonts.ui, SZ_SMALL, pr.client).x + 8
+			}
+			// Bridging on: say so on the row, so it isn't a hidden rule.
+			if b := project_bridge(pr); b > 0 {
+				draw_text(fonts.ui, SZ_SMALL, {nx, rp.y + 10}, col32(pr.color, 0.75), fmt.tprintf("breaks < %d min count", b))
+			}
 		}
 		tt := fmt_duration(totals_today[pr.name])
 		tsz := measure(fonts.mono, SZ_BODY, tt)
@@ -178,7 +202,9 @@ draw_time :: proc(w: f32) {
 		for _, b in breaks_today {n_today += b.count}
 		for _, b in breaks_week {n_week += b.count}
 		sub_heading(fmt.tprintf("Away from keyboard   ·   today %d×   ·   7 days %d×", n_today, n_week))
-		if n_week == 0 && !tracker.away {
+		any_bridged := false
+		for _, b in breaks_week {any_bridged ||= b.bridged > 0}
+		if n_week == 0 && !tracker.away && !any_bridged {
 			label(fonts.ui, SZ_SMALL, col32(C_FAINT), fmt.tprintf("No breaks yet (a break = no input for %s)", fmt_idle(tracker.idle)))
 		}
 		row :: proc(name, client: string, color: u32, bt, bw: Break_Stats, work_week: i64, inner: f32) {
@@ -187,6 +213,7 @@ draw_time :: proc(w: f32) {
 			im.DrawList_AddCircleFilled(dl(), {rp.x + 6, rp.y + h / 2}, 4, col32(color, 0.8))
 			draw_text(fonts.ui, SZ_BODY, {rp.x + 18, rp.y + 6}, col32(C_TEXT), name)
 			counts := fmt.tprintf("%d× today  ·  %d× this week", bt.count, bw.count)
+			if bw.bridged > 0 {counts = fmt.tprintf("%s  ·  %d short, counted as work", counts, bw.bridged)}
 			nsz := measure(fonts.ui, SZ_BODY, name)
 			draw_text(fonts.ui, SZ_SMALL, {rp.x + 26 + nsz.x, rp.y + 8}, col32(C_FAINT), counts)
 			right := fmt.tprintf("away %s", fmt_duration(bw.secs))
@@ -207,7 +234,11 @@ draw_time :: proc(w: f32) {
 			row("No project", "", C_FAINT, breaks_today[NO_PROJECT], bw, 0, inner)
 		}
 		if tracker.away {
-			label(fonts.ui, SZ_SMALL, col32(C_ORANGE), fmt.tprintf("Away right now since %s", fmt_duration(now - tracker.away_start)))
+			if left, waiting := tracker_waiting(now); waiting {
+				label(fonts.ui, SZ_SMALL, col32(C_MUTED), fmt.tprintf("Away right now since %s: counts as work if you're back on %s within %s", fmt_duration(now - tracker.away_start), tracker.away_project, fmt_duration(left, true)))
+			} else {
+				label(fonts.ui, SZ_SMALL, col32(C_ORANGE), fmt.tprintf("Away right now since %s", fmt_duration(now - tracker.away_start)))
+			}
 		}
 	}
 
@@ -282,9 +313,106 @@ Exp :: struct {
 	result:  string,
 	path:    string,
 	ok:      bool,
+	bridge:  int, // minutes for this export; -1 = as configured (bridge_breaks)
+	frac:    f32, // its slider
+	// The preview (with and without bridging), recomputed when its inputs change.
+	pv_key:  Preview_Key,
+	pv_without, pv_with: i64,
+	pv_gaps: int,
 }
 @(private = "file")
-exp := Exp{project = -1}
+Preview_Key :: struct {
+	n, running, project, bridge, gen: int,
+	seg_start, away_start, from, to, minute: i64,
+	away, valid: bool,
+}
+@(private = "file")
+exp := Exp{project = -1, bridge = -1}
+
+// The rules this export uses: the slider's value for every project, or config.ini's.
+@(private = "file")
+export_rules :: proc() -> Bridge_Rules {
+	return exp.bridge >= 0 ? bridge_rules_override(exp.bridge) : bridge_rules()
+}
+
+// Worked time in the export's range with and without bridging, from the log
+// in memory. Only recomputed when the range, project, bridge value or log
+// changes (and once a minute for the running segment), not every frame.
+@(private = "file")
+export_preview :: proc(project: string, from, to, now: i64) -> (without, with: i64, gaps: int) {
+	rules := export_rules()
+	key := Preview_Key{len(tracker.entries), tracker.running, exp.project, exp.bridge, rules.gen, tracker.seg_start, tracker.away_start, from, to, now / 60, tracker.away, true}
+	if key != exp.pv_key {
+		entries := make([dynamic]Export_Entry, 0, len(tracker.entries) + 2, context.temp_allocator)
+		for e in tracker.entries {append(&entries, Export_Entry{e.start, e.end, e.project, "", e.idle, false})}
+		if tracker.running >= 0 {append(&entries, Export_Entry{tracker.seg_start, now, tracker.projects[tracker.running].name, "", false, false})}
+		if tracker.away {append(&entries, Export_Entry{tracker.away_start, now, tracker.away_project, "", true, false})}
+		exp.pv_without, exp.pv_with, exp.pv_gaps = export_bridge_summary(entries[:], {project = project, from = from, to = to > 0 ? to : now + 1, bridge = rules})
+		exp.pv_key = key
+	}
+	return exp.pv_without, exp.pv_with, exp.pv_gaps
+}
+
+// The bridge-gap control: a slider (0–120 min) and − / + for this export,
+// starting at the configured value; "as configured" goes back to that, and
+// with one project picked "Save for <project>" makes it its bridge_breaks.
+@(private = "file")
+draw_export_bridge :: proc(inner: f32) {
+	configured := exp.project >= 0 ? project_bridge(tracker.projects[exp.project]) : tracker.bridge_default
+	minutes := exp.bridge >= 0 ? exp.bridge : configured
+	MAXM :: f32(LIM_BRIDGE_BREAKS.hi)
+	bp := im.GetCursorScreenPos()
+	lbl := "Count breaks shorter than"
+	draw_text(fonts.ui, SZ_SMALL, {bp.x, bp.y + 6}, col32(C_MUTED), lbl)
+	if im.IsMouseHoveringRect(bp, {bp.x + measure(fonts.ui, SZ_SMALL, lbl).x, bp.y + 24}) {
+		tip("Breaks shorter than this, between two stretches of work on the same project,\ncount as work (bridge_breaks). Changing it here only affects this export\nand the preview below, until you save it for the project.")
+	}
+	x := bp.x + measure(fonts.ui, SZ_SMALL, lbl).x + 12
+	sw := clamp(inner * 0.3, 110, 200)
+	im.SetCursorScreenPos({x, bp.y + 2})
+	exp.frac = f32(minutes) / MAXM
+	if slider("##exp-bridge", &exp.frac, 1, C_TEAL, sw) {
+		exp.bridge = clamp(int(exp.frac * MAXM + 0.5), 0, int(MAXM))
+	}
+	x += sw + 10
+	im.SetCursorScreenPos({x, bp.y})
+	if pill_button("##exp-bridge-dec", "−", C_TEAL) {exp.bridge = max(minutes - 1, 0)}
+	im.SameLine(0, 4)
+	if pill_button("##exp-bridge-inc", "+", C_TEAL) {exp.bridge = min(minutes + 1, int(MAXM))}
+	im.SameLine(0, 10)
+	minutes = exp.bridge >= 0 ? exp.bridge : configured
+	vp := im.GetCursorScreenPos()
+	// All projects, nothing changed: each project's own value applies.
+	val := exp.project < 0 && exp.bridge < 0 ? "as configured" : minutes == 0 ? "off" : fmt.tprintf("%d min", minutes)
+	draw_text(fonts.bold, SZ_SMALL + 1, {vp.x, vp.y + 5}, col32(exp.bridge >= 0 ? C_TEAL : C_TEXT), val)
+	im.SetCursorScreenPos(bp)
+	im.Dummy({inner, 30})
+	if exp.bridge >= 0 && exp.bridge != configured || (exp.project < 0 && exp.bridge >= 0) {
+		// Changed for this export: keep it for the project, or go back.
+		if exp.project >= 0 {
+			pr := tracker.projects[exp.project]
+			if pill_button("##exp-bridge-save", fmt.tprintf("Save %d min for %s", minutes, pr.name), C_TEAL) {
+				if tracker_set_bridge(exp.project, exp.bridge) {exp.bridge = -1}
+			}
+			if im.IsItemHovered() {tip(fmt.tprintf("Write bridge_breaks = %d to [project.%s] in config.ini:\nthe panel, the bar and later exports count it too", minutes, pr.key))}
+			im.SameLine(0, 10)
+		}
+		rp := im.GetCursorScreenPos()
+		rl := exp.project < 0 ? "↺ as configured per project" : configured == 0 ? "↺ as configured (off)" : fmt.tprintf("↺ as configured (%d min)", configured)
+		rsz := measure(fonts.ui, SZ_SMALL, rl)
+		if im.InvisibleButton("##exp-bridge-reset", rsz + {0, 28 - rsz.y}) {exp.bridge = -1}
+		hov := im.IsItemHovered()
+		if hov {im.SetMouseCursor(.Hand)}
+		draw_text(fonts.ui, SZ_SMALL, {rp.x, rp.y + 6}, col32(C_TEAL, hov ? 1 : 0.8), rl)
+		if exp.project < 0 {
+			im.SameLine(0, 10)
+			hp := im.GetCursorScreenPos()
+			draw_text(fonts.ui, SZ_SMALL, {hp.x, hp.y + 6}, col32(C_FAINT), "this export only, every project")
+			im.NewLine()
+		}
+		im.Dummy({1, 2})
+	}
+}
 
 @(private = "file")
 EXPORT_RANGES := []string{"This month", "Last month", "Custom", "All time"}
@@ -389,20 +517,20 @@ draw_export :: proc(now: i64, inner: f32) {
 	{
 		bp := im.GetCursorScreenPos()
 		if toggle_switch("##exp-breaks", exp.breaks, C_TEAL) {exp.breaks = !exp.breaks}
-		if im.IsItemHovered() {tip("Also the time away from the keyboard, as rows with type \"break\"")}
+		if im.IsItemHovered() {tip("Also the time away from the keyboard, as rows with type \"break\";\nper entry, short breaks counted as work get type \"bridged\"\n(they're in the worked hours either way)")}
 		draw_text(fonts.ui, SZ_SMALL, {bp.x + 48, bp.y + 4}, col32(exp.breaks ? C_TEAL : C_MUTED), "Include breaks")
 		im.SetCursorScreenPos(bp)
 		im.Dummy({140, 26})
 	}
 
-	// What it covers, from the log in memory.
+	draw_export_bridge(inner)
+
+	// What it covers, from the log in memory: with and without bridging.
 	project := exp.project >= 0 ? tracker.projects[exp.project].name : ""
 	if range_ok {
-		totals := tracker_totals(from, to > 0 ? to : now + 1)
-		secs: i64
-		for name, s in totals {if project == "" || name == project {secs += s}}
+		without, with, gaps := export_preview(project, from, to, now)
 		who := project != "" ? project : "all projects"
-		label(fonts.ui, SZ_SMALL + 1, col32(C_TEXT), fmt.tprintf("%s  ·  %s  ·  %s h worked (%.2f h)", title, who, fmt_duration(secs), f64(secs) / 3600))
+		label(fonts.ui, SZ_SMALL + 1, col32(C_TEXT), fmt.tprintf("%s  ·  %s  ·  %s  (%.2f h)", title, who, fmt_bridge_summary(without, with, gaps), f64(with) / 3600))
 	} else {
 		label(fonts.ui, SZ_SMALL + 1, col32(C_RED), "Enter both days as YYYY-MM-DD (from before to)")
 	}
@@ -413,7 +541,7 @@ draw_export :: proc(now: i64, inner: f32) {
 		entries: [dynamic]Export_Entry
 		entries.allocator = context.temp_allocator
 		export_collect(true, &entries)
-		csv, work, rows := export_csv(entries[:], {project = project, from = from, to = to, group = exp.group, breaks = exp.breaks}, context.temp_allocator)
+		csv, work, rows := export_csv(entries[:], {project = project, from = from, to = to, group = exp.group, breaks = exp.breaks, bridge = export_rules()}, context.temp_allocator)
 		path := fmt.tprintf("%s/%s", dir, name)
 		delete(exp.result)
 		delete(exp.path)
@@ -471,21 +599,25 @@ tl_clamp_view :: proc() {
 
 // Today as a 24 h timeline: work in the project's color, breaks in a dim
 // version of it, breaks outside projects in gray; untracked time is the track.
+// Short breaks counted as work (bridged) are hatched in the project's color.
 @(private = "file")
 draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 	Seg :: struct {
 		s, e:    i64,
 		project: string,
 		idle:    bool,
+		bridged: bool,
 	}
 	segs: [dynamic]Seg
 	segs.allocator = context.temp_allocator
 	day_end := day_start + 86400
-	for e in tracker.entries {
-		if e.end > day_start && e.start < day_end {append(&segs, Seg{e.start, e.end, e.project, e.idle})}
+	any_bridged := false
+	for e in tracker_view(now) {
+		if e.end > day_start && e.start < day_end {
+			append(&segs, Seg{e.start, e.end, e.project, e.idle, e.bridged})
+			any_bridged ||= e.bridged
+		}
 	}
-	if tracker.running >= 0 {append(&segs, Seg{tracker.seg_start, now, tracker.projects[tracker.running].name, false})}
-	if tracker.away {append(&segs, Seg{tracker.away_start, now, tracker.away_project, true})}
 	// Merge back-to-back pieces of the same kind (restarts split the log).
 	for i in 1 ..< len(segs) {
 		for j := i; j > 0 && segs[j].s < segs[j - 1].s; j -= 1 {segs[j], segs[j - 1] = segs[j - 1], segs[j]}
@@ -495,7 +627,7 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 	for sg in segs {
 		if n := len(merged); n > 0 {
 			last := &merged[n - 1]
-			if last.project == sg.project && last.idle == sg.idle && sg.s - last.e <= 90 {
+			if last.project == sg.project && last.idle == sg.idle && last.bridged == sg.bridged && sg.s - last.e <= 90 {
 				last.e = max(last.e, sg.e)
 				continue
 			}
@@ -574,6 +706,16 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 		col, is_project := color_of(sg.project)
 		c: u32
 		switch {
+		case sg.bridged:
+			// Hatched: counts as work, but you weren't at the keyboard.
+			im.DrawList_AddRectFilled(d, {x0, p.y + 2}, {x1, p.y + bh - 2}, col32(col, 0.4), 2)
+			im.DrawList_PushClipRect(d, {max(x0, p.x), p.y + 2}, {min(x1, p.x + inner), p.y + bh - 2}, true)
+			for hx := x0 - bh; hx < x1; hx += 6 {
+				im.DrawList_AddLine(d, {hx, p.y + bh - 2}, {hx + bh - 4, p.y + 2}, col32(col, 0.9), 1.5)
+			}
+			im.DrawList_PopClipRect(d)
+			if mouse.x >= x0 && mouse.x < x1 && mouse.y >= p.y && mouse.y < p.y + bh {hovered_seg = i}
+			continue
 		case !sg.idle:     c = col32(col)
 		case is_project:   c = col32(col, 0.22) // a break during a project session
 		case:              c = col32(C_MUTED, 0.45) // a break outside projects
@@ -610,13 +752,22 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 		lg := im.GetCursorScreenPos()
 		x := lg.x
 		accent: u32 = tracker.running >= 0 ? tracker.projects[tracker.running].color : C_TEAL
-		items := [3]struct {
+		items := [4]struct {
 			col:   u32,
 			alpha: f32,
 			text:  string,
-		}{{accent, 1, "working"}, {accent, 0.22, "break during a project"}, {0x8a92a3, 0.45, "break, no project"}}
+		}{{accent, 1, "working"}, {accent, 0.22, "break during a project"}, {0x8a92a3, 0.45, "break, no project"}, {accent, -1, "short break, counted as work"}}
 		for it in items {
-			im.DrawList_AddRectFilled(dl(), {x, lg.y + 4}, {x + 10, lg.y + 12}, col32(it.col, it.alpha), 2)
+			if it.alpha < 0 {
+				// Only on days that have one.
+				if !any_bridged {continue}
+				im.DrawList_AddRectFilled(dl(), {x, lg.y + 4}, {x + 10, lg.y + 12}, col32(it.col, 0.4), 2)
+				im.DrawList_PushClipRect(dl(), {x, lg.y + 4}, {x + 10, lg.y + 12}, true)
+				for hx := x - 8; hx < x + 10; hx += 4 {im.DrawList_AddLine(dl(), {hx, lg.y + 12}, {hx + 8, lg.y + 4}, col32(it.col, 0.9), 1)}
+				im.DrawList_PopClipRect(dl())
+			} else {
+				im.DrawList_AddRectFilled(dl(), {x, lg.y + 4}, {x + 10, lg.y + 12}, col32(it.col, it.alpha), 2)
+			}
 			draw_text(fonts.ui, 11, {x + 14, lg.y + 1}, col32(C_FAINT), it.text)
 			x += 14 + measure(fonts.ui, 11, it.text).x + 16
 		}
@@ -630,6 +781,9 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 			return "?"
 		}
 		what := sg.idle ? (sg.project == NO_PROJECT ? "Break (no project)" : fmt.tprintf("Break during %s", sg.project)) : sg.project
+		if sg.bridged {
+			what = fmt.tprintf("%s: short break, counted as work\n(breaks under %d min bridge on %s)", sg.project, bridge_limit(bridge_rules(), sg.project) / 60, sg.project)
+		}
 		tip(fmt.tprintf("%s\n%s – %s  (%s)", what, hm(sg.s), hm(sg.e), fmt_duration(sg.e - sg.s)))
 	}
 }
@@ -758,8 +912,14 @@ wrapped :: proc(font: ^im.Font, size: f32, col: u32, s: string, width: f32) {
 	im.PopFont()
 }
 
-// Under the project's row: the new name, what will change, confirm. Returns
-// true when the rename should be applied.
+@(private = "file")
+BRIDGE_PRESETS := [?]int{0, 2, 5, 10, 15, 30}
+@(private = "file")
+BRIDGE_LABELS := [?]string{"Off", "2 min", "5 min", "10 min", "15 min", "30 min"}
+
+// Under the project's row: short breaks counted as work (applied at once),
+// then the new name, what will change, confirm. Returns true when the rename
+// should be applied.
 @(private = "file")
 draw_rename_editor :: proc(pr: Project, inner: f32) -> bool {
 	PAD :: f32(12)
@@ -767,6 +927,31 @@ draw_rename_editor :: proc(pr: Project, inner: f32) -> bool {
 	w := inner - 2 * PAD
 	im.SetCursorScreenPos({top.x + PAD, top.y + 10})
 	im.BeginGroup()
+
+	// ---- Bridging short breaks ([project.KEY] bridge_breaks) ----
+	label(fonts.bold, SZ_SMALL, col32(C_MUTED), "Count breaks shorter than this as work")
+	im.Dummy({1, 2})
+	cur := project_bridge(pr)
+	preset := -1
+	for v, k in BRIDGE_PRESETS {if v == cur {preset = k}}
+	if k := segmented(fmt.tprintf("##bridge:%s", pr.key), BRIDGE_LABELS[:], preset, pr.color); k >= 0 && BRIDGE_PRESETS[k] != cur {
+		if i := project_find(pr.name); i >= 0 {tracker_set_bridge(i, BRIDGE_PRESETS[k])}
+		cur = BRIDGE_PRESETS[k]
+	}
+	{
+		why: string
+		switch {
+		case cur > 0:
+			why = fmt.tprintf("A break under %d min between two stretches of %s counts as work for it (between projects, or with no %s after it, it stays a break). The log keeps every break, so this applies to past days too.", cur, pr.name, pr.name)
+		case:
+			why = fmt.tprintf("Off: every break (no input for %s) pauses %s.", fmt_idle(tracker.idle), pr.name)
+		}
+		if preset < 0 {why = fmt.tprintf("%d min (config.ini). %s", cur, why)}
+		if pr.bridge < 0 && tracker.bridge_default > 0 {why = fmt.tprintf("%s From the [timetracker] default.", why)}
+		wrapped(fonts.ui, SZ_SMALL, col32(C_FAINT), why, w)
+	}
+	im.Dummy({1, 8})
+
 	label(fonts.bold, SZ_SMALL, col32(C_MUTED), fmt.tprintf("Rename %s to", pr.name))
 	im.Dummy({1, 2})
 

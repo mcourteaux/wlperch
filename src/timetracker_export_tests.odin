@@ -11,10 +11,10 @@ T0 :: i64(1792800000) // 2026-10-24T00:00:00Z
 @(test)
 test_export_csv :: proc(t: ^testing.T) {
 	entries := []Export_Entry {
-		{T0 + 9 * 3600, T0 + 10 * 3600 + 30 * 60, "site", "ACME, Inc.", false}, // 1:30
-		{T0 + 10 * 3600 + 30 * 60, T0 + 10 * 3600 + 45 * 60, "site", "ACME, Inc.", true}, // a break
-		{T0 + 23 * 3600, T0 + 25 * 3600, "app", "", false}, // over midnight: 1 h each day
-		{T0 - 3600, T0 + 3600, "site", "ACME, Inc.", false}, // starts the day before
+		{T0 + 9 * 3600, T0 + 10 * 3600 + 30 * 60, "site", "ACME, Inc.", false, false}, // 1:30
+		{T0 + 10 * 3600 + 30 * 60, T0 + 10 * 3600 + 45 * 60, "site", "ACME, Inc.", true, false}, // a break
+		{T0 + 23 * 3600, T0 + 25 * 3600, "app", "", false, false}, // over midnight: 1 h each day
+		{T0 - 3600, T0 + 3600, "site", "ACME, Inc.", false, false}, // starts the day before
 	}
 	day := Export_Opts{from = T0, to = T0 + 86400, group = .Entries}
 	csv, work, rows := export_csv(entries, day, context.temp_allocator)

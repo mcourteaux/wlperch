@@ -215,6 +215,29 @@ and how long you work on average before walking away ("every 42m"). The open seg
 written to `timetracker.current` every 30 s, so a crash loses at most that.
 Segments shorter than 5 s are dropped.
 
+**Short breaks can count as work** ("bridging"), for projects where you often
+wait a bit before going on (a build, a test run, a colleague). Set
+`bridge_breaks = <minutes>` (0–120, 0 = off) in a `[project.KEY]` section, or
+`[timetracker] bridge_breaks` for every project without its own (Settings →
+Time tracking). Quicker: the pencil at the end of the project's row in the Time
+panel offers Off / 2 / 5 / 10 / 15 / 30 min, and the row then says
+"breaks < 10 min count". A break shorter than that, between two stretches of
+work on the *same* project, counts as work for it. A break between two
+projects, one with no work on the project after it (the end of the day), or a
+longer one stays a break; breaks back to back (a restart, a single key press in
+between) count as one. The log is left as recorded: bridging is applied when
+the time is counted (panel totals, timeline, 7-day chart, export, bar), so a new
+value applies to past days too, and setting it back undoes it. The timeline
+hatches bridged gaps in the project's colour, and "Away from keyboard" lists
+them as "N short, counted as work" instead of as breaks.
+
+While you're away from such a project, the timer can't know yet whether you'll
+be back in time, so it doesn't count: the panel shows the project dimmed with
+"waiting…" and how long you have left, and the bar's pill turns dim (class
+`waiting`). Back on the project within the window and the gap is added at once
+(the panel's counter then runs from before the break); once the window has
+passed, it is an ordinary break.
+
 **Renaming a project.** The pencil at the end of a project row in the Time
 panel, or `wlperch track rename [--dry-run] [--merge] [--workspaces] OLD NEW`.
 The name new time is logged under comes from config.ini (`name =` of the
@@ -250,7 +273,24 @@ Times are local, entries are cut at the range's ends and at midnight (so each
 row is one day), `hours` has two decimals computed from the seconds (sum those,
 not the rounded `minutes`), and `client` comes from the log line. Breaks are
 left out unless you ask for them (`--breaks`, or "Include breaks"; `type` is
-then `work` or `break`). The segment that is counting right now is included.
+then `work` or `break`). Bridged breaks are worked hours, so they are in the
+`work` rows; with `--breaks`, entry rows mark them `bridged` instead (still
+worked hours: work + bridged = the hours the panel shows). The segment that is
+counting right now is included.
+
+The Export section also has a "Count breaks shorter than" slider (0–120 min, with
+− / + for single minutes). It starts at the configured value. Moving it changes
+only this export, and the line under it previews the effect for the chosen
+project and range, e.g. `15:35 h → 18:48 h (+3:13 h from 38 bridged gaps)`.
+"Save N min for <project>" writes it as the project's `bridge_breaks`, and
+"↺ as configured" goes back. From a terminal, `--bridge MINUTES` does the same
+for every project (0 = no bridging), and stderr shows the same with/without line:
+
+```sh
+wlperch track export --month last --project wlperch --bridge 10 -o hours.csv
+# 1 rows, 10:08 h worked (10.14 h) -> hours.csv
+# bridging (--bridge 10): 7:56 h → 10:08 h (+2:12 h from 25 bridged gaps)
+```
 
 The panel shows:
 - the running timer;
@@ -260,7 +300,8 @@ The panel shows:
   the pointer), drag to pan, double-click to see the whole day again.
 - a 7-day stacked chart (hover a day for its breakdown).
 
-`wlperch status timer` feeds a waybar pill (`⏱ ACME 1:23`, class `running`).
+`wlperch status timer` feeds a waybar pill (`⏱ ACME 1:23`, class `running`;
+`waiting` while a bridgeable break may still count).
 
 ### Sensors
 
@@ -1125,11 +1166,13 @@ columns = github | github-repo github-inbox
 
 [timetracker]
 idle_seconds = 300            # no input this long = a break (idle_minutes still works)
+bridge_breaks = 0             # minutes: shorter breaks between work on one project count as work
 
 [project.acme]                # one section per project
 name = ACME                   # workspaces "ACME 1", "ACME 2", ...
 client = ACME Corp            # omit for personal projects
 color = #7aa2f7               # optional
+bridge_breaks = 10            # optional: this project's own bridging (minutes, 0 = off)
 ```
 
 Restart the daemon (`wlperch quit`) to apply changes.

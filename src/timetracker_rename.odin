@@ -457,6 +457,7 @@ tracker_apply_rename :: proc(p: Rename_Plan) {
 		pr.name = strings.clone(p.new)
 		if p.cfg.new_section != "" {pr.key = strings.clone(p.cfg.new_section[len("project."):])}
 	}
+	bridge_rules_update() // its threshold goes by name
 	if tracker.away && tracker.away_project == p.old {
 		delete(tracker.away_project)
 		tracker.away_project = strings.clone(p.new)
