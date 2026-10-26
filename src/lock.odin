@@ -171,7 +171,12 @@ Locker :: struct {
 	// key press or pointer movement (sway doesn't do that by itself).
 	screen_off:     bool,
 	screens_off:    bool,
-	screens_woken:  bool, // set from input callbacks
+	screens_woken:  bool, // a key was pressed (set from the keyboard callback)
+	ptr_pressed:    bool, // a pointer button was pressed
+	ptr_moved:      f32, // pointer travel since the monitors went off (px)
+	ptr_last:       [2]f32,
+	ptr_have:       bool, // ptr_last is valid
+	off_at:         time.Tick,
 	off_done:       bool,
 	pam_service:    string,
 
@@ -391,10 +396,22 @@ seat_listener := wl.Seat_Listener {
 pointer_listener := wl.Pointer_Listener {
 	enter = proc "c" (data: rawptr, self: ^wl.Pointer, serial: u32, surface: ^wl.Surface, x, y: wl.Fixed) {
 		wl.pointer_set_cursor(self, serial, nil, 0, 0)
+		// The travel counts from where the pointer entered: entering itself
+		// (sway re-sends it when outputs change) is no movement.
+		lk.ptr_last, lk.ptr_have = {f32(x) / 256, f32(y) / 256}, true
 	},
 	leave = proc "c" (data: rawptr, self: ^wl.Pointer, serial: u32, surface: ^wl.Surface) {},
-	motion = proc "c" (data: rawptr, self: ^wl.Pointer, t: u32, x, y: wl.Fixed) {lk.screens_woken = true},
-	button = proc "c" (data: rawptr, self: ^wl.Pointer, serial, t, button, state: u32) {lk.screens_woken = true},
+	// --screen-off: only real movement wakes the monitors; sway re-sends the
+	// pointer position when outputs power off, and a mouse can report a
+	// stray sub-pixel tick (see screen_power_step).
+	motion = proc "c" (data: rawptr, self: ^wl.Pointer, t: u32, x, y: wl.Fixed) {
+		p := [2]f32{f32(x) / 256, f32(y) / 256}
+		if lk.ptr_have {lk.ptr_moved += abs(p.x - lk.ptr_last.x) + abs(p.y - lk.ptr_last.y)}
+		lk.ptr_last, lk.ptr_have = p, true
+	},
+	button = proc "c" (data: rawptr, self: ^wl.Pointer, serial, t, button, state: u32) {
+		if state == wl.POINTER_BUTTON_STATE_PRESSED {lk.ptr_pressed = true}
+	},
 	axis = proc "c" (data: rawptr, self: ^wl.Pointer, t: u32, axis: u32, value: wl.Fixed) {},
 	frame = proc "c" (data: rawptr, self: ^wl.Pointer) {},
 	axis_source = proc "c" (data: rawptr, self: ^wl.Pointer, axis_source: u32) {},
@@ -1710,6 +1727,10 @@ LOCK_USAGE :: `usage: wlperch lock [-f|--daemonize] [--screen-off]
 // screen's first frame is up by then), and on again at the first input.
 // Input that arrived before the power-off doesn't count.
 SCREEN_OFF_DELAY_MS :: 300
+// After the power-off, pointer events are ignored this long (powering
+// outputs off can produce some), and then the mouse must travel this far.
+SCREEN_WAKE_GRACE :: time.Second
+SCREEN_WAKE_TRAVEL :: 10
 
 @(private = "file")
 screen_power_step :: proc() {
@@ -1717,12 +1738,25 @@ screen_power_step :: proc() {
 	if !lk.off_done {
 		if time.tick_since(lk.lock_at) < SCREEN_OFF_DELAY_MS * time.Millisecond {return}
 		lk.off_done = true
-		lk.screens_woken = false
+		lk.screens_woken, lk.ptr_pressed, lk.ptr_moved = false, false, 0
+		lk.off_at = time.tick_now()
 		lk.screens_off = sway_command("output * power off")
 		if lk.screens_off {log.info("lock: monitors off")}
 		return
 	}
-	if lk.screens_off && lk.screens_woken {screens_on()}
+	if !lk.screens_off {return}
+	if lk.screens_woken { // a key press: always
+		screens_on()
+		return
+	}
+	if time.tick_since(lk.off_at) < SCREEN_WAKE_GRACE {
+		lk.ptr_pressed, lk.ptr_moved = false, 0
+		return
+	}
+	if lk.ptr_pressed || lk.ptr_moved >= SCREEN_WAKE_TRAVEL {
+		log.infof("lock: woken by the pointer (moved %.0f px, button %v)", lk.ptr_moved, lk.ptr_pressed)
+		screens_on()
+	}
 }
 
 @(private = "file")
