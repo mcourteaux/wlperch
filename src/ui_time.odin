@@ -3,6 +3,7 @@ package main
 
 import "core:fmt"
 import "core:math"
+import "core:os"
 import "core:strings"
 import "core:time"
 
@@ -263,6 +264,195 @@ draw_time :: proc(w: f32) {
 		}
 	}
 	im.Dummy({inner, gh + label_h})
+
+	draw_export(now, inner)
+}
+
+// ---- Export (CSV of the hours, e.g. for a monthly invoice) ----------------
+
+@(private = "file")
+Exp :: struct {
+	project: int, // -1 = all projects
+	range:   int, // EXPORT_RANGES
+	group:   Export_Group,
+	breaks:  bool,
+	from:    [16]u8, // custom range, YYYY-MM-DD
+	to:      [16]u8,
+	inited:  bool,
+	result:  string,
+	path:    string,
+	ok:      bool,
+}
+@(private = "file")
+exp := Exp{project = -1}
+
+@(private = "file")
+EXPORT_RANGES := []string{"This month", "Last month", "Custom", "All time"}
+
+@(private = "file")
+EXPORT_GROUPS := []string{"Entries", "Per day", "Per project"}
+
+// The chosen range: [from, to) (to 0 = no end), its display name and the
+// file name part; ok false for an unfinished custom range.
+@(private = "file")
+export_range :: proc(now: i64) -> (from, to: i64, title, file_label: string, ok: bool) {
+	switch exp.range {
+	case 0, 1:
+		f, t, lbl, mok := month_range(exp.range == 0 ? "this" : "last", now)
+		if !mok {return}
+		r, _ := clock_read(local_region, time.unix(f, 0))
+		return f, t, fmt.tprintf("%s %d", MONTHS[r.dt.month - 1], r.dt.year), lbl, true
+	case 2:
+		fs := strings.trim_space(string(cstring(&exp.from[0])))
+		ts := strings.trim_space(string(cstring(&exp.to[0])))
+		f, fok := parse_local_date(fs)
+		t, tok := parse_local_date(ts)
+		if !fok || !tok || t < f {return}
+		return f, local_day_start(t + 86400 + 7200), fmt.tprintf("%s to %s", fs, ts), fmt.tprintf("%s_%s", fs, ts), true
+	}
+	return 0, 0, "All time", "all-time", true
+}
+
+@(private = "file")
+date_field :: proc(id, hint: string, buf: []u8, w: f32, valid: bool) {
+	fp := im.GetCursorScreenPos()
+	fe := fp + Vec2{w, SZ_BODY + 12}
+	field_fill(fp, fe, 7, col32(C_BG))
+	im.PushFontFloat(fonts.mono, SZ_BODY)
+	im.PushStyleVarImVec2(.FramePadding, {8, 6})
+	im.PushStyleVar(.FrameBorderSize, 0)
+	im.PushStyleColorImVec4(.FrameBg, {})
+	im.PushStyleColorImVec4(.FrameBgHovered, {})
+	im.PushStyleColorImVec4(.FrameBgActive, {})
+	im.SetNextItemWidth(w)
+	im.InputTextWithHint(cstr(id), cstr(hint), cstring(&buf[0]), uint(len(buf)), {.CharsNoBlank})
+	active := im.IsItemActive()
+	im.PopStyleVar(2)
+	im.PopStyleColor(3)
+	im.PopFont()
+	field_outline(fp, fe, 7, active ? col32(C_TEAL, 0.85) : valid ? col32(C_BORDER) : col32(C_RED, 0.7))
+}
+
+@(private = "file")
+draw_export :: proc(now: i64, inner: f32) {
+	if !exp.inited {
+		// Custom range: this month so far.
+		f, _, _, _ := month_range("this", now)
+		copy(exp.from[:15], fmt.tprintf("%s", export_date(f)))
+		copy(exp.to[:15], fmt.tprintf("%s", export_date(now)))
+		exp.inited = true
+	}
+	sub_heading("Export hours")
+
+	// Project and range.
+	{
+		names := make([]string, len(tracker.projects) + 1, context.temp_allocator)
+		names[0] = "All projects"
+		for pr, i in tracker.projects {names[i + 1] = pr.name}
+		if exp.project >= len(tracker.projects) {exp.project = -1}
+		cw := inner * 0.36
+		im.SetNextItemWidth(cw)
+		im.PushStyleVarImVec2(.FramePadding, {10, 5})
+		if im.BeginCombo("##exp-project", cstr(names[exp.project + 1]), {.HeightLarge}) {
+			for n, i in names {
+				if im.Selectable(cstr(fmt.tprintf("%s##exp%d", n, i)), i - 1 == exp.project) {exp.project = i - 1}
+			}
+			im.EndCombo()
+		}
+		im.PopStyleVar()
+		im.SameLine(0, 10)
+		if k := segmented("##exp-range", EXPORT_RANGES, exp.range, C_TEAL); k >= 0 {exp.range = k}
+	}
+	from, to, title, file_label, range_ok := export_range(now)
+	if exp.range == 2 {
+		fw: f32 = 120
+		fs := strings.trim_space(string(cstring(&exp.from[0])))
+		ts := strings.trim_space(string(cstring(&exp.to[0])))
+		_, fok := parse_local_date(fs)
+		_, tok := parse_local_date(ts)
+		date_field("##exp-from", "YYYY-MM-DD", exp.from[:], fw, fok)
+		im.SameLine(0, 8)
+		lp := im.GetCursorScreenPos()
+		draw_text(fonts.ui, SZ_SMALL, {lp.x, lp.y + 6}, col32(C_MUTED), "to")
+		im.Dummy({16, 1})
+		im.SameLine(0, 8)
+		date_field("##exp-to", "YYYY-MM-DD", exp.to[:], fw, tok)
+		im.SameLine(0, 10)
+		lp = im.GetCursorScreenPos()
+		draw_text(fonts.ui, SZ_SMALL, {lp.x, lp.y + 6}, col32(C_FAINT), "both days included")
+		im.Dummy({1, SZ_BODY + 12})
+	}
+
+	// Rows and breaks.
+	if k := segmented("##exp-group", EXPORT_GROUPS, int(exp.group), C_TEAL); k >= 0 {exp.group = Export_Group(k)}
+	im.SameLine(0, 16)
+	{
+		bp := im.GetCursorScreenPos()
+		if toggle_switch("##exp-breaks", exp.breaks, C_TEAL) {exp.breaks = !exp.breaks}
+		if im.IsItemHovered() {tip("Also the time away from the keyboard, as rows with type \"break\"")}
+		draw_text(fonts.ui, SZ_SMALL, {bp.x + 48, bp.y + 4}, col32(exp.breaks ? C_TEAL : C_MUTED), "Include breaks")
+		im.SetCursorScreenPos(bp)
+		im.Dummy({140, 26})
+	}
+
+	// What it covers, from the log in memory.
+	project := exp.project >= 0 ? tracker.projects[exp.project].name : ""
+	if range_ok {
+		totals := tracker_totals(from, to > 0 ? to : now + 1)
+		secs: i64
+		for name, s in totals {if project == "" || name == project {secs += s}}
+		who := project != "" ? project : "all projects"
+		label(fonts.ui, SZ_SMALL + 1, col32(C_TEXT), fmt.tprintf("%s  ·  %s  ·  %s h worked (%.2f h)", title, who, fmt_duration(secs), f64(secs) / 3600))
+	} else {
+		label(fonts.ui, SZ_SMALL + 1, col32(C_RED), "Enter both days as YYYY-MM-DD (from before to)")
+	}
+
+	dir := export_dir()
+	name := export_file_name(project, file_label)
+	if pill_button("##exp-go", "Export CSV", C_TEAL, true) && range_ok {
+		entries: [dynamic]Export_Entry
+		entries.allocator = context.temp_allocator
+		export_collect(true, &entries)
+		csv, work, rows := export_csv(entries[:], {project = project, from = from, to = to, group = exp.group, breaks = exp.breaks}, context.temp_allocator)
+		path := fmt.tprintf("%s/%s", dir, name)
+		delete(exp.result)
+		delete(exp.path)
+		if os.write_entire_file(path, csv) == nil {
+			exp.ok = true
+			exp.result = fmt.aprintf("Saved %d rows (%s h) to %s", rows, fmt_duration(work), home_short(path))
+		} else {
+			exp.ok = false
+			exp.result = fmt.aprintf("Couldn't write %s", home_short(path))
+		}
+		exp.path = strings.clone(path)
+	}
+	im.SameLine(0, 10)
+	np := im.GetCursorScreenPos()
+	draw_text(fonts.mono, SZ_SMALL, {np.x, np.y + 7}, col32(C_FAINT), fmt.tprintf("%s/%s", home_short(dir), name))
+	im.NewLine()
+	if exp.result != "" {
+		label(fonts.ui, SZ_SMALL, col32(exp.ok ? C_GREEN : C_RED), exp.result)
+		if exp.ok {
+			if pill_button("##exp-open", "Open folder", C_TEAL) {run_async({"xdg-open", dir})}
+			im.SameLine(0, 8)
+			if pill_button("##exp-copy", "Copy path", C_TEAL) {copy_to_clipboard(exp.path)}
+		}
+	}
+	im.Dummy({1, 4})
+}
+
+@(private = "file")
+export_date :: proc(t: i64) -> string {
+	r, _ := clock_read(local_region, time.unix(t, 0))
+	return fmt.tprintf("%04d-%02d-%02d", r.dt.year, r.dt.month, r.dt.day)
+}
+
+// "/home/me/Documents/x" -> "~/Documents/x"
+@(private = "file")
+home_short :: proc(p: string) -> string {
+	home := os.get_env("HOME", context.temp_allocator)
+	if home != "" && strings.has_prefix(p, home) {return fmt.tprintf("~%s", p[len(home):])}
+	return p
 }
 
 // Visible part of today's timeline, in seconds since midnight.

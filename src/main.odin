@@ -42,6 +42,8 @@ commands:
   track lock [on|off]  group-lock monitors: they follow each other into/out of projects
   track keep [on|off]  keep empty project workspaces alive with placeholder windows
   track rename [--dry-run] [--merge] [--workspaces] <old> <new>
+  track export [--month YYYY-MM|this|last] [--from DATE] [--to DATE] [--project NAME]
+               [--by entries|day|project] [--breaks] [-o FILE]   tracked hours as CSV
                    rename a project in the time log and config.ini (backups
                    kept as *.before-rename-*); --workspaces also renames its
                    sway workspaces ("old 1" -> "new 1"), --merge allows
@@ -367,6 +369,11 @@ main :: proc() {
 	case "toggle", "show", "hide", "quit", "daemon", "restart", "audio", "notify":
 	case "track":
 		if len(os.args) > 2 && os.args[2] == "rename" {os.exit(track_rename_cli(os.args[3:]))}
+		if len(os.args) > 2 && os.args[2] == "export" {
+			config_load()
+			clocks_init()
+			os.exit(track_export_cli(os.args[3:]))
+		}
 	case "media":
 		os.exit(media_cli(os.args[2:]))
 	case "calc":

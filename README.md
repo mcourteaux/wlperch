@@ -229,6 +229,29 @@ Renaming onto an existing project merges the two. The CLI needs `--merge` for
 that and the panel asks twice. Where the two overlap in time, the overlap counts
 once. `--dry-run` shows what would change.
 
+**Exporting hours** (e.g. for a monthly invoice). The Export section at the
+bottom of the Time panel: pick a project (or all), This month / Last month /
+Custom (both days included) / All time, and the rows. "Export CSV" saves to
+your Documents folder (`XDG_DOCUMENTS_DIR`) as
+`wlperch-hours-<project|all>-<range>.csv`. From a terminal:
+
+```sh
+wlperch track export --month last --project wlperch --by day -o hours.csv
+wlperch track export --from 2026-10-01 --to 2026-10-15 --by project
+```
+
+| `--by` | Columns (one row per …) |
+|---|---|
+| `entries` (default) | `date,start,end,minutes,hours,project,client,type`: each tracked stretch |
+| `day` | `date,project,client,minutes,hours,type`: each day and project |
+| `project` | `project,client,minutes,hours,days,type`: each project in the range |
+
+Times are local, entries are cut at the range's ends and at midnight (so each
+row is one day), `hours` has two decimals computed from the seconds (sum those,
+not the rounded `minutes`), and `client` comes from the log line. Breaks are
+left out unless you ask for them (`--breaks`, or "Include breaks"; `type` is
+then `work` or `break`). The segment that is counting right now is included.
+
 The panel shows:
 - the running timer;
 - the projects as quick-switch rows with today's totals;
