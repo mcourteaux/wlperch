@@ -15,6 +15,9 @@ import gl "vendor:OpenGL"
 
 import "wl"
 
+// Release version, printed by `wlperch --version`.
+VERSION :: "0.1.0"
+
 USAGE :: `wlperch — quick-settings popup for wlroots compositors
 
 usage: wlperch [command]
@@ -77,6 +80,7 @@ commands:
                    custom module: the panel button (memory warning), a room
                    temperature + CO2, the running project timer, or a bell
                    with the unread notification count
+  --version        print the version
 `
 
 App :: struct {
@@ -362,6 +366,9 @@ main :: proc() {
 	switch cmd {
 	case "-h", "--help", "help":
 		fmt.print(USAGE)
+		return
+	case "-V", "--version", "version":
+		fmt.println("wlperch", VERSION)
 		return
 	case "setup":
 		run_setup()
