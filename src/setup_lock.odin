@@ -200,7 +200,7 @@ setup_lock_now :: proc() {
 // exec line that starts it. Returns false when sway isn't reachable.
 @(private = "file")
 apply_lock_change :: proc() -> bool {
-	if !sway_command("reload") {return false}
+	if !sway_reload_if_valid() {return false}
 	cmd := swayidle_exec_line()
 	if cmd == "" {return true}
 	disp := os.get_env("WAYLAND_DISPLAY", context.temp_allocator)

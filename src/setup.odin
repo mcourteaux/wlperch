@@ -194,7 +194,7 @@ setup_check :: proc() {
 			detail(p, ours)
 		case:
 			text, _ := read_text(ours)
-			p.state = text == SWAY_FILE ? .Installed : .Outdated
+			p.state = text == sway_file_text(sway_file_skips(text)) ? .Installed : .Outdated
 			detail(p, ours)
 		}
 		// The stock sway config only includes /etc/sway/config.d/*: our file
@@ -399,14 +399,33 @@ setup_create_config :: proc() {
 	done(.Config, ok, ok ? "default config written" : "couldn't write the config")
 }
 
-setup_install_sway :: proc() {
-	if !write_file(sway_file(), SWAY_FILE) {
+setup_install_sway :: proc() {install_sway(nil)}
+
+// Leaves out the keys the last attempt found already bound.
+setup_install_sway_skipping :: proc() {install_sway(sway_pending_skip[:])}
+
+// Keys (wlperch commands) a failed install found already bound; offered as
+// "Install without those keys".
+sway_pending_skip: [dynamic]string
+
+@(private = "file")
+install_sway :: proc(extra_skip: []string) {
+	// What's there now, to put back if sway reports a conflict.
+	old_file, had_file := read_text(sway_file())
+	cfg := sway_main_config()
+	old_cfg, had_cfg := read_text(cfg)
+
+	// An update keeps the keys left out before.
+	skip := make([dynamic]string, context.temp_allocator)
+	if had_file {append(&skip, ..sway_file_skips(old_file))}
+	for s in extra_skip {append(&skip, s)}
+	if !write_file(sway_file(), sway_file_text(skip[:])) {
 		done(.Sway, false, "couldn't write the sway file")
 		return
 	}
+	added_include := false
 	if !sway_loads_config_d() {
-		cfg := sway_main_config()
-		text, _ := read_text(cfg)
+		text := old_cfg
 		if text == "" {text, _ = read_text("/etc/sway/config")} // no personal config yet: start from the stock one
 		if text != "" {backup(cfg)}
 		line := fmt.tprintf("%sinclude %s/*\n", SWAY_INCLUDE_MARK, sway_dir())
@@ -414,8 +433,31 @@ setup_install_sway :: proc() {
 			done(.Sway, false, "wrote the sway file, but couldn't add the include line to your sway config")
 			return
 		}
+		added_include = true
 	}
-	done(.Sway, true, "installed; reload sway to activate")
+
+	// Ask sway before anything is reloaded: a key wlperch binds that your
+	// config binds too would silently replace yours.
+	check := sway_config_check()
+	if len(check.conflicts) > 0 || len(check.errors) > 0 {
+		if had_file {_ = write_file(sway_file(), old_file)} else {os.remove(sway_file())}
+		if added_include {
+			if had_cfg {_ = write_file(cfg, old_cfg)} else {os.remove(cfg)}
+		}
+		for s in sway_pending_skip {delete(s)}
+		clear(&sway_pending_skip)
+		for s in skip {append(&sway_pending_skip, strings.clone(s))}
+		for x in check.conflicts {append(&sway_pending_skip, strings.clone(x.ours))}
+		hint := len(check.conflicts) > 0 && len(check.errors) == 0 ? "\n\"Install without those keys\" leaves wlperch's bindings for them out." : ""
+		done(.Sway, false, fmt.tprintf("not installed, nothing changed. sway -C reports:%s%s", sway_check_text(check), hint))
+		return
+	}
+	for s in sway_pending_skip {delete(s)}
+	clear(&sway_pending_skip)
+	msg := "installed; reload sway to activate"
+	if len(skip) > 0 {msg = fmt.tprintf("installed without %d key binding(s) your config already has; reload sway to activate", len(skip))}
+	if !check.ran {msg = fmt.tprintf("%s (couldn't run sway -C to check it)", msg)}
+	done(.Sway, true, msg)
 }
 
 @(private = "file")
@@ -461,8 +503,8 @@ notifications_enabled :: proc() -> bool {
 }
 
 setup_reload_sway :: proc() {
-	ok := sway_command("reload")
-	done(.Sway, ok, ok ? "sway reloaded" : "sway reload failed")
+	ok, problem := sway_reload_checked()
+	done(.Sway, ok, ok ? "sway reloaded" : problem != "" ? problem : "sway reload failed")
 }
 
 setup_install_waybar_files :: proc() -> bool {

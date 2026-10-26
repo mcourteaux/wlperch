@@ -883,7 +883,7 @@ file before it's written:
 | Program | copies the running binary to `~/.local/bin/wlperch` (or updates it) |
 | Background service | starts or restarts the daemon |
 | Settings file | creates `~/.config/wlperch/config.ini`, or opens it |
-| Sway integration | writes `~/.config/sway/config.d/wlperch.conf` (daemon, bindings, placeholder style); recognises a hand-made setup; reloads sway |
+| Sway integration | writes `~/.config/sway/config.d/wlperch.conf` (daemon, bindings, placeholder style); recognises a hand-made setup; reloads sway. Before anything is reloaded it asks `sway -C` whether a key wlperch binds is already bound in your config: then nothing is installed, the card lists the clashes, and "Install without those keys" leaves those bindings out. Every reload setup does is checked the same way |
 | Waybar buttons | installs `wlperch.jsonc/.css` and adds the include, the button and the `@import` to your bar config, keeping `*.before-wlperch` backups |
 | Waybar: replace whole bar | swaps your waybar `config.jsonc` (or `config`) and `style.css` for wlperch's complete bar ([`contrib/waybar/full/`](contrib/waybar/full)); see below |
 | CPU power reading | installs the RAPL udev rule through `pkexec` (your polkit password prompt) |

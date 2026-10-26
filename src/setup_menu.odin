@@ -226,7 +226,7 @@ menu_switch :: proc(apply: bool) {
 		menu_done(true, "nothing to change")
 		return
 	}
-	reloaded := apply && sway_command("reload")
+	reloaded := apply && sway_reload_if_valid()
 	menu_done(true, reloaded ? "switched to wlperch's launcher (sway reloaded)" : "switched to wlperch's launcher; reload sway to apply")
 }
 
@@ -237,7 +237,7 @@ menu_switch_back :: proc(apply: bool) {
 		menu_done(false, err)
 		return
 	}
-	reloaded := apply && sway_command("reload")
+	reloaded := apply && sway_reload_if_valid()
 	msg := reloaded ? "your launcher is back (sway reloaded)" : "your launcher is back; reload sway to apply"
 	if kept > 0 {msg = fmt.tprintf("%s; your later edits are in %s/*.edited", msg, switch_backup_dir(spec))}
 	menu_done(true, msg)

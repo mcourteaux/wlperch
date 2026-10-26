@@ -130,9 +130,12 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 		if s != .Missing {append(&out, Action{"Remove", false, setup_remove_config, true})}
 	case .Sway:
 		switch s {
-		case .Missing:  append(&out, Action{"Install", true, setup_install_sway, false})
+		case .Missing:
+			append(&out, Action{"Install", true, setup_install_sway, false})
+			if len(sway_pending_skip) > 0 {append(&out, Action{"Install without those keys", false, setup_install_sway_skipping, false})}
 		case .Outdated:
 			append(&out, Action{"Update", true, setup_install_sway, false})
+			if len(sway_pending_skip) > 0 {append(&out, Action{"Update without those keys", false, setup_install_sway_skipping, false})}
 			if os.exists(sway_file()) {append(&out, Action{"Remove", false, setup_remove_sway, true})}
 		case .Installed:
 			append(&out, Action{"Reload sway", false, setup_reload_sway, false})

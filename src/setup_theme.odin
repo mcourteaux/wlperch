@@ -276,7 +276,7 @@ theme_switch_keys :: proc(apply: bool) {
 		return
 	}
 	if apply {ipc_send("restart")}
-	reloaded := apply && sway_command("reload")
+	reloaded := apply && sway_reload_if_valid()
 	theme_done(true, reloaded ? "switched to wlperch theme (sway reloaded)" : "switched to wlperch theme; reload sway to apply")
 }
 
@@ -288,7 +288,7 @@ theme_switch_keys_back :: proc(apply: bool) {
 		return
 	}
 	if apply {ipc_send("restart")}
-	reloaded := apply && sway_command("reload")
+	reloaded := apply && sway_reload_if_valid()
 	msg := reloaded ? "your theme switch is back (sway reloaded)" : "your theme switch is back; reload sway to apply"
 	if kept > 0 {msg = fmt.tprintf("%s; your later edits are in %s/*.edited", msg, switch_backup_dir(spec))}
 	theme_done(true, msg)

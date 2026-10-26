@@ -207,7 +207,7 @@ bar_switch :: proc(apply: bool) {
 	}
 	// sway restarts the bars of its bar blocks on reload; a waybar started
 	// with exec keeps running, so it goes, and ours starts if sway didn't.
-	reloaded := sway_command("reload")
+	reloaded := sway_reload_if_valid()
 	time.sleep(time.Second)
 	stop_all("waybar")
 	if len(session_pids("wlperch-bar")) == 0 {launch_detached({self_exe(), "bar"})}
@@ -253,7 +253,7 @@ bar_switch_back :: proc(apply: bool) {
 	}
 	reloaded := false
 	if apply {
-		reloaded = sway_command("reload")
+		reloaded = sway_reload_if_valid()
 		time.sleep(time.Second)
 		stop_all("wlperch-bar")
 		// A waybar started with exec (not a bar block) doesn't come back by itself.
