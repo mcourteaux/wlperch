@@ -52,6 +52,16 @@ ss: struct {
 	restart_rows:  [dynamic]int,
 	theme_due:     time.Tick,
 	theme:         bool,
+	// The card layout (order, and each group's starting column) is planned
+	// from measured row heights, then kept while editing: a row growing a
+	// "reset" link or a note mustn't make the cards jump. Re-planned when the
+	// column count, the window height or the filter changes.
+	plan_order:    [len(SETTINGS_GROUPS)]int,
+	plan_col:      [len(SETTINGS_GROUPS)]int,
+	plan_ncols:    int,
+	plan_limit:    int, // window height the plan was made for
+	plan_search:   [128]u8,
+	plan_frames:   int, // frames since the key changed; heights settle first
 } = {dragging = -1}
 
 Setup_Tab :: enum {Components, Settings}
@@ -658,25 +668,38 @@ draw_settings :: proc(x, y, width: f32) {
 		}
 		if n > 0 {est[gi] += CARD_HEAD + CARD_TAIL + GAP}
 	}
-	simulate :: proc(order: []int, est: []f32, ncols: int) -> f32 {
+	simulate :: proc(order: []int, est: []f32, ncols: int, col_of: ^[len(SETTINGS_GROUPS)]int) -> f32 {
 		cols: [MAX_COLS]f32
 		for gi in order {
 			c := 0
 			for k in 0 ..< ncols {if cols[k] < cols[c] - 1 {c = k}}
+			col_of[gi] = c
 			cols[c] += est[gi]
 		}
 		m: f32
 		for c in cols[:ncols] {m = max(m, c)}
 		return m
 	}
-	if top + simulate(order[:], est[:], ncols) > limit {
-		// Stable insertion sort, tallest first.
-		for i in 1 ..< len(order) {
-			for j := i; j > 0 && est[order[j]] > est[order[j - 1]]; j -= 1 {
-				order[j], order[j - 1] = order[j - 1], order[j]
-			}
-		}
+	win_h := int(im.GetWindowSize().y) // not limit: that moves with scrolling
+	if ncols != ss.plan_ncols || win_h != ss.plan_limit || ss.search != ss.plan_search {
+		ss.plan_ncols, ss.plan_limit, ss.plan_search, ss.plan_frames = ncols, win_h, ss.search, 0
 	}
+	if ss.plan_frames < 3 {
+		ss.plan_frames += 1
+		col_of: [len(SETTINGS_GROUPS)]int
+		if top + simulate(order[:], est[:], ncols, &col_of) > limit {
+			// Stable insertion sort, tallest first.
+			for i in 1 ..< len(order) {
+				for j := i; j > 0 && est[order[j]] > est[order[j - 1]]; j -= 1 {
+					order[j], order[j - 1] = order[j - 1], order[j]
+				}
+			}
+			simulate(order[:], est[:], ncols, &col_of)
+		}
+		ss.plan_order, ss.plan_col = order, col_of
+		request_redraw(1) // until the heights have settled
+	}
+	order = ss.plan_order
 	any := false
 	for gi in order {
 		g := SETTINGS_GROUPS[gi]
@@ -686,8 +709,7 @@ draw_settings :: proc(x, y, width: f32) {
 		}
 		if len(rows) == 0 {continue}
 		any = true
-		col := 0
-		for b, k in bottoms {if b < bottoms[col] - 1 {col = k}}
+		col := clamp(ss.plan_col[gi], 0, ncols - 1)
 		im.SetCursorScreenPos({x + f32(col) * (cw + GAP), bottoms[col]})
 		look := group_look(g)
 		part := 0
