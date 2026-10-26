@@ -29,9 +29,11 @@ fmt_uptime :: proc(s: f64) -> string {
 
 // Big number + unit line used at the top of the perf cards.
 @(private = "file")
+// value_col is a packed draw-list colour (col32 / load_color), not 0xRRGGBB:
+// packing load_color's result again swapped red and blue (100 % showed purple).
 big_stat :: proc(value: string, value_col: u32, detail: string, inner: f32) {
 	p := im.GetCursorScreenPos()
-	draw_text(fonts.bold, 30, {p.x, p.y - 4}, col32(value_col), value)
+	draw_text(fonts.bold, 30, {p.x, p.y - 4}, value_col, value)
 	vsz := measure(fonts.bold, 30, value)
 	draw_text(fonts.ui, SZ_SMALL, {p.x + vsz.x + 10, p.y + 12}, col32(C_MUTED), detail)
 	im.Dummy({inner, 32})
@@ -85,7 +87,7 @@ draw_memory_card :: proc(w: f32) {
 	accent: u32 = warn ? C_RED : C_CYAN
 
 	p := im.GetCursorScreenPos()
-	big_stat(fmt.tprintf("%d%%", int(pct + 0.5)), accent, fmt.tprintf("%s of %s in use", fmt_bytes(used), fmt_bytes(total)), inner)
+	big_stat(fmt.tprintf("%d%%", int(pct + 0.5)), col32(accent), fmt.tprintf("%s of %s in use", fmt_bytes(used), fmt_bytes(total)), inner)
 	if warn {
 		tag := "running low"
 		tw := measure(fonts.bold, 11, tag).x
@@ -135,7 +137,7 @@ draw_gpu_card :: proc(w: f32) {
 	detail := ""
 	if sysmon.gpu_temp > 0 {detail = fmt.tprintf("%.0f°C", sysmon.gpu_temp)}
 	if sysmon.gpu_power > 0 {detail = fmt.tprintf("%s   ·   %.0f W", detail, sysmon.gpu_power)}
-	big_stat(fmt.tprintf("%d%%", int(sysmon.gpu_now + 0.5)), C_PURPLE, detail, inner)
+	big_stat(fmt.tprintf("%d%%", int(sysmon.gpu_now + 0.5)), col32(C_PURPLE), detail, inner)
 	history_graph(&sysmon.gpu, &perf_view, C_PURPLE, {inner, 80})
 	if sysmon.vram_total > 0 {
 		im.Dummy({1, 2})
