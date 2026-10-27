@@ -1,0 +1,36 @@
+# Builds the release tarballs on every v* tag with tools/release/release.sh and
+# uploads them as a workflow artifact. It does not publish: compare the
+# artifact's SHA256SUMS with a local build, then run release.sh --publish.
+name: release-build
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    # Fedora's clang, as used for the published releases (see tools/release/README.md).
+    container: fedora:44
+    steps:
+      - name: Install tools
+        run: dnf install -y --setopt=install_weak_deps=False clang lld llvm binutils git curl tar gzip file xz python3 gnupg2 util-linux
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/wlperch-release
+          key: wlperch-release-${{ hashFiles('tools/release/pins.env') }}
+      - name: Build
+        run: tools/release/release.sh --version-check --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wlperch-release
+          path: dist/

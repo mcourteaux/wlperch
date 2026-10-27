@@ -982,6 +982,11 @@ at a pinned commit into `third_party/`. It generates the bindings and compiles
 Dear ImGui with FreeType and 32-bit `ImWchar` (needed for the Material Design
 icons above U+FFFF).
 
+Release tarballs (x86_64 and aarch64, linked against a Debian 12 sysroot so they
+run on glibc 2.34+) are built with `tools/release/release.sh`; it fetches pinned,
+checksummed inputs and needs only clang and lld. See
+[tools/release/README.md](tools/release/README.md).
+
 Runtime tools used: `pactl`, `busctl`, `curl`, `wl-copy`, `bluetoothctl`,
 `wlsunset`, `setsid`. NVIDIA GPU stats come from NVML (`libnvidia-ml.so.1`,
 loaded at runtime); AMD GPUs use sysfs.
