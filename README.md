@@ -875,8 +875,21 @@ Once every component is set up, the window opens on the Settings tab.
 ![The setup window's Components tab: status cards and one card per component with its actions](docs/screenshots/setup.png)
 
 The setup window lists each component with its status (installed, update
-available, not installed, set up elsewhere) and actions. You can preview each
-file before it's written:
+available, not installed, set up elsewhere) and actions.
+
+**Your own keys.** wlperch's sway file binds a few keys (`$mod+o` for the
+panel, `$mod+p` for project workspaces, …). Open "Key bindings" on the Sway
+integration card to switch each one on or off and give it another key before
+anything is installed. setup asks `sway -C` whether your sway config already
+uses a key; clashes turn red, and Install changes nothing until they're
+resolved:
+
+| 1. A key you already use | 2. Pick another | 3. Install |
+|---|---|---|
+| ![Install found that $mod+p is already bound to rofi in the sway config: nothing was changed, and the row is outlined in red](docs/screenshots/setup-keys-clash.png) | ![The key changed to $mod+F9: sway -C reports no clashes](docs/screenshots/setup-keys-fixed.png) | ![Installed with $mod+F9; Reload sway and Remove are offered](docs/screenshots/setup-keys-installed.png) |
+
+Each component, and what it does (you can preview each file before it's
+written):
 
 | Component | What it does |
 |---|---|

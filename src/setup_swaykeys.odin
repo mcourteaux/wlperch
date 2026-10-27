@@ -240,6 +240,7 @@ sway_keys_tick :: proc() -> int {
 	if left > 0 {return int(time.duration_milliseconds(left)) + 1}
 	sway_keys.dirty = false
 	sway_keys_check()
+	if sway_keys.check_ran && sway_keys_clash_count() == 0 {sway_clear_failure()}
 	request_redraw(1)
 	return -1
 }

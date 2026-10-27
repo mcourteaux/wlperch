@@ -323,6 +323,16 @@ setup_fingerprint :: proc() -> u64 {
 
 // ---- Actions ----------------------------------------------------------------
 
+// Drop a failed install's message once its cause is gone (the key editor
+// found no clashes after an edit).
+sway_clear_failure :: proc() {
+	sync.guard(&setup.mu)
+	c := &setup.comps[.Sway]
+	if c.msg_ok || c.message == "" {return}
+	delete(c.message)
+	c.message = ""
+}
+
 @(private = "file")
 done :: proc(id: Comp_Id, ok: bool, msg: string) {
 	sync.guard(&setup.mu)
