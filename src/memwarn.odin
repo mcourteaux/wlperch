@@ -287,6 +287,17 @@ Mw_Card :: struct {
 }
 @(private = "file") mw: Mw_Card
 
+// Dragging the card by any spot that isn't a button. The offset from its
+// top-centre home survives the card being recreated (another episode, or a
+// move to another output away from a fullscreen game).
+@(private = "file") drag_off: [2]f32
+@(private = "file") drag_on: bool
+@(private = "file") drag_grab: [2]f32 // card-local point that was pressed
+// While the button is held, sway reports pointer positions relative to where
+// the card was at the press (seatop_down), however far it has moved since:
+// the new offset is the one at the press plus the pointer's travel.
+@(private = "file") drag_base: [2]f32
+
 memwarn_owns :: proc(surface: ^wl.Surface) -> bool {return surface != nil && surface == mw.surface}
 
 @(private = "file")
@@ -334,11 +345,37 @@ create :: proc(place: Popup_Place) {
 	mw.surface = wl.compositor_create_surface(plat.compositor)
 	mw.layer = wl.zwlr_layer_shell_v1_get_layer_surface(plat.layer_shell, mw.surface, place.output, wl.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "wlperch-memory-warning")
 	wl.zwlr_layer_surface_v1_add_listener(mw.layer, &layer_listener, nil)
-	// Top centre: clear of the notification stack in the top-right corner.
-	wl.zwlr_layer_surface_v1_set_anchor(mw.layer, wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP)
+	// Top centre (clear of the notification stack in the top-right corner),
+	// plus where it was dragged to. Anchored top-left: wlroots ignores the
+	// side margins of a surface anchored to both sides.
+	wl.zwlr_layer_surface_v1_set_anchor(mw.layer, wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | wl.ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT)
 	wl.zwlr_layer_surface_v1_set_size(mw.layer, u32(mw.w), u32(mw.h))
-	wl.zwlr_layer_surface_v1_set_margin(mw.layer, 8 - SHADOW_M, 0, 0, 0)
+	apply_position()
 	wl.surface_commit(mw.surface)
+}
+
+// The logical size of the card's output (sway's), or of the focused one.
+@(private = "file")
+output_size :: proc() -> (w, h: i32) {
+	conn := string(mw.conn[:mw.conn_len])
+	sync.guard(&sway.mu)
+	for o in sway.outputs {
+		if conn != "" ? o.name == conn : o.focused {return o.w, o.h}
+	}
+	return 1920, 1080
+}
+
+// Margins for the card's home plus drag_off, kept on the output (the
+// shadow may hang over the edge).
+@(private = "file")
+apply_position :: proc() {
+	ow, oh := output_size()
+	home := [2]f32{f32(ow - mw.w) / 2, f32(8 - SHADOW_M)}
+	lo := [2]f32{-SHADOW_M, -SHADOW_M}
+	hi := [2]f32{f32(ow - mw.w + SHADOW_M), f32(oh - mw.h + SHADOW_M)}
+	pos := [2]f32{clamp(home.x + drag_off.x, lo.x, max(hi.x, lo.x)), clamp(home.y + drag_off.y, lo.y, max(hi.y, lo.y))}
+	drag_off = pos - home
+	wl.zwlr_layer_surface_v1_set_margin(mw.layer, i32(pos.y), 0, 0, i32(pos.x))
 }
 
 @(private = "file")
@@ -348,6 +385,7 @@ destroy :: proc() {
 	wl.zwlr_layer_surface_v1_destroy(mw.layer)
 	wl.surface_destroy(mw.surface)
 	mw.surface, mw.layer = nil, nil
+	drag_on = false
 	mw.configured = false
 	mw.hovered = false
 	mw.armed_len = 0
@@ -651,6 +689,12 @@ memwarn_on_leave :: proc(surface: ^wl.Surface) -> bool {
 
 memwarn_on_motion :: proc(surface: ^wl.Surface, x, y: f32) -> bool {
 	if !memwarn_owns(surface) {return false}
+	if drag_on {
+		drag_off = drag_base + [2]f32{x, y} - drag_grab
+		apply_position()
+		wl.surface_commit(mw.surface)
+		return true
+	}
 	mw.mx, mw.my = x, y
 	if part := hit(); part != mw.part {
 		mw.part = part
@@ -665,7 +709,27 @@ memwarn_on_motion :: proc(surface: ^wl.Surface, x, y: f32) -> bool {
 
 memwarn_on_button :: proc(surface: ^wl.Surface, button, state: u32) -> bool {
 	if !memwarn_owns(surface) {return false}
-	if state != wl.POINTER_BUTTON_STATE_RELEASED || button != 0x110 {return true}
+	if button != 0x110 {return true}
+	if state == wl.POINTER_BUTTON_STATE_PRESSED {
+		// Pressed outside the buttons: drag the card.
+		if hit() == -1 {
+			drag_on = true
+			drag_grab = {mw.mx, mw.my}
+			drag_base = drag_off
+			if plat.cursor_device != nil {
+				wl.wp_cursor_shape_device_v1_set_shape(plat.cursor_device, plat.pointer_serial, wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRABBING)
+			}
+		}
+		return true
+	}
+	if drag_on {
+		drag_on = false
+		if plat.cursor_device != nil {
+			wl.wp_cursor_shape_device_v1_set_shape(plat.cursor_device, plat.pointer_serial, wl.WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT)
+		}
+		return true
+	}
+	if state != wl.POINTER_BUTTON_STATE_RELEASED {return true}
 	part := hit()
 	switch {
 	case part == 0:
