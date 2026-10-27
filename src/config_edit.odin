@@ -306,7 +306,7 @@ Setting :: struct {
 	old_scale:  int,              // old value * old_scale = new value (0 = 1)
 }
 
-SETTINGS_GROUPS := [?]string{"Panel", "Clock and weather", "Bar", "Memory", "Notifications", "Lock screen", "Lock screen info", "Idle lock", "Time tracking", "SSH keys", "GitHub", "Launcher", "Setup window", "Dark theme", "Light theme"}
+SETTINGS_GROUPS := [?]string{"Panel", "Clock and weather", "Bar", "Memory", "Notifications", "Lock screen", "Lock screen info", "Idle lock", "Time tracking", "SSH keys", "GitHub", "Launcher", "Setup window", "Updates", "Dark theme", "Light theme"}
 
 @(private = "file") CH_UNITS :: []Setting_Choice{{"metric", "Metric"}, {"imperial", "Imperial"}}
 @(private = "file") CH_BAR_POS :: []Setting_Choice{{"top", "Top"}, {"bottom", "Bottom"}}
@@ -385,6 +385,7 @@ SETTINGS := [?]Setting {
 	// Launcher
 	{group = "Launcher", section = "launcher", key = "terminal", label = "Terminal", kind = .Text, apply = .Daemon, hint = "detect", help = "For apps that need a terminal, with the option that runs a command (e.g. \"alacritty -e\"). Empty = $TERMINAL, sway's $term or the first one installed."},
 	// Setup window
+	{group = "Updates", section = "update", key = "check_daily", label = "Check for updates daily", kind = .Bool, apply = .Daemon, help = "Once a day, ask GitHub whether a newer wlperch release exists. The update button in the main panel's header shows it and installs it on a click."},
 	{group = "Setup window", section = "setup", key = "dim_background", label = "Dim the rest of the screen", kind = .Bool, apply = .Setup, help = "While this window is open and focused, everything around it is dimmed (not while it is tiled). A click on the dim closes the window, like Escape."},
 	{group = "Setup window", section = "setup", key = "dim_strength", label = "Dim strength", kind = .Int, apply = .Setup, ilim = LIM_SETUP_DIM, slider = true, unit = "%", help = "How dark the dim is; the light theme uses a bit less."},
 	// Dark / light

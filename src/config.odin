@@ -22,6 +22,7 @@ Config :: struct {
 	margin:             [4]i32,
 	output:             string,
 	close_on_click_outside: bool,
+	update_check:           bool, // [update] check_daily
 	max_height:         i32, // 0 = fit the output
 	release_gpu_after:  time.Duration, // 0 = never
 
@@ -271,6 +272,12 @@ idle_lock_seconds = 0
 # (e.g. "alacritty -e"). Empty = $TERMINAL, sway's $term or the first known
 # terminal installed.
 terminal =
+
+[update]
+# Look for a new wlperch release on GitHub once a day (one request to the
+# GitHub API). The update button in the main panel's header shows the result
+# and installs it; "wlperch update" does the same from a terminal.
+check_daily = true
 
 [setup]
 # While the "wlperch setup" window is open and focused, the rest of the
@@ -587,6 +594,7 @@ config_load :: proc() {
 	}
 	c.output = strings.clone(get(m, defaults, "popup", "output"))
 	c.close_on_click_outside = parse_bool(get(m, defaults, "popup", "close_on_click_outside"), true)
+	c.update_check = parse_bool(get(m, defaults, "update", "check_daily"), true)
 	c.max_height = i32(parse_int_lim(get(m, defaults, "popup", "max_height"), LIM_POPUP_MAX_HEIGHT))
 	c.release_gpu_after = time.Duration(parse_int_lim(get(m, defaults, "popup", "release_gpu_after"), LIM_RELEASE_GPU)) * time.Second
 

@@ -70,6 +70,8 @@ commands:
                    SSH keys in the agent (unlock asks in wlperch's popup and
                    adds the key for [ssh] lifetime minutes)
   askpass <prompt> SSH_ASKPASS program: a passphrase popup (also as wlperch-askpass)
+  update [check]   check GitHub for a newer release; without "check", also
+                   download, verify (SHA256SUMS) and install it, then restart
   lock [-f]        lock the screen (clock, notification count, media, battery);
                    -f forks once locked, for swayidle before-sleep
   sensors scan [seconds]  list the Tuya devices announcing themselves on the LAN
@@ -394,6 +396,9 @@ main :: proc() {
 		// Its own process too: see bar.odin.
 		config_load()
 		os.exit(bar_main(os.args[2:]))
+	case "update":
+		config_load()
+		os.exit(update_cli(os.args[2:]))
 	case "lock":
 		// Its own process, never the daemon's: see lock.odin.
 		config_load()
@@ -713,6 +718,7 @@ loop_iteration :: proc() {
 	memwarn_tick()
 	countdown_tick()
 	ssh_tick()
+	update_tick()
 
 	// (Not while ssh-add waits for a passphrase: a re-exec would kill it.)
 	if restart_requested && !ssh_busy() {

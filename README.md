@@ -947,6 +947,23 @@ file it writes names that backup. "Restore my bar" renames them back; if you
 edited wlperch's files in the meantime, your edits are kept as
 `*.wlperch-full-edited`.
 
+### Updates
+
+Once a day (`[update] check_daily = true`) the daemon asks GitHub whether a
+newer wlperch release exists; that is one request to the GitHub API. The
+update button in the main panel's header (left of the monitor-off button)
+shows the result in its tooltip and checks again when clicked. When a release
+is waiting it turns green with a dot, a line goes into the notification
+history, and a click installs it: the tarball for your CPU (x86_64 or
+aarch64) is downloaded, checked against the release's `SHA256SUMS`, its
+`wlperch --version` is run, and it replaces `~/.local/bin/wlperch`; then the
+daemon (and a running `wlperch-bar`) restart on it. From a terminal:
+
+```sh
+wlperch update check   # just look
+wlperch update         # look, and install if there is something newer
+```
+
 ## Building
 
 Requirements: `odin` (tested with dev-2026-10), `clang`, `python3`, `git`,

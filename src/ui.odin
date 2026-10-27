@@ -53,6 +53,7 @@ services_start :: proc() {
 	sensors_start()
 	github_start()
 	ssh_start()
+	update_start()
 	displays_scan()
 	log.debugf("  rest: rss %d kB", rss_kb())
 }
@@ -238,6 +239,15 @@ draw_header :: proc(width: f32) {
 		hide_requested = true
 		launch_detached({"sh", "-c", `sleep 0.25; exec "$0" lock --screen-off`, self_exe()})
 	}
+	// Updates: checks GitHub when clicked; green with a dot when a release
+	// is waiting, and then a click installs it.
+	ucol, utip, uhi := update_button_info()
+	upos := Vec2{right - 156, y - 3}
+	im.SetCursorScreenPos(upos)
+	if icon_button("##update", uhi && ucol == C_BLUE ? ICON_DOWNLOADING : ICON_UPDATE, ucol, 28, uhi, utip) {
+		if update_available() {update_install_async()} else {update_check_async()}
+	}
+	if uhi && ucol == C_GREEN {im.DrawList_AddCircleFilled(dl(), upos + {23, 5}, 3.5, col32(C_GREEN))}
 
 	// Panel tabs under the buttons, clear of the date.
 	date_w: f32 = ok ? measure(fonts.ui, SZ_BODY, "Wednesday, 30 September 2026").x + 24 : 0

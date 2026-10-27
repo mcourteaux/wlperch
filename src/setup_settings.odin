@@ -336,6 +336,7 @@ group_look :: proc(g: string) -> Group_Look {
 	case "Idle lock":         return {ICON_PROGRESS_CLOCK, C_ORANGE}
 	case "Time tracking":     return {ICON_PROGRESS_CLOCK, C_GREEN}
 	case "SSH keys":          return {ICON_KEY, C_YELLOW}
+	case "Updates":           return {ICON_UPDATE, C_GREEN}
 	case "GitHub":            return {ICON_GITHUB, C_PURPLE}
 	case "Launcher":          return {ICON_MAGNIFY, C_GREEN}
 	case "Dark theme":        return {ICON_MOON, C_PURPLE}
