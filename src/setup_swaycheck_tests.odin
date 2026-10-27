@@ -4,6 +4,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:sys/posix"
 import "core:testing"
 
 @(test)
@@ -34,7 +35,8 @@ test_sway_check_parse :: proc(t: ^testing.T) {
 test_sway_keys_file_text :: proc(t: ^testing.T) {
 	keys := sway_keys_parse(SWAY_FILE, context.temp_allocator)
 	if !testing.expect(t, len(keys) >= 6, "wlperch.conf has bindings") {return}
-	testing.expect_value(t, sway_file_text(keys[:]), SWAY_FILE) // defaults: the file as shipped
+	// Defaults: the file as shipped, under setup's banner.
+	testing.expect_value(t, sway_file_text(keys[:]), strings.concatenate({SWAY_BANNER, SWAY_FILE}, context.temp_allocator))
 	// One active binding moved to another key, one switched off, one optional one on.
 	moved, off, opt := -1, -1, -1
 	for &k, i in keys {
@@ -152,7 +154,69 @@ test_sway_install_backs_out_on_conflict :: proc(t: ^testing.T) {
 	setup_install_sway_skipping()
 	data, err := os.read_entire_file(DIR + "/sway/config.d/wlperch.conf", context.temp_allocator)
 	testing.expect(t, err == nil, "installed without the keys")
-	testing.expect(t, strings.has_prefix(string(data), "# Key bindings as chosen in wlperch setup."))
+	testing.expect(t, strings.has_prefix(string(data), SWAY_BANNER + "# Key bindings as chosen in wlperch setup."))
 	testing.expect_value(t, len(sway_config_check().conflicts), 0)
 	testing.expect(t, setup.comps[.Sway].msg_ok)
+}
+
+// A copy of wlperch.conf under another name, symlinked from elsewhere (a
+// dotfiles repo): setup adopts it, Update writes through the link, and a key
+// changed by hand in it is kept.
+@(test)
+test_sway_adopts_renamed_symlinked_file :: proc(t: ^testing.T) {
+	DIR :: "/tmp/wlperch-test/swayadopt"
+	os.remove_all(DIR)
+	os.make_directory_all(DIR + "/cfg/sway/config.d")
+	os.make_directory_all(DIR + "/dotfiles")
+	defer os.remove_all(DIR)
+	old_xdg := strings.clone(os.get_env("XDG_CONFIG_HOME", context.temp_allocator), context.temp_allocator)
+	old_data := strings.clone(os.get_env("XDG_DATA_HOME", context.temp_allocator), context.temp_allocator)
+	os.set_env("XDG_CONFIG_HOME", DIR + "/cfg")
+	os.set_env("XDG_DATA_HOME", DIR + "/data")
+	sway_keys.loaded = false
+	defer {
+		if old_xdg != "" {os.set_env("XDG_CONFIG_HOME", old_xdg)} else {os.unset_env("XDG_CONFIG_HOME")}
+		if old_data != "" {os.set_env("XDG_DATA_HOME", old_data)} else {os.unset_env("XDG_DATA_HOME")}
+		sway_keys.loaded = false
+		clear(&sway_keys.list)
+	}
+	// The template with its first active binding moved to $mod+F9 by hand.
+	moved_cmd := ""
+	b := strings.builder_make(context.temp_allocator)
+	rest := SWAY_FILE
+	for line in strings.split_lines_iterator(&rest) {
+		f := strings.fields(strings.trim_space(line), context.temp_allocator)
+		if moved_cmd == "" && len(f) >= 3 && f[0] == "bindsym" && !strings.has_prefix(f[1], "--") {
+			moved_cmd = strings.join(f[2:], " ", context.temp_allocator)
+			fmt.sbprintf(&b, "bindsym $mod+F9 %s\n", moved_cmd)
+			continue
+		}
+		fmt.sbprintf(&b, "%s\n", line)
+	}
+	if !testing.expect(t, moved_cmd != "") {return}
+	target := DIR + "/dotfiles/45-wlperch.conf"
+	link := DIR + "/cfg/sway/config.d/45-wlperch.conf"
+	_ = os.write_entire_file(target, strings.to_string(b))
+	posix.symlink(cstring(DIR + "/dotfiles/45-wlperch.conf"), cstring(DIR + "/cfg/sway/config.d/45-wlperch.conf"))
+
+	testing.expect_value(t, sway_file(), link)
+	sway_keys_load()
+	found := false
+	for &k in sway_keys.list {
+		if k.cmd == moved_cmd {
+			found = true
+			testing.expect_value(t, sway_key_text(&k), "$mod+F9")
+		}
+	}
+	testing.expect(t, found)
+
+	// What Update writes, through the link (the link stays a link).
+	testing.expect(t, write_through(sway_file(), sway_file_text(sway_keys.list[:])))
+	st: posix.stat_t
+	posix.lstat(cstring(DIR + "/cfg/sway/config.d/45-wlperch.conf"), &st)
+	testing.expect(t, posix.S_ISLNK(st.st_mode), "still a symlink")
+	data, _ := os.read_entire_file(target, context.temp_allocator)
+	testing.expect(t, strings.has_prefix(string(data), SWAY_BANNER))
+	testing.expect(t, strings.contains(string(data), fmt.tprintf("bindsym $mod+F9 %s", moved_cmd)))
+	testing.expect(t, is_wlperch_sway_file(string(data)))
 }
