@@ -420,6 +420,8 @@ bar_room =
 # header = true shows the big clock and date on top;
 # otherwise "title" (if set) is shown as a compact title row.
 # tab = false leaves a panel out of the tab strip (open it with a key binding).
+# bare = true shows only the modules: no header, title row or tabs (the bar's
+# audio popup).
 
 [panel.main]
 header = true
@@ -449,6 +451,7 @@ columns = time
 title = Audio
 width = 520
 tab = false
+bare = true
 columns = audio
 
 [panel.ssh]

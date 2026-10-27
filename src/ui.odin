@@ -122,7 +122,9 @@ draw_ui :: proc() -> f32 {
 	ncols := len(panel.columns)
 	col_w := (content_w - COL_GAP * f32(ncols - 1)) / f32(ncols)
 
-	if panel.header {
+	if panel.bare {
+		// Just the modules (the bar's audio popup): no header, no tabs.
+	} else if panel.header {
 		draw_header(content_w)
 		im.Dummy({1, 4})
 	} else if panel.title != "" {

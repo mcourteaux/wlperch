@@ -949,7 +949,7 @@ bar_click :: proc(it: ^Bar_Item, ck: Bar_Click, open_menu: proc(t: ^Tray_Item, c
 			sync.sema_post(&bar_data.wake)
 		}
 	case .Timer:
-		bar_toggle_panel("time", ck)
+		bar_toggle_panel("timer", ck)
 	case .Sensors:
 		bar_toggle_panel("sensors", ck)
 	case .Memory:

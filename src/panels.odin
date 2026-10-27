@@ -61,6 +61,7 @@ Panel :: struct {
 	width:       i32,
 	header:      bool,
 	tab:         bool, // listed in the tab strip
+	bare:        bool, // only the modules: no header, title row or tabs (a popup for one thing)
 	columns:     [dynamic][dynamic]string,
 	last_height: i32,
 	last_panel_h: f32, // panel height (without shadow / tooltip room)
@@ -118,6 +119,7 @@ panels_load :: proc(src: string, m: ini.Map) {
 			width  = i32(strconv.parse_int(strings.trim_space(kv["width"])) or_else int(config.width)),
 			header = strings.trim_space(kv["header"]) == "true",
 			tab    = strings.trim_space(kv["tab"]) != "false",
+			bare   = strings.trim_space(kv["bare"]) == "true",
 		}
 		for col in strings.split(unquote(strings.trim_space(kv["columns"])), "|", context.temp_allocator) {
 			c: [dynamic]string
@@ -145,9 +147,18 @@ panels_load :: proc(src: string, m: ini.Map) {
 panels_ensure_launcher :: proc() {
 	// The bar's audio module opens this one (hidden from the tab strip).
 	if panel_find("audio") < 0 {
-		p := Panel{name = strings.clone("audio"), title = strings.clone("Audio"), width = 520, tab = false}
+		p := Panel{name = strings.clone("audio"), title = strings.clone("Audio"), width = 520, tab = false, bare = true}
 		col: [dynamic]string
 		append(&col, strings.clone("audio"))
+		append(&p.columns, col)
+		append(&panels, p)
+	}
+	// The bar's timer opens just the time tracker (the Time tab keeps its
+	// header and tabs).
+	if panel_find("timer") < 0 {
+		p := Panel{name = strings.clone("timer"), title = strings.clone("Time"), width = 600, tab = false, bare = true}
+		col: [dynamic]string
+		append(&col, strings.clone("time"))
 		append(&p.columns, col)
 		append(&panels, p)
 	}

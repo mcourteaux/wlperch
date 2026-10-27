@@ -1179,6 +1179,20 @@ width = 560
 tab = false                   # no tab in the tab strip
 columns = calculator
 
+[panel.timer]                 # the bar's timer opens this one (the Time tab stays as is)
+title = Time
+width = 600
+tab = false
+bare = true
+columns = time
+
+[panel.audio]                 # the bar's volume control opens this one
+title = Audio
+width = 520
+tab = false
+bare = true                   # only the audio card: no header, title row or tabs
+columns = audio
+
 [panel.launch]                # wlperch toggle launch (the run and emoji panels are alike)
 width = 680
 tab = false

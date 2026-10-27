@@ -46,7 +46,7 @@
         "exec": "wlperch status timer",
         "return-type": "json",
         "format": "{}",
-        "on-click": "wlperch toggle time"
+        "on-click": "wlperch toggle timer"
     },
     // Room temperature + CO2 from Tuya sensors; opens the sensors panel.
     "custom/sensors": {
