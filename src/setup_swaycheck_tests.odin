@@ -31,32 +31,64 @@ test_sway_check_parse :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_sway_file_without_keys :: proc(t: ^testing.T) {
-	testing.expect_value(t, sway_file_text(nil), SWAY_FILE)
-	// A command wlperch.conf binds, read from the file itself.
-	cmd := ""
-	text := SWAY_FILE
-	for line in strings.split_lines_iterator(&text) {
-		l := strings.trim_space(line)
-		if strings.has_prefix(l, "bindsym") && strings.contains(l, "wlperch") {
-			f := strings.fields(l, context.temp_allocator)
-			if len(f) >= 3 {cmd = strings.join(f[2:], " ", context.temp_allocator)}
-			break
+test_sway_keys_file_text :: proc(t: ^testing.T) {
+	keys := sway_keys_parse(SWAY_FILE, context.temp_allocator)
+	if !testing.expect(t, len(keys) >= 6, "wlperch.conf has bindings") {return}
+	testing.expect_value(t, sway_file_text(keys[:]), SWAY_FILE) // defaults: the file as shipped
+	// One active binding moved to another key, one switched off, one optional one on.
+	moved, off, opt := -1, -1, -1
+	for &k, i in keys {
+		switch {
+		case k.def_on && moved < 0: moved = i
+		case k.def_on && off < 0:   off = i
+		case !k.def_on && opt < 0:  opt = i
 		}
 	}
-	if !testing.expect(t, cmd != "", "wlperch.conf binds a wlperch command") {return}
-	out := sway_file_text({cmd})
-	testing.expect(t, strings.has_prefix(out, SWAY_SKIP_MARK))
-	skips := sway_file_skips(out)
-	testing.expect_value(t, len(skips), 1)
-	if len(skips) == 1 {testing.expect_value(t, skips[0], cmd)}
-	// Recognised as ours (Installed, not Outdated).
-	testing.expect_value(t, sway_file_text(sway_file_skips(out)), out)
-	// The binding is commented out, nothing else is.
-	commented := 0
-	rest := out
-	for line in strings.split_lines_iterator(&rest) {if strings.has_prefix(line, "# ") && strings.has_suffix(line, cmd) {commented += 1}}
-	testing.expect(t, commented >= 1)
+	if !testing.expect(t, moved >= 0 && off >= 0 && opt >= 0) {return}
+	keys[moved].key = {}
+	copy(keys[moved].key[:], "$mod+F12")
+	keys[off].on = false
+	keys[opt].on = true
+	out := sway_file_text(keys[:])
+	testing.expect(t, strings.contains(out, fmt.tprintf("\nbindsym %s$mod+F12 %s\n", keys[moved].flags, keys[moved].cmd)))
+	testing.expect(t, strings.contains(out, fmt.tprintf("# bindsym %s%s %s\n", keys[off].flags, keys[off].def_key, keys[off].cmd)))
+	testing.expect(t, strings.contains(out, fmt.tprintf("\nbindsym %s%s %s\n", keys[opt].flags, keys[opt].def_key, keys[opt].cmd)))
+	// Parsing the result gives the same choices back.
+	again := sway_keys_parse(out, context.temp_allocator)
+	testing.expect_value(t, len(again), len(keys))
+	for &k, i in again {
+		if i >= len(keys) {break}
+		testing.expect_value(t, k.cmd, keys[i].cmd)
+		testing.expect_value(t, k.def_on, keys[i].on)
+		testing.expect_value(t, k.def_key, sway_key_text(&keys[i]))
+	}
+}
+
+@(test)
+test_sway_keys_clashes :: proc(t: ^testing.T) {
+	ov :: proc(key, to, from: string) -> string {
+		return fmt.tprintf("00:00:00.010 [INFO] [sway/commands/bind.c:286] Overwriting binding '%s' for device '*' to `%s` from `%s`\n", key, to, from)
+	}
+	out := strings.concatenate({
+		// the user's key, then the draft takes it
+		ov("Mod4+p", "exec WLPERCH_KEYCHECK=4 wlperch track go", "exec rofi -show run"),
+		// an older wlperch.conf took Mod4+o from the user, then the draft rebinds it
+		ov("Mod4+o", "exec wlperch toggle --center", "exec wofi"),
+		ov("Mod4+o", "exec WLPERCH_KEYCHECK=0 wlperch toggle --center", "exec wlperch toggle --center"),
+		// two draft bindings on one key
+		ov("Mod4+F5", "exec WLPERCH_KEYCHECK=6 wlperch track pin", "exec WLPERCH_KEYCHECK=5 wlperch track move"),
+		// the user's own duplicate: not ours
+		ov("Mod4+Return", "exec kitty", "exec foot"),
+		// an older wlperch.conf on a key the draft moved away from: no clash
+		ov("Mod4+equal", "exec wlperch toggle calc --center", "exec firefox"),
+	}, context.temp_allocator)
+	clash := make(map[int]string, context.temp_allocator)
+	sway_keys_clashes(out, &clash)
+	testing.expect_value(t, clash[4], "exec rofi -show run")
+	testing.expect_value(t, clash[0], "exec wofi")
+	testing.expect(t, strings.contains(clash[6], "another wlperch key: exec wlperch track move"))
+	testing.expect(t, strings.contains(clash[5], "another wlperch key: exec wlperch track pin"))
+	testing.expect_value(t, len(clash), 4) // not the user's own duplicate, not the old file's key
 }
 
 // End to end with the real sway -C: a config that already binds a key
@@ -72,10 +104,16 @@ test_sway_install_backs_out_on_conflict :: proc(t: ^testing.T) {
 	old_xdg := strings.clone(os.get_env("XDG_CONFIG_HOME", context.temp_allocator), context.temp_allocator)
 	old_sock := strings.clone(os.get_env("SWAYSOCK", context.temp_allocator), context.temp_allocator)
 	os.set_env("XDG_CONFIG_HOME", DIR)
+	old_data := strings.clone(os.get_env("XDG_DATA_HOME", context.temp_allocator), context.temp_allocator)
+	os.set_env("XDG_DATA_HOME", DIR + "/data") // the key choices file
+	sway_keys.loaded = false
 	os.unset_env("SWAYSOCK") // the default config under XDG_CONFIG_HOME, not the running sway's
 	defer {
 		if old_xdg != "" {os.set_env("XDG_CONFIG_HOME", old_xdg)} else {os.unset_env("XDG_CONFIG_HOME")}
 		if old_sock != "" {os.set_env("SWAYSOCK", old_sock)}
+		if old_data != "" {os.set_env("XDG_DATA_HOME", old_data)} else {os.unset_env("XDG_DATA_HOME")}
+		sway_keys.loaded = false
+		clear(&sway_keys.list)
 	}
 	// A key wlperch.conf binds, bound to something else by "the user".
 	key := ""
@@ -88,20 +126,33 @@ test_sway_install_backs_out_on_conflict :: proc(t: ^testing.T) {
 	user := fmt.tprintf("set $mod Mod4\nbindsym %s exec rofi -show run\ninclude %s/sway/config.d/*\n", key, DIR)
 	_ = os.write_entire_file(DIR + "/sway/config", user)
 
+	// The draft check: the clashing row is found, and moving it fixes it.
+	sway_keys_load()
+	sway_keys_check()
+	row := -1
+	for &k, i in sway_keys.list {if k.on && k.def_key == key {row = i}}
+	if !testing.expect(t, row >= 0) {return}
+	testing.expect_value(t, sway_keys.clash[row], "exec rofi -show run")
+	testing.expect_value(t, sway_keys_clash_count(), 1)
+	k := &sway_keys.list[row]
+	k.key = {}
+	copy(k.key[:], "$mod+F9")
+	sway_keys_check()
+	testing.expect_value(t, sway_keys_clash_count(), 0)
+	copy(k.key[:], key) // back to the clashing default for the install test below
+	k.key[len(key)] = 0
+
 	setup_install_sway()
 	testing.expect(t, !os.exists(DIR + "/sway/config.d/wlperch.conf"), "backed out")
 	after, _ := os.read_entire_file(DIR + "/sway/config", context.temp_allocator)
 	testing.expect_value(t, string(after), user)
-	testing.expect(t, len(sway_pending_skip) > 0, "offers to leave the keys out")
+	testing.expect(t, sway_keys_clash_count() > 0, "the editor shows the clash")
 	testing.expect(t, strings.contains(setup.comps[.Sway].message, "already bound"))
 
 	setup_install_sway_skipping()
 	data, err := os.read_entire_file(DIR + "/sway/config.d/wlperch.conf", context.temp_allocator)
 	testing.expect(t, err == nil, "installed without the keys")
-	testing.expect(t, strings.has_prefix(string(data), SWAY_SKIP_MARK))
+	testing.expect(t, strings.has_prefix(string(data), "# Key bindings as chosen in wlperch setup."))
 	testing.expect_value(t, len(sway_config_check().conflicts), 0)
 	testing.expect(t, setup.comps[.Sway].msg_ok)
-	for x in sway_pending_skip {delete(x)}
-	delete(sway_pending_skip)
-	sway_pending_skip = nil
 }

@@ -81,24 +81,8 @@ sway_check_parse :: proc(out: string, allocator := context.temp_allocator) -> (c
 // when either command is wlperch's.
 @(private = "file")
 parse_overwrite :: proc(s: string, allocator := context.temp_allocator) -> (c: Sway_Conflict, ok: bool) {
-	rest := s[len("Overwriting binding '"):]
-	q := strings.index_byte(rest, '\'')
-	if q < 0 {return}
-	key := rest[:q]
-	rest = rest[q:]
-	to := strings.index(rest, "to `")
-	if to < 0 {return}
-	rest = rest[to + 4:]
-	e := strings.index_byte(rest, '`')
-	if e < 0 {return}
-	newer := rest[:e]
-	rest = rest[e + 1:]
-	from := strings.index(rest, "from `")
-	if from < 0 {return}
-	rest = rest[from + 6:]
-	e = strings.index_byte(rest, '`')
-	if e < 0 {return}
-	older := rest[:e]
+	key, newer, older, parsed := parse_overwrite_raw(s)
+	if !parsed {return}
 	switch {
 	case strings.contains(newer, "wlperch") && !strings.contains(older, "wlperch"): c.ours, c.theirs = newer, older
 	case strings.contains(older, "wlperch") && !strings.contains(newer, "wlperch"): c.ours, c.theirs = older, newer
@@ -108,6 +92,29 @@ parse_overwrite :: proc(s: string, allocator := context.temp_allocator) -> (c: S
 	c.ours = strings.clone(c.ours, allocator)
 	c.theirs = strings.clone(c.theirs, allocator)
 	return c, true
+}
+
+// "Overwriting binding 'KEY' [for device 'D'] to `NEW` from `OLD`" -> its parts.
+parse_overwrite_raw :: proc(s: string) -> (key, newer, older: string, ok: bool) {
+	rest := s[len("Overwriting binding '"):]
+	q := strings.index_byte(rest, '\'')
+	if q < 0 {return}
+	key = rest[:q]
+	rest = rest[q:]
+	to := strings.index(rest, "to `")
+	if to < 0 {return}
+	rest = rest[to + 4:]
+	e := strings.index_byte(rest, '`')
+	if e < 0 {return}
+	newer = rest[:e]
+	rest = rest[e + 1:]
+	from := strings.index(rest, "from `")
+	if from < 0 {return}
+	rest = rest[from + 6:]
+	e = strings.index_byte(rest, '`')
+	if e < 0 {return}
+	older = rest[:e]
+	return key, newer, older, true
 }
 
 // One line per problem, for a card message.
@@ -134,41 +141,4 @@ sway_reload_if_valid :: proc() -> bool {
 	ok, problem := sway_reload_checked()
 	if problem != "" {log.warnf("setup: %s", problem)}
 	return ok
-}
-
-// ---- wlperch.conf without the keys the user already binds ----------------------
-
-SWAY_SKIP_MARK :: "# wlperch setup left these keys out (already bound in your sway config): "
-
-// SWAY_FILE with the bindings whose command is in skip commented out, and a
-// marker line listing them (so the check recognises the file as ours).
-sway_file_text :: proc(skip: []string) -> string {
-	if len(skip) == 0 {return SWAY_FILE}
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, SWAY_SKIP_MARK)
-	for s, i in skip {
-		if i > 0 {strings.write_string(&b, " | ")}
-		strings.write_string(&b, s)
-	}
-	strings.write_byte(&b, '\n')
-	text := SWAY_FILE
-	for line in strings.split_lines_iterator(&text) {
-		t := strings.trim_space(line)
-		left_out := false
-		if strings.has_prefix(t, "bindsym") || strings.has_prefix(t, "bindcode") {
-			for s in skip {if strings.has_suffix(t, s) {left_out = true}}
-		}
-		if left_out {strings.write_string(&b, "# ")}
-		strings.write_string(&b, line)
-		strings.write_byte(&b, '\n')
-	}
-	return strings.to_string(b)
-}
-
-// The commands left out of an installed wlperch.conf (from its marker line).
-sway_file_skips :: proc(text: string) -> []string {
-	if !strings.has_prefix(text, SWAY_SKIP_MARK) {return nil}
-	first := text[len(SWAY_SKIP_MARK):]
-	if nl := strings.index_byte(first, '\n'); nl >= 0 {first = first[:nl]}
-	return strings.split(first, " | ", context.temp_allocator)
 }

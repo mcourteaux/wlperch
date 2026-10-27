@@ -194,7 +194,8 @@ setup_check :: proc() {
 			detail(p, ours)
 		case:
 			text, _ := read_text(ours)
-			p.state = text == sway_file_text(sway_file_skips(text)) ? .Installed : .Outdated
+			sway_keys_load()
+			p.state = text == sway_file_text(sway_keys.list[:]) ? .Installed : .Outdated
 			detail(p, ours)
 		}
 		// The stock sway config only includes /etc/sway/config.d/*: our file
@@ -399,27 +400,23 @@ setup_create_config :: proc() {
 	done(.Config, ok, ok ? "default config written" : "couldn't write the config")
 }
 
-setup_install_sway :: proc() {install_sway(nil)}
+setup_install_sway :: proc() {install_sway()}
 
-// Leaves out the keys the last attempt found already bound.
-setup_install_sway_skipping :: proc() {install_sway(sway_pending_skip[:])}
-
-// Keys (wlperch commands) a failed install found already bound; offered as
-// "Install without those keys".
-sway_pending_skip: [dynamic]string
+// After a clash: the clashing bindings off, then install.
+setup_install_sway_skipping :: proc() {
+	sway_keys_disable_clashes()
+	install_sway()
+}
 
 @(private = "file")
-install_sway :: proc(extra_skip: []string) {
+install_sway :: proc() {
 	// What's there now, to put back if sway reports a conflict.
 	old_file, had_file := read_text(sway_file())
 	cfg := sway_main_config()
 	old_cfg, had_cfg := read_text(cfg)
 
-	// An update keeps the keys left out before.
-	skip := make([dynamic]string, context.temp_allocator)
-	if had_file {append(&skip, ..sway_file_skips(old_file))}
-	for s in extra_skip {append(&skip, s)}
-	if !write_file(sway_file(), sway_file_text(skip[:])) {
+	sway_keys_load()
+	if !write_file(sway_file(), sway_file_text(sway_keys.list[:])) {
 		done(.Sway, false, "couldn't write the sway file")
 		return
 	}
@@ -444,18 +441,22 @@ install_sway :: proc(extra_skip: []string) {
 		if added_include {
 			if had_cfg {_ = write_file(cfg, old_cfg)} else {os.remove(cfg)}
 		}
-		for s in sway_pending_skip {delete(s)}
-		clear(&sway_pending_skip)
-		for s in skip {append(&sway_pending_skip, strings.clone(s))}
-		for x in check.conflicts {append(&sway_pending_skip, strings.clone(x.ours))}
-		hint := len(check.conflicts) > 0 && len(check.errors) == 0 ? "\n\"Install without those keys\" leaves wlperch's bindings for them out." : ""
+		// Show the clashes in the key editor.
+		clear(&sway_keys.clash)
+		for x in check.conflicts {
+			for &k, i in sway_keys.list {
+				if k.on && k.cmd == x.ours {sway_keys.clash[i] = strings.clone(x.theirs)}
+			}
+		}
+		sway_keys.checked, sway_keys.check_ran, sway_keys.open = true, true, true
+		hint := len(check.conflicts) > 0 && len(check.errors) == 0 ? "\nPick other keys below, or \"Install without those keys\" switches them off." : ""
 		done(.Sway, false, fmt.tprintf("not installed, nothing changed. sway -C reports:%s%s", sway_check_text(check), hint))
 		return
 	}
-	for s in sway_pending_skip {delete(s)}
-	clear(&sway_pending_skip)
+	off := 0
+	for &k in sway_keys.list {if k.def_on && !k.on {off += 1}}
 	msg := "installed; reload sway to activate"
-	if len(skip) > 0 {msg = fmt.tprintf("installed without %d key binding(s) your config already has; reload sway to activate", len(skip))}
+	if off > 0 {msg = fmt.tprintf("installed with %d of wlperch's key binding(s) off; reload sway to activate", off)}
 	if !check.ran {msg = fmt.tprintf("%s (couldn't run sway -C to check it)", msg)}
 	done(.Sway, true, msg)
 }
@@ -1124,6 +1125,7 @@ run_setup :: proc() {
 		wl.display_flush(d)
 		timeout := plat.redraw > 0 && !plat.frame_pending ? 0 : 1000
 		if wait := settings_tick(); wait >= 0 {timeout = min(timeout, wait)}
+		if wait := sway_keys_tick(); wait >= 0 {timeout = min(timeout, wait)}
 		if wait := setup_dim_timeout(); wait >= 0 {timeout = min(timeout, wait)}
 		pfds := [4]posix.pollfd {
 			{fd = platform_fd(), events = {.IN}},

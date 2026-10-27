@@ -79,7 +79,6 @@ pill_button :: proc(id, text: string, accent: u32, primary := false) -> bool {
 @(private = "file")
 pill_width :: proc(text: string) -> f32 {return measure(fonts.bold, SZ_SMALL + 1, text).x + 24}
 
-@(private = "file")
 wrapped :: proc(font: ^im.Font, size: f32, col: u32, text: string, width: f32) {
 	im.PushFontFloat(font, size)
 	im.PushStyleColorImVec4(.Text, rgba(col & 0xffffff))
@@ -132,10 +131,10 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 		switch s {
 		case .Missing:
 			append(&out, Action{"Install", true, setup_install_sway, false})
-			if len(sway_pending_skip) > 0 {append(&out, Action{"Install without those keys", false, setup_install_sway_skipping, false})}
+			if sway_keys_clash_count() > 0 {append(&out, Action{"Install without those keys", false, setup_install_sway_skipping, false})}
 		case .Outdated:
 			append(&out, Action{"Update", true, setup_install_sway, false})
-			if len(sway_pending_skip) > 0 {append(&out, Action{"Update without those keys", false, setup_install_sway_skipping, false})}
+			if sway_keys_clash_count() > 0 {append(&out, Action{"Update without those keys", false, setup_install_sway_skipping, false})}
 			if os.exists(sway_file()) {append(&out, Action{"Remove", false, setup_remove_sway, true})}
 		case .Installed:
 			append(&out, Action{"Reload sway", false, setup_reload_sway, false})
@@ -329,6 +328,7 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 	if c.message != "" {
 		wrapped(fonts.ui, SZ_SMALL, c.msg_ok ? C_GREEN : C_RED, fmt.tprintf("%s %s", c.msg_ok ? ICON_CHECK : ICON_ALERT, c.message), inner)
 	}
+	if id == .Sway && c.state != .Custom && c.state != .Unavailable {sway_keys_ui(inner, inf.accent)}
 	if inf.preview != "" && show_preview[id] {
 		text := strings.trim_space(inf.preview)
 		im.PushStyleColorImVec4(.ChildBg, rgba(C_WELL))
