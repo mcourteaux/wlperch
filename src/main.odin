@@ -16,7 +16,7 @@ import gl "vendor:OpenGL"
 import "wl"
 
 // Release version, printed by `wlperch --version`.
-VERSION :: "0.1.1"
+VERSION :: "0.2.0"
 // Set only by release builds (-define:WLPERCH_RELEASE=true). Everything
 // ./build.sh makes is a dev build: --version says so, and the updater never
 // installs a GitHub release over it.
