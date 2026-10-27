@@ -17,6 +17,10 @@ import "wl"
 
 // Release version, printed by `wlperch --version`.
 VERSION :: "0.1.1"
+// Set only by release builds (-define:WLPERCH_RELEASE=true). Everything
+// ./build.sh makes is a dev build: --version says so, and the updater never
+// installs a GitHub release over it.
+RELEASE_BUILD :: #config(WLPERCH_RELEASE, false)
 
 USAGE :: `wlperch — quick-settings popup for wlroots compositors
 
@@ -370,7 +374,7 @@ main :: proc() {
 		fmt.print(USAGE)
 		return
 	case "-V", "--version", "version":
-		fmt.println("wlperch", VERSION)
+		if RELEASE_BUILD {fmt.println("wlperch", VERSION)} else {fmt.println("wlperch", VERSION, "(dev build)")}
 		return
 	case "setup":
 		run_setup()

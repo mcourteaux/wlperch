@@ -162,6 +162,11 @@ update_target :: proc() -> string {
 // Download, verify and install the available release. Blocking.
 update_install_now :: proc() -> (msg: string, ok: bool) {
 	version, tarball, sums: string
+	when !RELEASE_BUILD {
+		// A build from a checkout: replacing it with a download would be
+		// confusing (same version number, different code).
+		return "this is a development build (./build.sh): updates are not installed over it; pull and rebuild instead", false
+	}
 	{
 		sync.guard(&update.mu)
 		if update.state != .Available {return "no update to install (check first)", false}
@@ -284,6 +289,7 @@ update_tick :: proc() {
 	update.new_found = false
 	update.notified = strings.clone(update.latest)
 	state_save()
+	when !RELEASE_BUILD {return} // dev builds: the tooltip says it, no history entry
 	notif_log_local("wlperch", fmt.tprintf("wlperch %s is available", update.latest), fmt.tprintf("You have %s. Click the update button in the main panel's header to install it.", VERSION), 1)
 	request_redraw()
 }
@@ -305,6 +311,9 @@ update_button_info :: proc() -> (col: u32, tip: string, highlight: bool) {
 	case .Checking:   return C_MUTED, "Checking for updates…", false
 	case .Installing: return C_BLUE, fmt.tprintf("Installing wlperch %s…", update.latest), true
 	case .Available:
+		when !RELEASE_BUILD {
+			return C_MUTED, fmt.tprintf("wlperch %s is released (this is a dev build of %s)\nnot installed over a dev build: pull and rebuild\nclick to check again", update.latest, VERSION), false
+		}
 		extra := update.message != "" ? fmt.tprintf("\nlast attempt: %s", update.message) : ""
 		return C_GREEN, fmt.tprintf("wlperch %s is available (you have %s)\nclick to download, verify and install it%s", update.latest, VERSION, extra), true
 	case .Installed:  return C_GREEN, update.message, true
@@ -315,7 +324,9 @@ update_button_info :: proc() -> (col: u32, tip: string, highlight: bool) {
 	return C_MUTED, fmt.tprintf("wlperch %s is up to date (checked %s)\nclick to check again", VERSION, ago), false
 }
 
+// A release that can be installed here (never over a dev build).
 update_available :: proc() -> bool {
+	when !RELEASE_BUILD {return false}
 	sync.guard(&update.mu)
 	return update.state == .Available
 }
@@ -333,6 +344,11 @@ update_cli :: proc(args: []string) -> int {
 		return ok ? 0 : 1
 	case "install":
 		msg, ok := update_check_now()
+		when !RELEASE_BUILD {
+			fmt.println(msg)
+			fmt.println("this is a development build (./build.sh): not replaced by a release; pull and rebuild instead")
+			return ok ? 0 : 1
+		}
 		if !ok || !update_available() {
 			fmt.println(msg)
 			return ok ? 0 : 1

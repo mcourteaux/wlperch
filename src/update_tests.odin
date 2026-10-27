@@ -1,6 +1,7 @@
 // The update check: version order and picking the release for this CPU.
 package main
 
+import "core:strings"
 import "core:testing"
 
 @(test)
@@ -43,4 +44,18 @@ test_update_pick :: proc(t: ^testing.T) {
 	testing.expect(t, !ok, "no build for this CPU")
 	_, _, _, ok = update_pick("not json", "0.1.1", "x86_64")
 	testing.expect(t, !ok)
+}
+
+// A build from a checkout is never replaced by a release, even with one waiting.
+@(test)
+test_update_never_over_dev_build :: proc(t: ^testing.T) {
+	when RELEASE_BUILD {return}
+	update.state = .Available
+	update.latest = "9.9.9"
+	defer update.state = .Idle
+	testing.expect(t, !update_available())
+	msg, ok := update_install_now()
+	testing.expect(t, !ok)
+	testing.expect(t, strings.contains(msg, "development build"))
+	testing.expect_value(t, update.state, Update_State.Available) // untouched, nothing downloaded
 }
