@@ -102,15 +102,18 @@ draw_ui :: proc() -> f32 {
 	ui.panel_max = panel_pos + Vec2{panel_w, panel_h}
 	ui.overlay_bottom = 0
 
-	draw_shadow(panel_pos, {panel_w, panel_h})
+	// Bare panels (a popup for one thing): the card itself is the popup, with
+	// no window, border or padding around it.
+	bare := cur_panel().bare
+	draw_shadow(panel_pos, {panel_w, panel_h}, radius = bare ? im.GetStyle().ChildRounding : 18)
 
 	im.SetNextWindowPos(panel_pos)
 	im.SetNextWindowSize({panel_w, panel_h})
-	im.PushStyleColorImVec4(.WindowBg, rgba(C_BG))
+	im.PushStyleColorImVec4(.WindowBg, bare ? rgba(C_BG, 0) : rgba(C_BG))
 	im.PushStyleColor(.Border, window_border_color(0.07))
-	im.PushStyleVar(.WindowBorderSize, 1)
+	im.PushStyleVar(.WindowBorderSize, bare ? 0 : 1)
 	im.PushStyleVar(.WindowRounding, 18)
-	im.PushStyleVarImVec2(.WindowPadding, {16, 16})
+	im.PushStyleVarImVec2(.WindowPadding, bare ? Vec2{0, 0} : Vec2{16, 16})
 	im.Begin("wlperch", nil, {.NoTitleBar, .NoResize, .NoMove, .NoCollapse, .NoSavedSettings})
 	im.PopStyleVar(3)
 	im.PopStyleColor(2)
@@ -140,7 +143,7 @@ draw_ui :: proc() -> f32 {
 	}
 	im.PopStyleVar()
 
-	content_bottom := im.GetCursorPosY() - im.GetStyle().ItemSpacing.y + 16
+	content_bottom := im.GetCursorPosY() - im.GetStyle().ItemSpacing.y + (panel.bare ? 0 : 16)
 
 	draw_toast(panel_pos, {panel_w, panel_h})
 	im.End()
