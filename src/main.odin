@@ -16,7 +16,7 @@ import gl "vendor:OpenGL"
 import "wl"
 
 // Release version, printed by `wlperch --version`.
-VERSION :: "0.1.0"
+VERSION :: "0.1.1"
 
 USAGE :: `wlperch — quick-settings popup for wlroots compositors
 
