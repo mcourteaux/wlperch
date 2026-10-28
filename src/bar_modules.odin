@@ -147,6 +147,7 @@ set_item :: proc(dst: ^Status_Item, v: Status_Item) -> bool {
 	c := set_s(&dst.text, v.text)
 	c |= set_s(&dst.tooltip, v.tooltip)
 	c |= set_s(&dst.class, v.class)
+	c |= set_s(&dst.project, v.project)
 	return c
 }
 
@@ -641,12 +642,15 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		it := module_item(.Timer)
 		t := bar_data.timer
 		if t.text == "" {return}
+		// In the project's colour, like its workspace pills.
+		col := p.teal
+		if pi := project_find(t.project); pi >= 0 {col = tracker.projects[pi].color}
 		if t.class == "running" {
-			it.bg, it.bg_alpha = p.teal, 0.12
-			bar_seg(&it, t.text, p.teal, .Bold, tnum = true)
+			it.bg, it.bg_alpha = col, 0.12
+			bar_seg(&it, t.text, bar_ink(col), .Bold, tnum = true)
 		} else if t.class == "waiting" {
 			// Away, but a bridged break if you're back in time: dimmed, not ticking.
-			it.bg, it.bg_alpha = p.teal, 0.05
+			it.bg, it.bg_alpha = col, 0.05
 			bar_seg(&it, t.text, p.muted, tnum = true)
 		} else {
 			bar_seg(&it, t.text, p.faint, tnum = true)

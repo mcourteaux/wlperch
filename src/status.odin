@@ -13,6 +13,7 @@ import "core:time"
 // One module's state: tooltip lines are separated by real newlines.
 Status_Item :: struct {
 	text, tooltip, class: string,
+	project:              string, // the timer's, for the bar's colour
 }
 
 // A waybar JSON line for it.
@@ -241,6 +242,7 @@ status_timer_item :: proc() -> (it: Status_Item) {
 	for e, i in entries {
 		if e.project == project && (!e.idle || mask[i]) && e.end > day {total += e.end - max(e.start, day)}
 	}
+	it.project = project
 	if running {
 		it.text = fmt.tprintf("%s %s %s", ICON_CLOCK, project, fmt_duration(total))
 		it.class = "running"

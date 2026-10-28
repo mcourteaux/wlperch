@@ -198,6 +198,7 @@ test_bridge_totals_agree :: proc(t: ^testing.T) {
 
 	it := status_timer_item()
 	testing.expect_value(t, it.class, "running")
+	testing.expect_value(t, it.project, "P") // the bar colours it by P
 	testing.expect_value(t, it.text, fmt.tprintf("%s P %s", ICON_CLOCK, fmt_duration(want)))
 
 	// The panel's counter: the stretch since the 20-minute break, gap included.
