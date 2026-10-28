@@ -264,6 +264,13 @@ handle_command :: proc(line: string) -> string {
 			}
 			return tracker.lock ? "lock on\n" : "lock off\n"
 		}
+		// track nosync <workspace>: switching there next moves only that output.
+		if f[1] == "nosync" {
+			ws := strings.trim_space(strings.trim_prefix(strings.trim_space(line), "track nosync"))
+			if ws == "" {return "usage: track nosync <workspace>\n"}
+			tracker_nosync(ws)
+			return "ok\n"
+		}
 		// track pin [project|off]: gather windows into one project for a minute.
 		if f[1] == "pin" {
 			if len(f) > 2 && f[2] == "off" {

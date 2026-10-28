@@ -514,11 +514,12 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 				w := g.ws[0]
 				it := Bar_Item{mod = .Workspaces, key = w.name, pad = 10, margin = 3, inset = 6, hover = true, group = len(lay.groups), icon_alpha = 1}
 				ws_style(&it, w, proj.name, col)
+				it.tooltip = fmt.tprintf("%s\nRight-click: switch only this monitor", proj.name)
 				add(lay, it)
 			} else {
 				label := Bar_Item{mod = .Workspaces, key = g.ws[0].name, pad = 8, margin = 2, inset = 6, hover = false, group = len(lay.groups), icon_alpha = 1}
 				bar_seg(&label, proj.name, bar_ink(col), grp.level == 2 ? .Bold : .Regular)
-				label.tooltip = fmt.tprintf("%s: %d workspaces on this monitor", proj.name, len(g.ws))
+				label.tooltip = fmt.tprintf("%s: %d workspaces on this monitor\nRight-click one: switch only this monitor", proj.name, len(g.ws))
 				add(lay, label)
 				for w in g.ws {
 					n := w.name[strings.last_index_byte(w.name, ' ') + 1:]
@@ -926,7 +927,9 @@ bar_click :: proc(it: ^Bar_Item, ck: Bar_Click, open_menu: proc(t: ^Tray_Item, c
 	BTN_LEFT, BTN_RIGHT, BTN_MIDDLE :: 0x110, 0x111, 0x112
 	switch it.mod {
 	case .Workspaces:
-		if ck.button == BTN_LEFT {sway_command(fmt.tprintf("workspace \"%s\"", sway_quote(it.key)))}
+		// Right-click: only this monitor, the group lock doesn't bring the others along.
+		if ck.button == BTN_RIGHT {ipc_send(fmt.tprintf("track nosync %s", it.key))}
+		if ck.button == BTN_LEFT || ck.button == BTN_RIGHT {sway_command(fmt.tprintf("workspace \"%s\"", sway_quote(it.key)))}
 	case .Mode, .Window:
 	case .Scratchpad:
 		sway_command("scratchpad show")

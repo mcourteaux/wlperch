@@ -180,7 +180,8 @@ notification marks the start and end, and the Time panel shows a countdown.
 keeps the monitors together. Switching one monitor to a project workspace
 brings the others to that project's workspaces too. Leaving it sends the others
 back to what they showed before. Focus stays on the monitor you used. The
-setting is remembered.
+setting is remembered. Right-click a workspace in the bar to switch only that
+monitor.
 
 **Keep empty workspaces** (a toggle in the Time panel, or `wlperch track keep
 [on|off]`) stops sway from removing a project workspace once it's empty and you

@@ -91,6 +91,8 @@ Tracker :: struct {
 	last_visible: map[string]string, // output -> workspace at the previous tick
 	return_ws:    map[string]string, // output -> workspace to go back to when leaving
 	sync_at:      time.Tick,         // our own switch; ignore the events it causes
+	nosync_ws:    string,            // a switch to this workspace leaves the other outputs be
+	nosync_at:    time.Tick,
 }
 tracker := Tracker{running = -1, last = -1, pinned = -1}
 
@@ -639,6 +641,13 @@ plan_sync :: proc(prev, cur, focused_out: string, outs: []string, visible: map[s
 	return moves[:]
 }
 
+// The next switch to `ws` (within 2 s) doesn't move the other outputs ("" = none).
+tracker_nosync :: proc(ws: string) {
+	delete(tracker.nosync_ws)
+	tracker.nosync_ws = strings.clone(ws)
+	tracker.nosync_at = time.tick_now()
+}
+
 // Group lock: apply plan_sync to sway, keeping focus on the output the user acted on.
 @(private = "file")
 tracker_sync :: proc() {
@@ -658,6 +667,15 @@ tracker_sync :: proc() {
 		for k, v in visible {tracker.last_visible[strings.clone(k)] = strings.clone(v)}
 	}
 	if !tracker.lock || focused_out == "" {return}
+	// A right-click on a bar pill: this switch is for one monitor only.
+	if tracker.nosync_ws != "" {
+		if time.tick_since(tracker.nosync_at) > 2 * time.Second {
+			tracker_nosync("")
+		} else if visible[focused_out] == tracker.nosync_ws {
+			tracker_nosync("")
+			return
+		}
+	}
 	// Our own switching produces a burst of events: let it settle.
 	if time.tick_since(tracker.sync_at) < 400 * time.Millisecond {return}
 
