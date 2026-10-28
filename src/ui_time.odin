@@ -35,6 +35,7 @@ draw_time :: proc(w: f32) {
 
 	// ---- Status -----------------------------------------------------------
 	p := im.GetCursorScreenPos()
+	shown := -1 // the project Claude counts for, when the status shows it
 	if tracker.running >= 0 {
 		pr := tracker.projects[tracker.running]
 		im.DrawList_AddCircleFilled(dl(), {p.x + 7, p.y + 16}, 6, col32(pr.color))
@@ -66,6 +67,23 @@ draw_time :: proc(w: f32) {
 		csz := measure(fonts.ui, SZ_SMALL, cap)
 		draw_text(fonts.ui, SZ_SMALL, {p.x + inner - csz.x, p.y + 32}, col32(C_MUTED), cap)
 		request_redraw(1) // the countdown
+	} else if ci := claude_counting_project(); ci >= 0 {
+		// Nothing of yours counts, but Claude's work on a project does.
+		pr := tracker.projects[ci]
+		shown = ci
+		im.DrawList_AddCircleFilled(dl(), {p.x + 7, p.y + 16}, 6, col32(pr.color))
+		draw_text(fonts.bold, 22, {p.x + 22, p.y + 2}, col32(C_TEXT), pr.name)
+		nsz := measure(fonts.bold, 22, pr.name)
+		draw_text(fonts.ui, 15, {p.x + 30 + nsz.x, p.y + 7}, col32(pr.color), ICON_CLAUDE)
+		line := fmt.tprintf("Claude is working on it   ·   today %s", fmt_duration(totals_today[pr.name]))
+		if pr.paying && pr.rate > 0 {line = fmt.tprintf("%s   ·   %s", line, fmt_money(f64(totals_today[pr.name]) / 3600 * pr.rate))}
+		draw_text(fonts.ui, SZ_SMALL, {p.x + 22, p.y + 30}, col32(C_MUTED), line)
+		el := fmt_duration(now - claude_since(pr.name), true)
+		esz := measure(fonts.mono, 24, el)
+		draw_text(fonts.mono, 24, {p.x + inner - esz.x, p.y + 4}, col32(pr.color), el)
+		cap := "counting · Claude"
+		csz := measure(fonts.ui, SZ_SMALL, cap)
+		draw_text(fonts.ui, SZ_SMALL, {p.x + inner - csz.x, p.y + 32}, col32(C_GREEN), cap)
 	} else {
 		msg := tracker.paused_idle ? "Paused — you were away" : "Not on a project workspace"
 		col: u32 = tracker.paused_idle ? C_ORANGE : C_MUTED
@@ -75,10 +93,11 @@ draw_time :: proc(w: f32) {
 	}
 	im.Dummy({inner, 50})
 
-	// Claude working on projects that count it (also while you're elsewhere).
+	// Claude working on projects that count it (also while you're elsewhere),
+	// except the one the status above already shows.
 	for c in tracker.claude_segs {
 		pi := project_find(c.project)
-		if pi < 0 || !tracker.projects[pi].claude {continue}
+		if pi < 0 || !tracker.projects[pi].claude || pi == shown {continue}
 		pr := tracker.projects[pi]
 		cp := im.GetCursorScreenPos()
 		draw_text(fonts.ui, 14, {cp.x + 1, cp.y + 3}, col32(pr.color), ICON_CLAUDE)
@@ -153,8 +172,11 @@ draw_time :: proc(w: f32) {
 		im.SetCursorScreenPos({rp.x, rp.y + h})
 		d := dl()
 		active := i == tracker.running
+		by_claude := !active && pr.claude && tracker_claude_active(pr.name) // counting, by Claude
 		if active {
 			im.DrawList_AddRectFilled(d, {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h}, col32(pr.color, hovered ? 0.2 : 0.12), 8)
+		} else if by_claude {
+			im.DrawList_AddRectFilled(d, {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h}, col32(pr.color, hovered ? 0.12 : 0.06), 8)
 		} else if hovered {
 			im.DrawList_AddRectFilled(d, {rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h}, col32(C_OVERLAY, 0.05), 8)
 		}
@@ -192,12 +214,22 @@ draw_time :: proc(w: f32) {
 			}
 			// Bridging on: say so on the row, so it isn't a hidden rule.
 			if b := project_bridge(pr); b > 0 {
-				draw_text(fonts.ui, SZ_SMALL, {nx, rp.y + 10}, col32(pr.color, 0.75), fmt.tprintf("breaks < %d min count", b))
+				bt := fmt.tprintf("breaks < %d min count", b)
+				draw_text(fonts.ui, SZ_SMALL, {nx, rp.y + 10}, col32(pr.color, 0.75), bt)
+				nx += measure(fonts.ui, SZ_SMALL, bt).x + 12
+			}
+			tt := fmt_duration(totals_today[pr.name])
+			tx := rp.x + inner - measure(fonts.mono, SZ_BODY, tt).x - 26 - PENCIL_W
+			// Left of today's total, where there's room.
+			if by_claude {
+				cap := "counting · Claude"
+				csz := measure(fonts.ui, SZ_SMALL, cap)
+				if nx + csz.x + 12 < tx {draw_text(fonts.ui, SZ_SMALL, {tx - csz.x - 12, rp.y + 10}, col32(C_GREEN), cap)}
 			}
 		}
 		tt := fmt_duration(totals_today[pr.name])
 		tsz := measure(fonts.mono, SZ_BODY, tt)
-		draw_text(fonts.mono, SZ_BODY, {rp.x + inner - tsz.x - 26 - PENCIL_W, rp.y + 8}, col32(totals_today[pr.name] > 0 ? C_TEXT : C_FAINT), tt)
+		draw_text(fonts.mono, SZ_BODY, {rp.x + inner - tsz.x - 26 - PENCIL_W, rp.y + 8}, col32(by_claude ? pr.color : totals_today[pr.name] > 0 ? C_TEXT : C_FAINT), tt)
 		icon := active ? ICON_MONITORS : ICON_PLAY
 		draw_text(fonts.ui, 15, {rp.x + inner - 16 - PENCIL_W, rp.y + 8}, col32(hovered || active ? pr.color : C_FAINT, active && !hovered ? 0.6 : 1), icon)
 		if editing && draw_rename_editor(pr, inner) {rename_go = true}
@@ -394,6 +426,19 @@ export_preview :: proc(project: string, from, to, now: i64) -> Export_Summary {
 // starting at the configured value; "as configured" goes back to that, and
 // with one project picked "Save for <project>" makes it its bridge_breaks.
 @(private = "file")
+// The first project (in list order) Claude is working on that counts it; -1 if none.
+claude_counting_project :: proc() -> int {
+	for pr, i in tracker.projects {if pr.claude && tracker_claude_active(pr.name) {return i}}
+	return -1
+}
+
+// When Claude's current stretch on `name` began (the earliest open one).
+claude_since :: proc(name: string) -> i64 {
+	since: i64 = max(i64)
+	for c in tracker.claude_segs {if c.project == name {since = min(since, c.start)}}
+	return since
+}
+
 draw_export_bridge :: proc(inner: f32) {
 	configured := exp.project >= 0 ? project_bridge(tracker.projects[exp.project]) : tracker.bridge_default
 	minutes := exp.bridge >= 0 ? exp.bridge : configured
