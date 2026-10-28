@@ -1,7 +1,8 @@
-# Builds the release tarballs on every v* tag with tools/release/release.sh and
-# uploads them as a workflow artifact. It does not publish: compare the
-# artifact's SHA256SUMS with a local build, then run release.sh --publish.
-name: release-build
+# On every v* tag: builds the release tarballs with tools/release/release.sh
+# and publishes the GitHub release, with the notes from docs/releases/<tag>.md.
+# If that release already exists (e.g. published from a local build), it only
+# checks that the published SHA256SUMS match this build, and fails if not.
+name: release
 
 on:
   push:
@@ -9,16 +10,18 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-24.04
     # Fedora's clang, as used for the published releases (see tools/release/README.md).
     container: fedora:44
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Install tools
-        run: dnf install -y --setopt=install_weak_deps=False clang lld llvm binutils git curl tar gzip file xz python3 gnupg2 util-linux
+        run: dnf install -y --setopt=install_weak_deps=False clang lld llvm binutils git curl tar gzip file xz python3 gnupg2 util-linux gh
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -28,9 +31,21 @@ jobs:
         with:
           path: ~/.cache/wlperch-release
           key: wlperch-release-${{ hashFiles('tools/release/pins.env') }}
-      - name: Build
-        run: tools/release/release.sh --version-check --out dist
+      - name: Build, and publish unless already published
+        run: |
+          tag=${GITHUB_REF_NAME}
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "$tag is already published: building to verify it"
+            tools/release/release.sh --version-check --out dist
+            gh release download "$tag" -R "$GITHUB_REPOSITORY" -p SHA256SUMS -O published.sums
+            diff -u published.sums dist/SHA256SUMS
+            echo "the published $tag matches this build"
+          else
+            tools/release/release.sh --publish --yes --out dist
+          fi
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: wlperch-release
           path: dist/
+          if-no-files-found: ignore

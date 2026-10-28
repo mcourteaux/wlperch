@@ -31,8 +31,10 @@ Options:
   --publish               after building, create the GitHub release with gh (a
                           pre-release while VERSION < 1.0). Implies --version-check
                           and --arch all; asks for confirmation.
-  --notes FILE            release notes for --publish (default: open $EDITOR)
-  --yes                   do not ask for confirmation before publishing
+  --notes FILE            release notes for --publish (default: docs/releases/v<VERSION>.md
+                          as committed at HEAD, else open $EDITOR)
+  --yes                   do not ask for confirmation before publishing (and never
+                          open an editor: the notes must exist)
   -h, --help              this help
 
 Environment: CC (default clang), CXX (default clang++), AR (default llvm-ar or ar).
@@ -135,6 +137,18 @@ VERSION=$(git -C "$REPO" show HEAD:src/main.odin | sed -n 's/^VERSION :: "\([^"]
 SOURCE_DATE_EPOCH=$(git -C "$REPO" log -1 --format=%ct HEAD)
 export SOURCE_DATE_EPOCH
 TAG=v$VERSION
+
+# The release notes: --notes, else the committed docs/releases/<tag>.md, else
+# $EDITOR (after the build). Resolved now, so a missing file fails fast.
+if ((PUBLISH)) && [[ -z $NOTES ]]; then
+	if git -C "$REPO" cat-file -e "HEAD:docs/releases/$TAG.md" 2>/dev/null; then
+		NOTES=$(mktemp "${TMPDIR:-/tmp}/wlperch-notes.XXXXXX.md")
+		trap 'rm -f "$NOTES"' EXIT
+		git -C "$REPO" show "HEAD:docs/releases/$TAG.md" >"$NOTES"
+	elif ((YES)); then
+		die "no release notes: commit docs/releases/$TAG.md or pass --notes FILE"
+	fi
+fi
 
 dirty=$(git -C "$REPO" status --porcelain)
 if ((VERSION_CHECK)); then

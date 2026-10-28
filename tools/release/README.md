@@ -70,8 +70,9 @@ is Odin's `-o:speed` compile, about 55 s per arch.
 
 `--publish` builds with `--version-check`, then runs `gh release create v<VERSION>`
 with both tarballs and `SHA256SUMS`, as a pre-release while VERSION < 1.0. The
-notes come from `--notes FILE`, or from `$EDITOR`. Push the tag first: `gh` is
-called with `--verify-tag`. Nothing is published without `--publish`.
+notes come from `--notes FILE`, else from `docs/releases/v<VERSION>.md` as
+committed at HEAD, else from `$EDITOR` (not with `--yes`). Push the tag first:
+`gh` is called with `--verify-tag`. Nothing is published without `--publish`.
 
 ## What is pinned, and how it is verified
 
@@ -176,7 +177,14 @@ Edit `pins.env`, run the script, and commit the new pins with the release.
 ## CI
 
 [`.github/workflows/release.yml`](../../.github/workflows/release.yml) runs the
-script on every `v*` tag push in a Fedora 44 container and uploads the tarballs
-as a workflow artifact (it does not publish). Compare its `SHA256SUMS` with a
-local build to check reproducibility. Pushing a workflow file needs a token
-with the `workflow` scope.
+script on every `v*` tag push in a Fedora 44 container and publishes the
+release (`--publish --yes`), so a release is:
+
+1. bump `VERSION` in `src/main.odin` and write `docs/releases/v<VERSION>.md`;
+2. commit, `git tag -a v<VERSION>`, and push the commit and the tag.
+
+If the release already exists (published from a local `--publish`), the
+workflow only rebuilds and fails unless the published `SHA256SUMS` match its
+own, a check that the release is reproducible. The tarballs are also kept as
+a workflow artifact. Pushing a workflow file needs a token with the
+`workflow` scope.
