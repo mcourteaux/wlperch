@@ -96,10 +96,11 @@ tracker := Tracker{running = -1, last = -1, pinned = -1}
 
 Claude_Seg :: struct {
 	project, client: string,
-	start, last:     i64, // last: the latest spinner frame seen
+	start, last:     i64, // last: when Claude was last seen working
 }
 
-// No spinner frame for this long: Claude stopped (it flips about once a second).
+// A gap this long between two looks (the machine slept, the daemon hung):
+// the stretch ends at the last look, a new one starts.
 CLAUDE_STALE :: 10
 
 PIN_DURATION :: 60 * time.Second
@@ -384,22 +385,23 @@ close_away :: proc(end: i64) {
 }
 
 // Claude: one open stretch per project while any of its workspaces has a
-// terminal with Claude's spinner; closed at the last frame seen once it stops.
+// terminal where Claude works; closed at the last look that saw it once it stops.
 @(private = "file")
 track_claude :: proc(now: i64) {
-	spins := sway_claude_spins() // workspace -> last spinner frame
-	last := make([]i64, len(tracker.projects), context.temp_allocator)
-	for ws, t in spins {
-		if p := project_for_workspace(ws); p >= 0 {last[p] = max(last[p], t)}
+	working := make([]bool, len(tracker.projects), context.temp_allocator)
+	for ws in sway_claude_workspaces() {
+		if p := project_for_workspace(ws); p >= 0 {working[p] = true}
 	}
 	changed := false
 	// Close the ones that stopped (or whose project is gone).
 	for i := len(tracker.claude_segs) - 1; i >= 0; i -= 1 {
 		c := &tracker.claude_segs[i]
 		p := project_find(c.project)
-		if p >= 0 && last[p] > c.last {c.last = last[p]}
-		// Still spinning on one of its workspaces, and recently.
-		if p >= 0 && last[p] != 0 && now - c.last < CLAUDE_STALE {continue}
+		// Still working on one of its workspaces, seen a moment ago.
+		if p >= 0 && working[p] && now - c.last < CLAUDE_STALE {
+			c.last = max(c.last, now)
+			continue
+		}
 		if c.last - c.start >= MIN_SEGMENT {append_entry({c.start, c.last, c.project, false, false, true}, c.client)}
 		delete(c.project)
 		delete(c.client)
@@ -407,13 +409,13 @@ track_claude :: proc(now: i64) {
 		changed = true
 	}
 	// Open the ones that started.
-	for t, p in last {
-		if t == 0 || now - t >= CLAUDE_STALE {continue}
+	for w, p in working {
+		if !w {continue}
 		open := false
 		for c in tracker.claude_segs {open ||= project_find(c.project) == p}
 		if open {continue}
 		pr := tracker.projects[p]
-		append(&tracker.claude_segs, Claude_Seg{strings.clone(pr.name), strings.clone(pr.client), t, t})
+		append(&tracker.claude_segs, Claude_Seg{strings.clone(pr.name), strings.clone(pr.client), now, now})
 		changed = true
 	}
 	if changed || (len(tracker.claude_segs) > 0 && time.tick_since(tracker.claude_beat) >= HEARTBEAT) {

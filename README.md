@@ -241,11 +241,13 @@ rows.
 
 **Claude's background work.** While Claude Code works in a terminal, it spins
 the terminal's title: `◐ task`, `◑ task`, alternating about once a second
-(`✳ task` when it's done). wlperch watches sway's title events, so it knows
-when Claude is working on one of a project's workspaces, whether or not that
-workspace is focused or you're at the keyboard. Each such stretch is logged
-with a fifth column `claude`, from the first spinner frame to the last (no
-frame for 10 s, or another title, ends it). With `claude_counts = true` (or
+while focused and frozen on one of them while not (`✳ task` when it's done).
+wlperch watches sway's window titles, so it knows when Claude is working on
+one of a project's workspaces, whether or not that workspace is focused or
+you're at the keyboard. Each such stretch is logged with a fifth column
+`claude`, from when the spinner appears until it's gone (`✳`, another title,
+or the window closed). A spinner only counts while a `claude` process still
+runs in that terminal, so one left behind by a Claude that died doesn't. With `claude_counts = true` (or
 "Count Claude's background work" under the pencil) those minutes count as work
 for the project. Where you were working on it yourself, or a bridged break
 already counts, it counts once; two Claude terminals on one project count

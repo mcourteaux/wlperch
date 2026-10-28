@@ -5,6 +5,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:sys/posix"
 import "core:testing"
 import "core:time"
 
@@ -151,7 +152,8 @@ test_claude_export_and_rates :: proc(t: ^testing.T) {
 
 // The daemon side: a spinning title on a project's workspace opens a
 // stretch, the panel counts it, the bar shows it, and it closes at the
-// last frame once the spinner stops.
+// last look once the spinner stops. A frozen spinner (Claude's window
+// isn't focused) keeps counting.
 @(test)
 test_claude_tracking :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
@@ -180,7 +182,7 @@ test_claude_tracking :: proc(t: ^testing.T) {
 
 	now := time.to_unix_seconds(time.now())
 	sway.views = make(map[i64]Sway_View)
-	sway.views[7] = Sway_View{ws = "P 2", spin = now - 1}
+	sway.views[7] = Sway_View{ws = "P 2", spinning = true} // pid unknown: assumed alive
 	sway.views[8] = Sway_View{ws = "1"} // not Claude
 	tracker_tick()
 	testing.expect_value(t, len(tracker.claude_segs), 1)
@@ -196,8 +198,14 @@ test_claude_tracking :: proc(t: ^testing.T) {
 	testing.expect_value(t, it.class, "claude")
 	testing.expect_value(t, it.text, fmt.tprintf("%s P %s %s 0:01", ICON_CLOCK, ICON_PAYING, ICON_CLAUDE))
 
-	// The spinner stopped (✳ / no more frames): closed at its last frame.
-	sway.views[7] = Sway_View{ws = "P 2", spin = 0}
+	// Frozen on "◐" (no title events): still counting, up to now.
+	tracker.claude_segs[0].last = now - 3
+	tracker_tick()
+	testing.expect_value(t, len(tracker.claude_segs), 1)
+	testing.expect(t, tracker.claude_segs[0].last >= now)
+
+	// The spinner stopped (✳): closed at the last look that saw it.
+	sway.views[7] = Sway_View{ws = "P 2", spinning = false}
 	tracker.claude_segs[0].last = now - 2
 	tracker_tick()
 	testing.expect_value(t, len(tracker.claude_segs), 0)
@@ -210,8 +218,50 @@ test_claude_tracking :: proc(t: ^testing.T) {
 	log_text, _ := os.read_entire_file(tracker.log_path, context.temp_allocator)
 	testing.expect(t, strings.has_suffix(string(log_text), "\tP\t\tclaude\n"))
 
-	// A stale spinner (Claude died mid-frame) doesn't open a stretch.
-	sway.views[7] = Sway_View{ws = "P 2", spin = now - CLAUDE_STALE - 5}
+	// A spinner left behind by a dead Claude doesn't open a stretch: this
+	// test process has no `claude` under it.
+	sway.views[7] = Sway_View{ws = "P 2", pid = i64(posix.getpid()), spinning = true}
 	tracker_tick()
 	testing.expect_value(t, len(tracker.claude_segs), 0)
+
+	// A gap between looks (the machine slept): the stretch ends at the
+	// last look before it, a new one starts now.
+	sway.views[7] = Sway_View{ws = "P 2", spinning = true}
+	tracker_tick()
+	testing.expect_value(t, len(tracker.claude_segs), 1)
+	tracker.claude_segs[0].start = now - 120
+	tracker.claude_segs[0].last = now - 60
+	n := len(tracker.entries)
+	tracker_tick()
+	testing.expect_value(t, len(tracker.entries), n + 1)
+	if len(tracker.entries) == n + 1 {testing.expect(t, tracker.entries[n].end == now - 60)}
+	testing.expect_value(t, len(tracker.claude_segs), 1)
+	if len(tracker.claude_segs) == 1 {testing.expect(t, tracker.claude_segs[0].start >= now)}
+}
+
+// claude_alive finds a `claude` process anywhere under a terminal's pid.
+@(test)
+test_claude_alive :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	DIR :: "/tmp/wlperch-test-claude-alive"
+	os.make_directory_all(DIR)
+	defer os.remove_all(DIR)
+	me := i64(posix.getpid())
+	testing.expect(t, !claude_alive(me))
+	testing.expect(t, claude_alive(0)) // unknown: assume it is
+	// A copy of sleep named claude, under us (via setpriv, which execs).
+	src, err := os.read_entire_file("/usr/bin/sleep", context.temp_allocator)
+	if err != nil {return}
+	_ = os.write_entire_file(DIR + "/claude", src)
+	os.chmod(DIR + "/claude", {.Read_User, .Write_User, .Execute_User})
+	s, ok := stream_start({DIR + "/claude", "30"})
+	testing.expect(t, ok)
+	if !ok {return}
+	defer stream_stop(&s)
+	found := false
+	for _ in 0 ..< 50 {
+		if found = claude_alive(me); found {break}
+		time.sleep(20 * time.Millisecond)
+	}
+	testing.expect(t, found)
 }

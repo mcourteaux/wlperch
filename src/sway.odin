@@ -6,6 +6,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:log"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:sys/posix"
@@ -61,18 +62,25 @@ sway: Sway_State
 
 // A window as far as the time tracker's Claude detection cares.
 Sway_View :: struct {
-	ws:   string,
-	spin: i64, // unix time of the latest Claude spinner frame in its title, 0 = none
+	ws:       string,
+	pid:      i64,  // its client's, 0 = unknown
+	spinning: bool, // Claude's spinner in its title
+	alive:    bool, // and a `claude` process still runs under pid (see claude_alive)
+	checked:  time.Tick, // when alive was last looked up
 }
 
+// How often a spinning window's process tree is looked up again.
+CLAUDE_ALIVE_RECHECK :: 5 * time.Second
+
 // Claude Code's terminal title while it works: "◐ task" and "◑ task",
-// alternating about once a second ("✳ task" when it's done).
+// alternating about once a second while focused, but frozen on one of them
+// when its window isn't ("✳ task" when it's done).
 claude_spinning :: proc(title: string) -> bool {
 	return strings.has_prefix(title, "◐") || strings.has_prefix(title, "◑")
 }
 
-// A window's title changed: a spinner frame stamps it. True when that
-// starts or stops a spin (the tracker wants to know right away).
+// A window's title changed. True when that starts or stops a spin (the
+// tracker wants to know right away).
 @(private = "file")
 claude_title_event :: proc(payload: string) -> bool {
 	v, _ := jparse(payload)
@@ -83,21 +91,69 @@ claude_title_event :: proc(payload: string) -> bool {
 	sync.guard(&sway.mu)
 	view, known := &sway.views[id]
 	if !known {return false}
-	was := view.spin != 0
-	view.spin = spinning ? time.to_unix_seconds(time.now()) : 0
+	was := view.spinning
+	view.spinning = spinning
+	if spinning && !was {view.checked = {}} // look it up on the next tick
 	return was != spinning
 }
 
-// Workspace -> the latest spinner frame on it (only workspaces with one), temp-allocated.
-sway_claude_spins :: proc() -> map[string]i64 {
-	out := make(map[string]i64, 8, context.temp_allocator)
+// The workspaces with a window where Claude is working (temp-allocated):
+// its spinner in the title, and Claude still running in it, so a spinner
+// left behind by a Claude that died or was killed doesn't count.
+sway_claude_workspaces :: proc() -> map[string]bool {
+	out := make(map[string]bool, 8, context.temp_allocator)
+	// Which spinning windows are due a process lookup (done unlocked).
+	due := make([dynamic]i64, context.temp_allocator)
+	{
+		sync.guard(&sway.mu)
+		for id, v in sway.views {
+			if v.spinning && (v.checked == {} || time.tick_since(v.checked) >= CLAUDE_ALIVE_RECHECK) {append(&due, id)}
+		}
+	}
+	found := make(map[i64]bool, len(due), context.temp_allocator)
+	for id in due {
+		pid: i64
+		{
+			sync.guard(&sway.mu)
+			pid = sway.views[id].pid
+		}
+		found[id] = claude_alive(pid)
+	}
 	sync.guard(&sway.mu)
-	for _, v in sway.views {
-		if v.spin == 0 {continue}
-		ws := strings.clone(v.ws, context.temp_allocator)
-		out[ws] = max(out[ws], v.spin)
+	for id, &v in sway.views {
+		if alive, ok := found[id]; ok {
+			v.alive, v.checked = alive, time.tick_now()
+		}
+		if v.spinning && v.alive {out[strings.clone(v.ws, context.temp_allocator)] = true}
 	}
 	return out
+}
+
+// A `claude` process runs under pid (a terminal; Claude is in a shell in
+// one of its tabs). Unknown pid or no /proc: assume it does.
+claude_alive :: proc(pid: i64) -> bool {
+	if pid <= 0 || !os.exists("/proc/self/task") {return true}
+	return claude_under(pid, 0)
+}
+
+@(private = "file")
+claude_under :: proc(pid: i64, depth: int) -> bool {
+	if depth > 0 {
+		comm, err := os.read_entire_file(fmt.tprintf("/proc/%d/comm", pid), context.temp_allocator)
+		if err == nil && strings.trim_space(string(comm)) == "claude" {return true}
+	}
+	if depth >= 6 {return false}
+	// Children are listed per thread of the parent.
+	tasks, err := os.read_all_directory_by_path(fmt.tprintf("/proc/%d/task", pid), context.temp_allocator)
+	if err != nil {return false}
+	for task in tasks {
+		kids, kerr := os.read_entire_file(fmt.tprintf("/proc/%d/task/%s/children", pid, task.name), context.temp_allocator)
+		if kerr != nil {continue}
+		for f in strings.fields(string(kids), context.temp_allocator) {
+			if kid, ok := strconv.parse_i64(f); ok && claude_under(kid, depth + 1) {return true}
+		}
+	}
+	return false
 }
 
 @(private = "file")
@@ -277,7 +333,7 @@ sway_refresh_tree :: proc() {
 		}
 	}
 	View :: struct {
-		id:       i64,
+		id, pid:  i64,
 		ws:       string,
 		spinning: bool,
 	}
@@ -286,7 +342,7 @@ sway_refresh_tree :: proc() {
 		for k in ([]string{"nodes", "floating_nodes"}) {
 			for child in jarr(jobj(n, k)) {
 				if jobj(child, "pid") != nil {
-					append(out, View{jint(jobj(child, "id")), ws, claude_spinning(jstr(jobj(child, "name")))})
+					append(out, View{jint(jobj(child, "id")), jint(jobj(child, "pid")), ws, claude_spinning(jstr(jobj(child, "name")))})
 				} else {
 					find_views(child, ws, out)
 				}
@@ -306,14 +362,13 @@ sway_refresh_tree :: proc() {
 	walk(v, &counts, &at, &views)
 	fullscreen_update(v)
 	sync.guard(&sway.mu)
-	// Windows keep their last spinner frame (a frame is only stamped by a
-	// title change, so a stale "◐" left behind by a dead Claude doesn't count).
+	// Windows keep what's known about their process while they spin.
 	{
 		old := sway.views
 		sway.views = make(map[i64]Sway_View, len(views))
 		for w in views {
-			nv := Sway_View{ws = strings.clone(w.ws)}
-			if o, had := old[w.id]; had && w.spinning {nv.spin = o.spin}
+			nv := Sway_View{ws = strings.clone(w.ws), pid = w.pid, spinning = w.spinning}
+			if o, had := old[w.id]; had && w.spinning && o.spinning && o.pid == w.pid {nv.alive, nv.checked = o.alive, o.checked}
 			sway.views[w.id] = nv
 		}
 		for _, o in old {delete(o.ws)}
