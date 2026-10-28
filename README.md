@@ -431,7 +431,9 @@ between, are shown together:
 - **Different messages** (a chat): one popup, the newest, says how many are
   new (“Signal · 5 new”). In the panel they're one group under the app's icon,
   the newest three shown and the rest behind “N more from Signal”. Each
-  message keeps its own actions and remove button.
+  message keeps its own actions and remove button. When the picture changes
+  (someone else in the chat says something), theirs shows small on the
+  group's thread.
 
 A notification that times out stays in the Notifications panel, unread. Opening
 the panel marks everything read. Volume and brightness indicators (a replace tag

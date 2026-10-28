@@ -47,7 +47,7 @@ notif_textures_reset :: proc() {
 draw_badge :: proc(n: ^Notification, p: Vec2, size: f32) {
 	d := dl()
 	if n.icon != nil {
-		im.DrawList_AddImageRounded(d, im.TextureRef{_TexID = icon_texture(n.icon)}, p, {p.x + size, p.y + size}, {0, 0}, {1, 1}, 0xffffffff, n.icon.rounded ? 8 : 0)
+		im.DrawList_AddImageRounded(d, im.TextureRef{_TexID = icon_texture(n.icon)}, p, {p.x + size, p.y + size}, {0, 0}, {1, 1}, 0xffffffff, n.icon.rounded ? size * 8 / 35 : 0)
 		return
 	}
 	col := app_color(n.app)
@@ -196,6 +196,7 @@ draw_notifications :: proc(w: f32) {
 	group_id: u32 // the group's newest entry
 	group_size, group_at := 0, 0
 	prev_bottom: f32 // the row above's bottom edge, where a group's thread comes from
+	prev_icon: ^Notif_Icon // the row above's (icons are shared by content)
 	for n, k in rows {
 		if !cont[k] {
 			group_id, group_at, group_size = n.id, 0, 1
@@ -268,12 +269,26 @@ draw_notifications :: proc(w: f32) {
 		}
 		// The group's thread: from under the icon past each of its messages.
 		lx := p.x + 10 + ICON_SZ / 2
-		if !last {im.DrawList_AddRectFilled(d, {lx - 1, head ? p.y + 10 + ICON_SZ + 4 : p.y + top + 9}, {lx + 1, p.y + row_h}, col32(C_OVERLAY, 0.12), 1)}
+		if !last {
+			from := head ? p.y + 10 + ICON_SZ + 4 : p.y + top + 9
+			if !head && n.icon != nil && n.icon != prev_icon {from = p.y + top + 9 + 11 + 3} // under its avatar
+			im.DrawList_AddRectFilled(d, {lx - 1, from}, {lx + 1, p.y + row_h}, col32(C_OVERLAY, 0.12), 1)
+		}
+		// Someone else in a chat (another avatar than the row above): their
+		// picture, small, on the thread; otherwise a dot.
+		AV :: 22
+		new_face := !head && n.icon != nil && n.icon != prev_icon
 		if !head {
-			im.DrawList_AddRectFilled(d, {lx - 1, prev_bottom}, {lx + 1, p.y + top + 9}, col32(C_OVERLAY, 0.12), 1)
-			im.DrawList_AddCircleFilled(d, {lx, p.y + top + 9}, 3, col32(C_OVERLAY, 0.22))
+			ap := Vec2{lx - AV / 2, p.y + top + 9 - AV / 2}
+			im.DrawList_AddRectFilled(d, {lx - 1, prev_bottom}, {lx + 1, new_face ? ap.y - 3 : p.y + top + 9}, col32(C_OVERLAY, 0.12), 1)
+			if new_face {
+				draw_badge(n, ap, AV)
+			} else {
+				im.DrawList_AddCircleFilled(d, {lx, p.y + top + 9}, 3, col32(C_OVERLAY, 0.22))
+			}
 		}
 		prev_bottom = p.y + row_h
+		prev_icon = n.icon
 		if fresh[n.id] {im.DrawList_AddCircleFilled(d, {p.x + 4, head ? p.y + 10 + ICON_SZ / 2 : p.y + top + 9}, 3, col32(C_PURPLE))}
 		when_s := ago(n.at)
 		wsz := measure(fonts.ui, SZ_SMALL, when_s)
