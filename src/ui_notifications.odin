@@ -10,6 +10,8 @@ import gl "vendor:OpenGL"
 
 // Notifications that were unread when the panel opened keep their dot while it's open.
 @(private = "file") fresh: map[u32]bool
+// Groups opened past their first few messages, by their newest entry's id.
+@(private = "file") expanded: map[u32]bool
 
 // GL texture for an icon (straight alpha, as imgui blends), made on first use.
 // Also used by the media card.
@@ -171,7 +173,17 @@ draw_notifications :: proc(w: f32) {
 		return
 	}
 
-	// Newest first, grouped by day; scrolls past 640 px.
+	// Newest first, grouped by day; scrolls past 640 px. A run from the same
+	// app with nothing in between is one group: its icon and name once, the
+	// newest GROUP_SHOWN messages, and the rest behind "N more".
+	GROUP_SHOWN :: 3
+	rows := make([dynamic]^Notification, context.temp_allocator)
+	for i := len(notifs.list) - 1; i >= 0; i -= 1 {if !notifs.list[i].transient {append(&rows, notifs.list[i])}}
+	cont := make([]bool, len(rows), context.temp_allocator) // continues the group above it
+	for k in 1 ..< len(rows) {
+		a, b := rows[k - 1], rows[k]
+		cont[k] = notif_same_origin(a, b.app, b.desktop) && day_label(a.at) == day_label(b.at)
+	}
 	im.PushStyleColorImVec4(.ChildBg, {0, 0, 0, 0})
 	im.SetNextWindowSizeConstraints({inner, 0}, {inner, 640})
 	im.BeginChild("##notif-list", {inner, 0}, {.AutoResizeY}, {})
@@ -181,9 +193,18 @@ draw_notifications :: proc(w: f32) {
 	remove_id: u32
 	clear_day := ""
 	day := ""
-	for i := len(notifs.list) - 1; i >= 0; i -= 1 {
-		n := notifs.list[i]
-		if n.transient {continue}
+	group_id: u32 // the group's newest entry
+	group_size, group_at := 0, 0
+	prev_bottom: f32 // the row above's bottom edge, where a group's thread comes from
+	for n, k in rows {
+		if !cont[k] {
+			group_id, group_at, group_size = n.id, 0, 1
+			for j := k + 1; j < len(rows) && cont[j]; j += 1 {group_size += 1}
+		} else {
+			group_at += 1
+		}
+		open_group := expanded[group_id]
+		if group_at >= GROUP_SHOWN && !open_group {continue}
 		if dlab := day_label(n.at); dlab != day {
 			day = dlab
 			im.Dummy({1, 4})
@@ -206,6 +227,8 @@ draw_notifications :: proc(w: f32) {
 			draw_text(fonts.ui, SZ_SMALL, {cx, hp.y}, col32(ch ? C_TEXT : C_FAINT, ch ? 0.9 : 0.7), cl)
 			im.SetCursorScreenPos(back)
 		}
+		head := group_at == 0 // icon and app line; the rest of the group sits under it
+		last := group_at == group_size - 1 || (group_at == GROUP_SHOWN - 1 && !open_group)
 		p := im.GetCursorScreenPos()
 		// The icon fills the smallest row (app line + summary) between its paddings.
 		ICON_SZ :: 35
@@ -218,7 +241,9 @@ draw_notifications :: proc(w: f32) {
 		im.PopFont()
 		n_act := 0
 		if n.open {for a in n.actions {if a.key != "default" {n_act += 1}}}
-		row_h := 10 + 16 + 19 + (body != "" ? body_h + 3 : 0) + (n_act > 0 ? 34 : 0) + 10
+		top: f32 = head ? 10 + 16 : 4
+		row_h := top + 19 + (body != "" ? body_h + 3 : 0) + (n_act > 0 ? 34 : 0) + (last ? 10 : 4)
+		if head {row_h = max(row_h, 10 + ICON_SZ + 10)}
 		im.SetCursorScreenPos(p)
 		im.SetNextItemAllowOverlap() // the remove and action buttons sit on top
 		clicked := im.InvisibleButton(cstr(fmt.tprintf("##n%d", n.id)), {lw, row_h})
@@ -241,22 +266,51 @@ draw_notifications :: proc(w: f32) {
 				hide_requested = true
 			}
 		}
-		if fresh[n.id] {im.DrawList_AddCircleFilled(d, {p.x + 4, p.y + 10 + ICON_SZ / 2}, 3, col32(C_PURPLE))}
-		draw_badge(n, {p.x + 10, p.y + 10}, ICON_SZ)
-		y := p.y + 9
-		app_col := n.urgency == 2 ? col32(C_RED) : col32(C_MUTED)
-		draw_text(fonts.ui, SZ_SMALL, {tx, y}, app_col, n.app != "" ? n.app : "Notification")
+		// The group's thread: from under the icon past each of its messages.
+		lx := p.x + 10 + ICON_SZ / 2
+		if !last {im.DrawList_AddRectFilled(d, {lx - 1, head ? p.y + 10 + ICON_SZ + 4 : p.y + top + 9}, {lx + 1, p.y + row_h}, col32(C_OVERLAY, 0.12), 1)}
+		if !head {
+			im.DrawList_AddRectFilled(d, {lx - 1, prev_bottom}, {lx + 1, p.y + top + 9}, col32(C_OVERLAY, 0.12), 1)
+			im.DrawList_AddCircleFilled(d, {lx, p.y + top + 9}, 3, col32(C_OVERLAY, 0.22))
+		}
+		prev_bottom = p.y + row_h
+		if fresh[n.id] {im.DrawList_AddCircleFilled(d, {p.x + 4, head ? p.y + 10 + ICON_SZ / 2 : p.y + top + 9}, 3, col32(C_PURPLE))}
 		when_s := ago(n.at)
 		wsz := measure(fonts.ui, SZ_SMALL, when_s)
+		// Time (or remove) on the first line of the row.
+		ty := head ? p.y + 9 : p.y + top + 2
 		if hovered {
-			im.SetCursorScreenPos({p.x + lw - 30, p.y + 4})
+			im.SetCursorScreenPos({p.x + lw - 30, ty - 5})
 			if icon_button(fmt.tprintf("##rm%d", n.id), ICON_CLOSE, C_MUTED, 24, tooltip = "Remove") {remove_id = n.id}
 		} else {
-			draw_text(fonts.ui, SZ_SMALL, {p.x + lw - 8 - wsz.x, y}, col32(C_FAINT), when_s)
+			draw_text(fonts.ui, SZ_SMALL, {p.x + lw - 8 - wsz.x, ty}, col32(C_FAINT), when_s)
 		}
-		y += 16
+		y := p.y + 9
+		if head {
+			draw_badge(n, {p.x + 10, p.y + 10}, ICON_SZ)
+			app_col := n.urgency == 2 ? col32(C_RED) : col32(C_MUTED)
+			app := n.app != "" ? n.app : "Notification"
+			draw_text(fonts.ui, SZ_SMALL, {tx, y}, app_col, app)
+			if group_size > 1 {
+				gx := tx + measure(fonts.ui, SZ_SMALL, app).x + 6
+				draw_text(fonts.ui, SZ_SMALL, {gx, y}, col32(C_FAINT), fmt.tprintf("· %d", group_size))
+			}
+			y += 16
+		} else {
+			y = p.y + top
+		}
 		summary := n.summary != "" ? n.summary : n.app
-		draw_text(fonts.bold, SZ_BODY, {tx, y}, col32(C_TEXT), clip(summary, 60))
+		sum_s := clip(summary, n.count > 1 ? 48 : 60)
+		draw_text(fonts.bold, SZ_BODY, {tx, y}, col32(n.urgency == 2 && !head ? C_RED : C_TEXT), sum_s)
+		// The same text again and again: once, with how many times.
+		if n.count > 1 {
+			cnt := fmt.tprintf("×%d", n.count)
+			cx := tx + measure(fonts.bold, SZ_BODY, sum_s).x + 7
+			csz := measure(fonts.bold, SZ_SMALL, cnt)
+			im.DrawList_AddRectFilled(d, {cx, y}, {cx + csz.x + 12, y + 17}, col32(C_PURPLE, 0.18), 8.5)
+			draw_text(fonts.bold, SZ_SMALL, {cx + 6, y + 1}, col32(C_PURPLE), cnt)
+			if im.IsMouseHoveringRect({cx, y}, {cx + csz.x + 12, y + 17}) {tip(fmt.tprintf("%d times in a row", n.count))}
+		}
 		y += 19
 		if body != "" {
 			im.SetCursorScreenPos({tx, y + 1})
@@ -281,6 +335,20 @@ draw_notifications :: proc(w: f32) {
 			}
 		}
 		im.SetCursorScreenPos({p.x, p.y + row_h})
+		// After the group's last shown message: the rest of it, or fold it back.
+		if group_size > GROUP_SHOWN && (last && group_at == group_size - 1 && open_group || group_at == GROUP_SHOWN - 1 && !open_group) {
+			more := open_group ? "Show fewer" : fmt.tprintf("%d more from %s", group_size - GROUP_SHOWN, n.app != "" ? n.app : "this app")
+			mp := im.GetCursorScreenPos()
+			msz := measure(fonts.ui, SZ_SMALL, more)
+			im.SetCursorScreenPos({tx - 4, mp.y})
+			if im.InvisibleButton(cstr(fmt.tprintf("##more%d", group_id)), {msz.x + 8, msz.y + 6}) {
+				if open_group {delete_key(&expanded, group_id)} else {expanded[group_id] = true}
+			}
+			mh := im.IsItemHovered()
+			if mh {im.SetMouseCursor(.Hand)}
+			draw_text(fonts.ui, SZ_SMALL, {tx, mp.y + 2}, col32(mh ? C_TEXT : C_BLUE, mh ? 0.9 : 0.85), more)
+			im.SetCursorScreenPos({p.x, mp.y + msz.y + 8})
+		}
 		im.Dummy({lw, 2})
 	}
 	im.EndChild()

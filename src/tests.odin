@@ -454,6 +454,70 @@ test_notification_history_binary :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(bad), 0)
 }
 
+@(test)
+test_notification_repeats :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	mk :: proc(id: u32, app, summary: string, transient := false, desktop := "") -> ^Notification {
+		n := new(Notification)
+		n^ = {id = id, app = app, summary = summary, body = "", desktop = desktop, value = -1, transient = transient}
+		return n
+	}
+	list := [dynamic]^Notification{mk(1, "Claude", "Claude is ready"), mk(2, "Volume", "65%", transient = true)}
+	// The same text from the same app folds in, past an OSD in between.
+	testing.expect(t, notif_repeat_of(list[:], "Claude", "", "Claude is ready", "") == list[0])
+	testing.expect(t, notif_repeat_of(list[:], "Claude", "", "Claude is busy", "") == nil)
+	testing.expect(t, notif_repeat_of(list[:], "Other", "", "Claude is ready", "") == nil)
+	// Another app in between interrupts the run.
+	append(&list, mk(3, "Signal", "Ann"))
+	testing.expect(t, notif_repeat_of(list[:], "Claude", "", "Claude is ready", "") == nil)
+	testing.expect(t, notif_repeat_of(list[:], "Signal", "", "Ann", "") == list[2])
+	// Same name, different desktop entries: different senders.
+	list[2].desktop = "org.signal.Signal"
+	testing.expect(t, notif_repeat_of(list[:], "Signal", "other.desktop", "Ann", "") == nil)
+	testing.expect(t, notif_repeat_of(list[:], "Signal", "org.signal.Signal", "Ann", "") == list[2])
+
+	// The count is stored; WLN1 files (without counts) still load.
+	list[0].count = 40
+	data := notifications_encode(list[:], 3, false)
+	back, _, _ := notifications_decode(data, 0)
+	testing.expect_value(t, len(back), 2)
+	if len(back) == 2 {
+		testing.expect_value(t, back[0].count, 40)
+		testing.expect_value(t, back[1].count, 1)
+	}
+	old := make([dynamic]u8)
+	append(&old, ..data[:4])
+	(^u32)(raw_data(old[:]))^ = NOTIFY_MAGIC_V1
+	// Rebuild a WLN1 file: the same, without the count after each entry.
+	r := 4 + 4 + 1 + 4 // magic, next_id, dnd, icon count (no icons here)
+	append(&old, ..data[4:r])
+	append(&old, ..data[r:r + 4]) // entry count
+	pos := r + 4
+	for _ in 0 ..< 2 {
+		start := pos
+		pos += 4 + 8 + 1 + 1 + 4 + 8
+		for _ in 0 ..< 4 {pos += 2 + int((^u16)(&data[pos])^)}
+		append(&old, ..data[start:pos])
+		pos += 4
+	}
+	// A run from one app: the popup knows how many are new.
+	sig := mk(4, "Signal", "Bob")
+	testing.expect(t, notif_run_before(list[:], sig) == list[2]) // not in the list yet
+	append(&list, sig)
+	testing.expect(t, notif_run_before(list[:], sig) == list[2])
+	testing.expect(t, notif_run_before(list[:], list[2]) == nil) // Claude before it
+	testing.expect_value(t, notif_run_unread(list[:], sig), 2)
+	list[2].read = true
+	testing.expect_value(t, notif_run_unread(list[:], sig), 1)
+
+	v1, _, _ := notifications_decode(old[:], 0)
+	testing.expect_value(t, len(v1), 2)
+	if len(v1) == 2 {
+		testing.expect_value(t, v1[0].summary, "Claude is ready")
+		testing.expect_value(t, v1[0].count, 1)
+	}
+}
+
 // Tuya vectors made offline with tinytuya 1.20's own functions and a dummy
 // key (pack_message, AESCipher, decrypt_udp, the session key steps).
 @(private = "file") TUYA_TEST_KEY :: "0123456789abcdef"

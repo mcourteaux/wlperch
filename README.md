@@ -424,6 +424,15 @@ Popups stack in the top-right corner, newest on top, at most four at a time.
 Timeouts are 5 s for low urgency and 8 s for normal; critical notifications stay
 until dismissed, and an app may set its own timeout.
 
+Notifications from the same app in a row, with nothing from another app in
+between, are shown together:
+- **The same text again** (“Claude is ready” for the 40th time) is one entry
+  with a counter (×40), in the popup and in the panel.
+- **Different messages** (a chat): one popup, the newest, says how many are
+  new (“Signal · 5 new”). In the panel they're one group under the app's icon,
+  the newest three shown and the rest behind “N more from Signal”. Each
+  message keeps its own actions and remove button.
+
 A notification that times out stays in the Notifications panel, unread. Opening
 the panel marks everything read. Volume and brightness indicators (a replace tag
 plus a value, like `notify-send -h int:value:65 -h string:x-canonical-private-synchronous:volume`)

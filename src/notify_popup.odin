@@ -324,6 +324,20 @@ render :: proc(p: ^Popup, n: ^Notification) {
 	head := ellipsize(&soft_regular, PX_APP, tw - 60, app)
 	defer delete(head)
 	text(&cv, &soft_regular, PX_APP, tx, y, head, critical ? C_RED : C_MUTED)
+	cx := tx + soft_text_width(&soft_regular, PX_APP, head) + 7
+	// More messages from this app came in before this one: how many are new.
+	if run := notif_run_unread(notifs.list[:], n); run > 1 {
+		more := fmt.tprintf("· %d new", run)
+		text(&cv, &soft_regular, PX_APP, cx - 2, y, more, C_FAINT)
+		cx += soft_text_width(&soft_regular, PX_APP, more) + 5
+	}
+	// The same text again: a counter after the app name.
+	if n.count > 1 {
+		cnt := fmt.tprintf("×%d", n.count)
+		cw := soft_text_width(&soft_bold, PX_APP - 1, cnt)
+		fill_rr(&cv, {cx, y - 1, cw + 12, 16}, 8, C_PURPLE, 0.18)
+		text(&cv, &soft_bold, PX_APP - 1, cx + 6, y, cnt, C_PURPLE)
+	}
 	if p.hovered {
 		p.close_r = {card.x + card.w - PAD - 20, card.y + PAD - 5, 24, 24}
 		hot := p.part == 0

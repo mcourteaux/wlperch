@@ -56,6 +56,9 @@ Notification :: struct {
 	glimpse:   bool, // on screen for GLIMPSE at most; timeout is shortened
 	glimpse_timeout: time.Duration, // its own timeout, back when the game goes
 	glimpsed:  bool, // had its look; waits like the others
+	// Identical ones in a row from the same app fold into one: how many
+	// (0 and 1 both mean just this one).
+	count:     int,
 }
 
 Notifs :: struct {
@@ -430,6 +433,19 @@ handle_notify :: proc(m: ^Sd_Bus_Message) -> u32 {
 			if x.open && x.tag == tag && x.app == string(app) {n = x; break}
 		}
 	}
+	// The same text again from the same app, with nothing else in between
+	// ("Claude is ready" for the 40th time): one entry with a counter.
+	count := 1
+	sum_s := strip_markup(string(summary), context.temp_allocator)
+	body_s := strip_markup(string(body), context.temp_allocator)
+	if n == nil && !transient && !(tag != "" && value >= 0) {
+		if m := notif_repeat_of(notifs.list[:], string(app), desktop, sum_s, body_s); m != nil {
+			n = m
+			count = max(m.count, 1) + 1
+		}
+	} else if n != nil {
+		count = max(n.count, 1)
+	}
 	if n != nil {
 		// Moves to the newest position.
 		_, i := notif_find(n.id)
@@ -448,8 +464,9 @@ handle_notify :: proc(m: ^Sd_Bus_Message) -> u32 {
 	}
 	n.at = time.to_unix_seconds(time.now())
 	n.app = strings.clone(string(app))
-	n.summary = strip_markup(string(summary))
-	n.body = strip_markup(string(body))
+	n.summary = strings.clone(sum_s)
+	n.body = strings.clone(body_s)
+	n.count = count
 	n.desktop = strings.clone(desktop)
 	n.tag = strings.clone(tag)
 	n.icon = image
@@ -470,11 +487,62 @@ handle_notify :: proc(m: ^Sd_Bus_Message) -> u32 {
 	case:                  n.timeout = 8 * time.Second
 	}
 	n.rev = notifs.version + 1
+	// Another message from the app that popped up last (a chat): this popup
+	// takes the place of that one, which stays in the center.
+	if n.popup && !n.transient && n.urgency < 2 {
+		if prev := notif_run_before(notifs.list[:], n); prev != nil && prev.popup && prev.urgency < 2 {prev.popup = false}
+	}
 	append(&notifs.list, n)
 	prune()
 	log.debugf("notification %d from %q: %q", n.id, n.app, n.summary)
 	changed()
 	return n.id
+}
+
+// The newest stored entry, when it comes from the same app and says exactly
+// the same: a new notification folds into it. Transient ones (OSDs) don't
+// count as something in between.
+notif_repeat_of :: proc(list: []^Notification, app, desktop, summary, body: string) -> ^Notification {
+	for i := len(list) - 1; i >= 0; i -= 1 {
+		x := list[i]
+		if x.transient {continue}
+		if notif_same_origin(x, app, desktop) && x.summary == summary && x.body == body {return x}
+		return nil
+	}
+	return nil
+}
+
+// The stored entry right before `n` (n itself need not be in the list yet)
+// when it comes from the same app: n continues its run.
+notif_run_before :: proc(list: []^Notification, n: ^Notification) -> ^Notification {
+	i := notif_index(list, n)
+	if i < 0 {i = len(list)}
+	for j := i - 1; j >= 0; j -= 1 {
+		x := list[j]
+		if x.transient {continue}
+		return notif_same_origin(x, n.app, n.desktop) ? x : nil
+	}
+	return nil
+}
+
+// Unread messages in the run from the same app that ends with n: the
+// popup says how many there are.
+notif_run_unread :: proc(list: []^Notification, n: ^Notification) -> int {
+	c := 0
+	for x := n; x != nil && !x.read; x = notif_run_before(list, x) {c += 1}
+	return c
+}
+
+@(private = "file")
+notif_index :: proc(list: []^Notification, n: ^Notification) -> int {
+	for x, i in list {if x == n {return i}}
+	return -1
+}
+
+// Same sender: the app name, and the desktop entry when both have one.
+notif_same_origin :: proc(x: ^Notification, app, desktop: string) -> bool {
+	if x.app != app {return false}
+	return x.desktop == "" || desktop == "" || x.desktop == desktop
 }
 
 // An entry of wlperch's own (the low-memory warning) in the history: no
@@ -657,7 +725,8 @@ notifications_busy :: proc() -> bool {
 // entries (id, time, urgency, read, value, icon key, app, summary, body,
 // desktop). Rewritten whole; only the last NOTIFY_HISTORY_DAYS are kept.
 
-NOTIFY_MAGIC :: 0x314e4c57 // "WLN1"
+NOTIFY_MAGIC :: 0x324e4c57 // "WLN2" (WLN1: no counts)
+NOTIFY_MAGIC_V1 :: 0x314e4c57
 
 @(private = "file")
 put :: proc(b: ^[dynamic]u8, v: $T) {
@@ -700,6 +769,7 @@ notifications_encode :: proc(list: []^Notification, next_id: u32, dnd: bool, all
 		put_str(&b, n.summary)
 		put_str(&b, n.body)
 		put_str(&b, n.desktop)
+		put(&b, u32(max(n.count, 1)))
 	}
 	return b[:]
 }
@@ -733,7 +803,8 @@ get_str :: proc(r: ^Reader) -> string {
 // tail keeps whatever came before it.
 notifications_decode :: proc(data: []u8, cutoff: i64) -> (list: [dynamic]^Notification, next_id: u32, dnd: bool) {
 	r := Reader{data = data, ok = true}
-	if get(&r, u32) != NOTIFY_MAGIC {return}
+	magic := get(&r, u32)
+	if magic != NOTIFY_MAGIC && magic != NOTIFY_MAGIC_V1 {return}
 	next_id = get(&r, u32)
 	dnd = get(&r, u8) != 0
 	n_icons := int(get(&r, u32))
@@ -762,6 +833,7 @@ notifications_decode :: proc(data: []u8, cutoff: i64) -> (list: [dynamic]^Notifi
 		n.summary = get_str(&r)
 		n.body = get_str(&r)
 		n.desktop = get_str(&r)
+		n.count = magic == NOTIFY_MAGIC ? int(get(&r, u32)) : 1
 		if !r.ok || n.at < cutoff {
 			notif_free(n)
 			continue
