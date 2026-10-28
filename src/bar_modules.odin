@@ -648,6 +648,10 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		if t.class == "running" {
 			it.bg, it.bg_alpha = col, 0.12
 			bar_seg(&it, t.text, bar_ink(col), .Bold, tnum = true)
+		} else if t.class == "claude" {
+			// Claude working on a project while you're not: counted, quietly.
+			it.bg, it.bg_alpha = col, 0.08
+			bar_seg(&it, t.text, bar_ink(col), tnum = true)
 		} else if t.class == "waiting" {
 			// Away, but a bridged break if you're back in time: dimmed, not ticking.
 			it.bg, it.bg_alpha = col, 0.05

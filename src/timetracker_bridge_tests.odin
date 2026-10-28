@@ -26,9 +26,9 @@ RULES :: Bridge_Rules {
 }
 
 @(private = "file")
-w :: proc(s, e: i64, p := "P") -> Time_Entry {return {T0 + s, T0 + e, p, false, false}}
+w :: proc(s, e: i64, p := "P") -> Time_Entry {return {T0 + s, T0 + e, p, false, false, false}}
 @(private = "file")
-b :: proc(s, e: i64, p := "P") -> Time_Entry {return {T0 + s, T0 + e, p, true, false}}
+b :: proc(s, e: i64, p := "P") -> Time_Entry {return {T0 + s, T0 + e, p, true, false, false}}
 
 @(private = "file")
 bridged :: proc(entries: []Time_Entry, rules := RULES) -> []bool {
@@ -99,7 +99,7 @@ test_bridge_consecutive :: proc(t: ^testing.T) {
 @(test)
 test_bridge_export :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
-	e :: proc(s, en: i64, idle: bool) -> Export_Entry {return {T0 + s, T0 + en, "P", "ACME", idle, false}}
+	e :: proc(s, en: i64, idle: bool) -> Export_Entry {return {T0 + s, T0 + en, "P", "ACME", idle, false, false}}
 	entries := []Export_Entry {
 		e(23 * H, 23 * H + 58 * M, false),
 		e(23 * H + 58 * M, 24 * H + 4 * M, true), // 6 min over midnight
@@ -110,8 +110,8 @@ test_bridge_export :: proc(t: ^testing.T) {
 	// Per day: the gap is work, split at midnight (58+2 and 4+56 min).
 	csv, work, _ := export_csv(entries, {group = .Day, bridge = RULES}, context.temp_allocator)
 	testing.expect_value(t, work, i64(2 * H + 30 * M))
-	testing.expect(t, strings.contains(csv, "2026-10-24,P,ACME,60,1.00,work\n"))
-	testing.expect(t, strings.contains(csv, "2026-10-25,P,ACME,90,1.50,work\n"))
+	testing.expect(t, strings.contains(csv, "2026-10-24,P,ACME,60,1.00,work,,\n"))
+	testing.expect(t, strings.contains(csv, "2026-10-25,P,ACME,90,1.50,work,,\n"))
 	testing.expect(t, !strings.contains(csv, "break"))
 	// Bridging off: the 6 minutes are a break.
 	_, work, _ = export_csv(entries, {group = .Day}, context.temp_allocator)
@@ -119,16 +119,16 @@ test_bridge_export :: proc(t: ^testing.T) {
 	// Per entry with --breaks: the gap is type bridged, the long break type break.
 	csv, work, _ = export_csv(entries, {group = .Entries, breaks = true, bridge = RULES}, context.temp_allocator)
 	testing.expect_value(t, work, i64(2 * H + 30 * M))
-	testing.expect(t, strings.contains(csv, "2026-10-24,23:58,24:00,2,0.03,P,ACME,bridged\n"))
-	testing.expect(t, strings.contains(csv, "2026-10-25,00:00,00:04,4,0.07,P,ACME,bridged\n"))
-	testing.expect(t, strings.contains(csv, "2026-10-25,01:00,01:30,30,0.50,P,ACME,break\n"))
+	testing.expect(t, strings.contains(csv, "2026-10-24,23:58,24:00,2,0.03,P,ACME,bridged,,\n"))
+	testing.expect(t, strings.contains(csv, "2026-10-25,00:00,00:04,4,0.07,P,ACME,bridged,,\n"))
+	testing.expect(t, strings.contains(csv, "2026-10-25,01:00,01:30,30,0.50,P,ACME,break,,\n"))
 	// Without --breaks, per entry: the gap is plain work.
 	csv, _, _ = export_csv(entries, {group = .Entries, bridge = RULES}, context.temp_allocator)
-	testing.expect(t, strings.contains(csv, "2026-10-24,23:58,24:00,2,0.03,P,ACME,work\n"))
+	testing.expect(t, strings.contains(csv, "2026-10-24,23:58,24:00,2,0.03,P,ACME,work,,\n"))
 	// Per day with --breaks: the gap is in the work row, not among the breaks.
 	csv, _, _ = export_csv(entries, {group = .Day, breaks = true, bridge = RULES}, context.temp_allocator)
-	testing.expect(t, strings.contains(csv, "2026-10-25,P,ACME,90,1.50,work\n"))
-	testing.expect(t, strings.contains(csv, "2026-10-25,P,ACME,30,0.50,break\n"))
+	testing.expect(t, strings.contains(csv, "2026-10-25,P,ACME,90,1.50,work,,\n"))
+	testing.expect(t, strings.contains(csv, "2026-10-25,P,ACME,30,0.50,break,,\n"))
 	testing.expect(t, !strings.contains(csv, "2026-10-24,P,ACME,2,0.03,break"))
 	// A range that starts after the work before the gap still sees it.
 	_, work, _ = export_csv(entries, {from = T0 + 24 * H, to = T0 + 48 * H, bridge = RULES}, context.temp_allocator)
@@ -176,7 +176,7 @@ test_bridge_totals_agree :: proc(t: ^testing.T) {
 	lb := strings.builder_make()
 	for l in log_lines {
 		fmt.sbprintf(&lb, "%s\t%s\t%s\t\t%s\n", iso_utc(l.s), iso_utc(l.e), l.p, l.idle ? "idle" : "")
-		append(&tracker.entries, Time_Entry{l.s, l.e, l.p, l.idle, false})
+		append(&tracker.entries, Time_Entry{l.s, l.e, l.p, l.idle, false, false})
 	}
 	cur := fmt.tprintf("%d\t%d\tP\t\n", now - 17 * M, now)
 	testing.expect(t, os.write_entire_file(DIR + "/wlperch/timelog.tsv", strings.to_string(lb)) == nil)
@@ -254,7 +254,7 @@ test_bridge_config :: proc(t: ^testing.T) {
 @(test)
 test_bridge_preview :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
-	e :: proc(s, en: i64, idle: bool, p := "P") -> Export_Entry {return {T0 + s, T0 + en, p, "", idle, false}}
+	e :: proc(s, en: i64, idle: bool, p := "P") -> Export_Entry {return {T0 + s, T0 + en, p, "", idle, false, false}}
 	entries := []Export_Entry {
 		e(9 * H, 10 * H, false),
 		e(10 * H, 10 * H + 4 * M, true), // 4 min
@@ -267,7 +267,8 @@ test_bridge_preview :: proc(t: ^testing.T) {
 	}
 	work := i64(3 * H - 16 * M)
 	o := Export_Opts{project = "P", bridge = RULES} // P: 10 min
-	without, with, gaps := export_bridge_summary(entries, o)
+	sm := export_bridge_summary(entries, o)
+	without, with, gaps := sm.without, sm.with, sm.gaps
 	testing.expect_value(t, without, work)
 	testing.expect_value(t, with, work + 4 * M)
 	testing.expect_value(t, gaps, 1)
@@ -277,7 +278,8 @@ test_bridge_preview :: proc(t: ^testing.T) {
 
 	// Override: 15 min for every project bridges P's 12-minute break too.
 	o.bridge = bridge_rules_override(15)
-	without, with, gaps = export_bridge_summary(entries, o)
+	sm = export_bridge_summary(entries, o)
+	without, with, gaps = sm.without, sm.with, sm.gaps
 	testing.expect_value(t, with, work + 16 * M)
 	testing.expect_value(t, gaps, 2)
 	_, csv_work, _ = export_csv(entries, o, context.temp_allocator)
@@ -285,19 +287,22 @@ test_bridge_preview :: proc(t: ^testing.T) {
 	// All projects: Q's breaks don't count: the first follows P's work (between
 	// two projects), the last has no work after it.
 	o.project = ""
-	without, with, gaps = export_bridge_summary(entries, o)
+	sm = export_bridge_summary(entries, o)
+	without, with, gaps = sm.without, sm.with, sm.gaps
 	testing.expect_value(t, with - without, i64(16 * M))
 	testing.expect_value(t, gaps, 2)
 	// 0 = no bridging, whatever the config says; values are clamped.
 	o.bridge = bridge_rules_override(0)
-	without, with, gaps = export_bridge_summary(entries, o)
+	sm = export_bridge_summary(entries, o)
+	without, with, gaps = sm.without, sm.with, sm.gaps
 	testing.expect_value(t, with, without)
 	testing.expect_value(t, gaps, 0)
 	testing.expect_value(t, fmt_bridge_summary(without, with, gaps), "3:41 h worked")
 	testing.expect_value(t, bridge_rules_override(500).default_secs, i64(120 * 60))
 	// A range cut: only the part of a bridged gap inside it counts.
 	o = {project = "P", from = T0 + 10 * H + 2 * M, to = T0 + 11 * H, bridge = RULES}
-	without, with, gaps = export_bridge_summary(entries, o)
+	sm = export_bridge_summary(entries, o)
+	without, with, gaps = sm.without, sm.with, sm.gaps
 	testing.expect_value(t, without, i64(56 * M))
 	testing.expect_value(t, with, i64(58 * M))
 }

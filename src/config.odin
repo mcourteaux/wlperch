@@ -381,6 +381,8 @@ idle_seconds = 300
 # or the pencil next to it in the Time panel. Applied when counting: the log
 # keeps every break, so a change applies to past days too and can be undone.
 bridge_breaks = 0
+# The currency of the projects' hourly rates: a symbol (€, $) or a code (EUR).
+currency = €
 
 # Projects for time tracking. "wlperch track <project>" (or the Time panel)
 # creates one workspace per monitor ("<name> 1", "<name> 2", ...); time counts
@@ -391,6 +393,11 @@ bridge_breaks = 0
 # client = ACME Corp      ; omit for personal projects
 # color = #7aa2f7         ; optional
 # bridge_breaks = 10      ; optional: breaks under 10 min count as work
+# paying = true           ; optional: a paid job, marked with a cash icon
+# rate = 85               ; optional: hourly rate (export: rate and amount)
+# claude_counts = true    ; optional: Claude Code working in a terminal on one
+#                         ; of its workspaces counts as work, also while you're
+#                         ; elsewhere (time you work yourself counts once)
 
 [sensors]
 # Tuya WiFi sensors (thermo-hygrometers, air monitors, heaters), read over the

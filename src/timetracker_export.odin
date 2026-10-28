@@ -2,17 +2,20 @@
 // `wlperch track export` or the Export section of the Time panel.
 //
 // The rows come from the time log (timelog.tsv: start, end, project,
-// client, optional "idle") plus the segment that is still counting. Each
-// entry is cut to the date range and at local midnights, so every row
-// belongs to one calendar day. Three shapes:
-//   entries  date,start,end,minutes,hours,project,client,type
-//   day      date,project,client,minutes,hours,type
-//   project  project,client,minutes,hours,days,type
+// client, optional "idle" or "claude") plus the segment that is still
+// counting and what Claude is doing now. Each entry is cut to the date range
+// and at local midnights, so every row belongs to one calendar day. Three shapes:
+//   entries  date,start,end,minutes,hours,project,client,type,rate,amount
+//   day      date,project,client,minutes,hours,type,rate,amount
+//   project  project,client,minutes,hours,days,type,rate,amount
 // Times are local; hours have two decimals and are computed from seconds
 // (sum them, don't sum the rounded minutes). type is work or break (breaks
 // only with --breaks). Short breaks bridged as work (bridge_breaks) count as
 // work; with --breaks, entry rows mark them type bridged (still worked hours),
-// day and project rows fold them into the work rows.
+// day and project rows fold them into the work rows. Claude's background
+// work (claude_counts) is worked time too: entry rows mark it type claude,
+// day and project rows fold it into work. rate and amount (hours × rate, two
+// decimals) are filled in for work rows of paying projects with a rate.
 package main
 
 import "core:fmt"
@@ -35,6 +38,7 @@ Export_Entry :: struct {
 	project, client: string,
 	idle:            bool,
 	bridged:         bool, // set by export_csv: a short break counted as work
+	claude:          bool, // Claude working on it (see tracker_fold)
 }
 
 Export_Opts :: struct {
@@ -55,14 +59,14 @@ export_parse :: proc(log_text, current_text: string, out: ^[dynamic]Export_Entry
 		s, ok1 := parse_iso_utc(f[0])
 		e, ok2 := parse_iso_utc(f[1])
 		if !ok1 || !ok2 || e <= s {continue}
-		append(out, Export_Entry{s, e, f[2], len(f) > 3 ? f[3] : "", len(f) > 4 && f[4] == "idle", false})
+		append(out, Export_Entry{s, e, f[2], len(f) > 3 ? f[3] : "", len(f) > 4 && f[4] == "idle", false, len(f) > 4 && f[4] == "claude"})
 	}
 	if f := strings.split(strings.trim_space(current_text), "\t", context.temp_allocator); len(f) >= 3 {
 		s, ok1 := strconv.parse_i64(f[0])
 		e, ok2 := strconv.parse_i64(f[1])
 		// Just started (no heartbeat yet) still counts: it decides whether the
 		// break before it is bridged.
-		if ok1 && ok2 && e >= s {append(out, Export_Entry{s, e, f[2], len(f) > 3 ? f[3] : "", false, false})}
+		if ok1 && ok2 && e >= s {append(out, Export_Entry{s, e, f[2], len(f) > 3 ? f[3] : "", false, false, false})}
 	}
 }
 
@@ -81,6 +85,38 @@ export_collect :: proc(live: bool, out: ^[dynamic]Export_Entry) {
 		cur = string(data)
 	}
 	export_parse(string(log_text), cur, out)
+	// Claude's open stretches (the daemon's, or its last heartbeat).
+	now := time.to_unix_seconds(time.now())
+	segs := tracker.claude_segs[:]
+	if !live {
+		data, _ := os.read_entire_file(tracker.claude_path, context.temp_allocator)
+		segs = claude_state_parse(string(data))
+	}
+	for c in segs {append(out, Export_Entry{c.start, live ? max(now, c.last) : c.last, c.project, c.client, false, false, true})}
+}
+
+// The hourly rate a project's work is billed at: 0 unless it's paying and has one.
+project_rate :: proc(name: string) -> f64 {
+	if i := project_find(name); i >= 0 && tracker.projects[i].paying {return tracker.projects[i].rate}
+	return 0
+}
+
+// "€1,234.50", or "1,234.50 EUR" for a currency code.
+fmt_money :: proc(amount: f64) -> string {
+	cents := i64(amount * 100 + (amount >= 0 ? 0.5 : -0.5))
+	whole := abs(cents) / 100
+	b := strings.builder_make(context.temp_allocator)
+	if cents < 0 {strings.write_byte(&b, '-')}
+	digits := fmt.tprintf("%d", whole)
+	for r, i in digits {
+		if i > 0 && (len(digits) - i) % 3 == 0 {strings.write_byte(&b, ',')}
+		strings.write_rune(&b, r)
+	}
+	num := fmt.tprintf("%s.%02d", strings.to_string(b), abs(cents) % 100)
+	cur := tracker.currency
+	code := len(cur) == 3
+	for c in transmute([]u8)cur {code &&= c >= 'A' && c <= 'Z'}
+	return code ? fmt.tprintf("%s %s", num, cur) : fmt.tprintf("%s%s", cur, num)
 }
 
 @(private = "file")
@@ -90,6 +126,7 @@ Export_Piece :: struct {
 	project, client: string,
 	idle:            bool, // a break (not bridged)
 	bridged:         bool, // a short break counted as work
+	claude:          bool, // Claude's work counted for the project
 }
 
 // Local midnight of the day after the one starting at `day` (DST-safe).
@@ -148,10 +185,9 @@ fmt_minutes :: proc(secs: i64) -> string {return fmt.tprintf("%d", (secs + 30) /
 export_pieces :: proc(entries: []Export_Entry, o: Export_Opts) -> []Export_Piece {
 	out: [dynamic]Export_Piece
 	out.allocator = context.temp_allocator
-	bridged := bridge_mask(entries, o.bridge)
-	for e, i in entries {
+	for e in tracker_fold(entries, o.bridge) {
 		e := e
-		if bridged[i] {e.idle, e.bridged = false, true}
+		if e.bridged {e.idle = false}
 		if e.idle && !o.breaks {continue}
 		if o.project != "" && e.project != o.project {continue}
 		a := max(e.start, o.from)
@@ -159,7 +195,7 @@ export_pieces :: proc(entries: []Export_Entry, o: Export_Opts) -> []Export_Piece
 		for a < b {
 			day := local_day_start(a)
 			end := min(b, next_local_day(day))
-			append(&out, Export_Piece{a, end, day, e.project, e.client, e.idle, e.bridged})
+			append(&out, Export_Piece{a, end, day, e.project, e.client, e.idle, e.bridged, e.claude})
 			a = end
 		}
 	}
@@ -167,31 +203,51 @@ export_pieces :: proc(entries: []Export_Entry, o: Export_Opts) -> []Export_Piece
 	return out[:]
 }
 
+Export_Summary :: struct {
+	without, with: i64, // worked seconds without bridging and with o.bridge
+	gaps:          int, // bridged breaks making the difference
+	claude:        i64, // of `with`: Claude's background work
+	amount:        f64, // `with` at the paying projects' rates
+}
+
 // Worked seconds in the range (and project) without bridging and with
 // o.bridge, and how many bridged breaks make the difference. The same
 // clipping as export_csv, so `with` equals its work_secs.
-export_bridge_summary :: proc(entries: []Export_Entry, o: Export_Opts) -> (without, with: i64, gaps: int) {
-	mask := bridge_mask(entries, o.bridge)
-	for e, i in entries {
-		if o.project != "" && e.project != o.project {continue}
+export_bridge_summary :: proc(entries: []Export_Entry, o: Export_Opts) -> (sum: Export_Summary) {
+	clip :: proc(e: Export_Entry, o: Export_Opts) -> i64 {
+		if o.project != "" && e.project != o.project {return 0}
 		a := max(e.start, o.from)
 		b := o.to > 0 ? min(e.end, o.to) : e.end
-		if b <= a {continue}
-		if !e.idle {
-			without += b - a
-			with += b - a
-		} else if mask[i] {
-			with += b - a
-			gaps += 1
-		}
+		return max(b - a, 0)
+	}
+	for e in tracker_fold(entries, o.bridge) {
+		d := clip(e, o)
+		if d == 0 || (e.idle && !e.bridged) {continue}
+		sum.with += d
+		if e.bridged {sum.gaps += 1}
+		if e.claude {sum.claude += d}
+		sum.amount += f64(d) / 3600 * project_rate(e.project)
+	}
+	// Without bridging, Claude may fill some of what bridging counted.
+	nb := o.bridge
+	nb.default_secs = 0
+	nb.secs = make([]i64, len(o.bridge.secs), context.temp_allocator)
+	for e in tracker_fold(entries, nb) {
+		if !e.idle {sum.without += clip(e, o)}
 	}
 	return
 }
 
 // Every project bridges breaks shorter than `minutes` (an override, e.g.
-// `--bridge` or the export's slider), whatever config.ini says.
+// `--bridge` or the export's slider), whatever config.ini says. Claude's
+// counting stays as configured.
 bridge_rules_override :: proc(minutes: int) -> Bridge_Rules {
-	return {default_secs = i64(clamp(minutes, LIM_BRIDGE_BREAKS.lo, LIM_BRIDGE_BREAKS.hi)) * 60, gen = -1}
+	base := bridge_rules()
+	m := i64(clamp(minutes, LIM_BRIDGE_BREAKS.lo, LIM_BRIDGE_BREAKS.hi)) * 60
+	r := Bridge_Rules{default_secs = m, names = base.names, claude = base.claude, gen = -1}
+	r.secs = make([]i64, len(base.names), context.temp_allocator)
+	for &x in r.secs {x = m}
+	return r
 }
 
 // "19:24 h → 20:05 h (+0:41 h from 12 bridged gaps)", or one total when
@@ -203,18 +259,34 @@ fmt_bridge_summary :: proc(without, with: i64, gaps: int) -> string {
 	return fmt.tprintf("%s h → %s h (+%s h from %d bridged gap%s)", fmt_duration(without), fmt_duration(with), fmt_duration(diff), gaps, gaps == 1 ? "" : "s")
 }
 
+// What follows the bridging line: "incl. 3:10 h by Claude · €1,234.50".
+fmt_summary_extra :: proc(s: Export_Summary) -> string {
+	parts: [dynamic]string
+	parts.allocator = context.temp_allocator
+	if s.claude > 0 {append(&parts, fmt.tprintf("incl. %s h by Claude", fmt_duration(s.claude)))}
+	if s.amount > 0 {append(&parts, fmt_money(s.amount))}
+	return strings.join(parts[:], "  ·  ", context.temp_allocator)
+}
+
 // The CSV text, plus the exported work time (breaks excluded) and row count.
 export_csv :: proc(entries: []Export_Entry, o: Export_Opts, allocator := context.allocator) -> (csv: string, work_secs: i64, rows: int) {
 	pieces := export_pieces(entries, o)
 	for p in pieces {if !p.idle {work_secs += p.end - p.start}}
-	kind :: proc(idle: bool, bridged := false) -> string {return idle ? "break" : bridged ? "bridged" : "work"}
+	kind :: proc(idle: bool, bridged := false, claude := false) -> string {return idle ? "break" : bridged ? "bridged" : claude ? "claude" : "work"}
+	// rate and amount: work of a paying project with a rate.
+	money :: proc(project: string, idle: bool, secs: i64) -> (rate, amount: string) {
+		r := project_rate(project)
+		if idle || r <= 0 {return "", ""}
+		return fmt.tprintf("%.2f", r), fmt.tprintf("%.2f", f64(secs) / 3600 * r)
+	}
 	b := strings.builder_make(allocator)
 	switch o.group {
 	case .Entries:
-		csv_row(&b, "date", "start", "end", "minutes", "hours", "project", "client", "type")
+		csv_row(&b, "date", "start", "end", "minutes", "hours", "project", "client", "type", "rate", "amount")
 		for p in pieces {
 			end := p.end == next_local_day(p.day) ? "24:00" : fmt_hm(p.end)
-			csv_row(&b, fmt_date(p.day), fmt_hm(p.start), end, fmt_minutes(p.end - p.start), fmt_hours(p.end - p.start), p.project, p.client, kind(p.idle, p.bridged && o.breaks))
+			rate, amount := money(p.project, p.idle, p.end - p.start)
+			csv_row(&b, fmt_date(p.day), fmt_hm(p.start), end, fmt_minutes(p.end - p.start), fmt_hours(p.end - p.start), p.project, p.client, kind(p.idle, p.bridged && o.breaks, p.claude), rate, amount)
 			rows += 1
 		}
 	case .Day, .Project:
@@ -241,16 +313,17 @@ export_csv :: proc(entries: []Export_Entry, o: Export_Opts, allocator := context
 			return !x.idle && y.idle
 		})
 		if o.group == .Day {
-			csv_row(&b, "date", "project", "client", "minutes", "hours", "type")
+			csv_row(&b, "date", "project", "client", "minutes", "hours", "type", "rate", "amount")
 		} else {
-			csv_row(&b, "project", "client", "minutes", "hours", "days", "type")
+			csv_row(&b, "project", "client", "minutes", "hours", "days", "type", "rate", "amount")
 		}
 		for k in keys {
 			s := sums[k]
+			rate, amount := money(k.project, k.idle, s.secs)
 			if o.group == .Day {
-				csv_row(&b, fmt_date(k.day), k.project, k.client, fmt_minutes(s.secs), fmt_hours(s.secs), kind(k.idle))
+				csv_row(&b, fmt_date(k.day), k.project, k.client, fmt_minutes(s.secs), fmt_hours(s.secs), kind(k.idle), rate, amount)
 			} else {
-				csv_row(&b, k.project, k.client, fmt_minutes(s.secs), fmt_hours(s.secs), fmt.tprintf("%d", len(s.days)), kind(k.idle))
+				csv_row(&b, k.project, k.client, fmt_minutes(s.secs), fmt_hours(s.secs), fmt.tprintf("%d", len(s.days)), kind(k.idle), rate, amount)
 			}
 			rows += 1
 		}
@@ -428,7 +501,7 @@ track_export_cli :: proc(args: []string) -> int {
 		o.bridge = bridge_rules_override(m)
 	}
 	csv, work, rows := export_csv(entries[:], o, context.temp_allocator)
-	without, with, gaps := export_bridge_summary(entries[:], o)
+	sum := export_bridge_summary(entries[:], o)
 	if out_path == "" {
 		fmt.print(csv)
 	} else if os.write_entire_file(out_path, csv) != nil {
@@ -437,7 +510,8 @@ track_export_cli :: proc(args: []string) -> int {
 	}
 	fmt.eprintfln("%d rows, %s h worked (%s h)%s", rows, fmt_duration(work), fmt_hours(work), out_path != "" ? fmt.tprintf(" -> %s", out_path) : "")
 	how := bridge_s != "" ? fmt.tprintf("--bridge %s", bridge_s) : "bridge_breaks from config.ini"
-	fmt.eprintfln("bridging (%s): %s", how, fmt_bridge_summary(without, with, gaps))
+	fmt.eprintfln("bridging (%s): %s", how, fmt_bridge_summary(sum.without, sum.with, sum.gaps))
+	if extra := fmt_summary_extra(sum); extra != "" {fmt.eprintln(extra)}
 	return 0
 }
 

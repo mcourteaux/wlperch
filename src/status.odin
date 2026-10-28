@@ -200,13 +200,16 @@ status_notifications_loop :: proc() {
 // clock when nothing is counted. While you're away from a project that
 // bridges short breaks and might still come back in time, it shows the
 // project dimmed ("waiting"): the gap is added when you're back, not ticked
-// up meanwhile. Needs clocks_init (local day start) and the projects loaded
-// (bridge_rules).
+// up meanwhile. With nothing of yours counting, a project Claude is working
+// on (with claude_counts) shows instead ("claude"). Paid jobs get ICON_PAYING
+// and Claude at work on the shown project ICON_CLAUDE. Needs clocks_init
+// (local day start) and the projects loaded (bridge_rules).
 status_timer_item :: proc() -> (it: Status_Item) {
 	dir := data_dir()
 	defer delete(dir)
 	cur_path := strings.concatenate({dir, "/timetracker.current"}, context.temp_allocator)
 	away_path := strings.concatenate({dir, "/timetracker.away"}, context.temp_allocator)
+	claude_path := strings.concatenate({dir, "/timetracker.claude"}, context.temp_allocator)
 	log_path := strings.concatenate({dir, "/timelog.tsv"}, context.temp_allocator)
 	it = {text = ICON_CLOCK, class = "idle", tooltip = "Time tracking: not on a project workspace"}
 	now := time.to_unix_seconds(time.now())
@@ -224,34 +227,53 @@ status_timer_item :: proc() -> (it: Status_Item) {
 	away_start, away_project, away := read_state(away_path, now)
 	rules := bridge_rules()
 	waiting := !running && away && away_project != NO_PROJECT && bridge_limit(rules, away_project) > now - away_start
-	if !running && !waiting {return}
+	// Claude's open stretches, rewritten at least every heartbeat.
+	claude_data, _ := os.read_entire_file(claude_path, context.temp_allocator)
+	claude: [dynamic]Claude_Seg
+	claude.allocator = context.temp_allocator
+	for c in claude_state_parse(string(claude_data)) {
+		if now - c.last < 90 && claude_counts(rules, c.project) {append(&claude, c)}
+	}
+	if !running && !waiting {
+		if len(claude) == 0 {return}
+		project = claude[0].project
+	}
 	entries: [dynamic]Time_Entry
 	entries.allocator = context.temp_allocator
 	if ld, lerr := os.read_entire_file(log_path, context.temp_allocator); lerr == nil {
 		context.allocator = context.temp_allocator // the project names too
 		timelog_parse(string(ld), &entries)
 	}
-	if running {append(&entries, Time_Entry{start, now, project, false, false})}
+	if running {append(&entries, Time_Entry{start, now, project, false, false, false})}
 	if waiting {
 		project = away_project
-		append(&entries, Time_Entry{away_start, now, project, true, false})
+		append(&entries, Time_Entry{away_start, now, project, true, false, false})
+	}
+	claude_here := false
+	for c in claude {
+		append(&entries, Time_Entry{c.start, now, c.project, false, false, true})
+		claude_here ||= c.project == project
 	}
 	day := local_day_start(now)
 	total: i64
-	mask := bridge_mask(entries[:], rules)
-	for e, i in entries {
-		if e.project == project && (!e.idle || mask[i]) && e.end > day {total += e.end - max(e.start, day)}
+	for e in tracker_fold(entries[:], rules) {
+		if e.project == project && (!e.idle || e.bridged) && e.end > day {total += e.end - max(e.start, day)}
 	}
 	it.project = project
-	if running {
-		it.text = fmt.tprintf("%s %s %s", ICON_CLOCK, project, fmt_duration(total))
+	marks := fmt.tprintf("%s%s", rules_paying(rules, project) ? " " + ICON_PAYING : "", claude_here ? " " + ICON_CLAUDE : "")
+	it.text = fmt.tprintf("%s %s%s %s", ICON_CLOCK, project, marks, fmt_duration(total))
+	claude_line := claude_here ? "\nClaude is working on it: that counts too" : ""
+	switch {
+	case running:
 		it.class = "running"
-		it.tooltip = fmt.tprintf("%s: %s today", project, fmt_duration(total))
-	} else {
+		it.tooltip = fmt.tprintf("%s: %s today%s", project, fmt_duration(total), claude_line)
+	case waiting:
 		limit := bridge_limit(rules, project)
-		it.text = fmt.tprintf("%s %s %s", ICON_CLOCK, project, fmt_duration(total))
 		it.class = "waiting"
-		it.tooltip = fmt.tprintf("%s: %s today\nAway %s: back within %s and it counts as work\n(breaks under %d min bridge on %s)", project, fmt_duration(total), fmt_duration(now - away_start, true), fmt_duration(limit - (now - away_start), true), limit / 60, project)
+		it.tooltip = fmt.tprintf("%s: %s today\nAway %s: back within %s and it counts as work\n(breaks under %d min bridge on %s)%s", project, fmt_duration(total), fmt_duration(now - away_start, true), fmt_duration(limit - (now - away_start), true), limit / 60, project, claude_line)
+	case:
+		it.class = "claude"
+		it.tooltip = fmt.tprintf("%s: %s today\nClaude is working on it, so it counts while you're elsewhere", project, fmt_duration(total))
 	}
 	return
 }

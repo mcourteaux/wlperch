@@ -4,6 +4,7 @@ package main
 import "core:fmt"
 import "core:math"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:time"
 
@@ -39,7 +40,9 @@ draw_time :: proc(w: f32) {
 		im.DrawList_AddCircleFilled(dl(), {p.x + 7, p.y + 16}, 6, col32(pr.color))
 		draw_text(fonts.bold, 22, {p.x + 22, p.y + 2}, col32(C_TEXT), pr.name)
 		sub := pr.client != "" ? pr.client : "personal"
-		draw_text(fonts.ui, SZ_SMALL, {p.x + 22, p.y + 30}, col32(C_MUTED), fmt.tprintf("%s   ·   today %s", sub, fmt_duration(totals_today[pr.name])))
+		line := fmt.tprintf("%s   ·   today %s", sub, fmt_duration(totals_today[pr.name]))
+		if pr.paying && pr.rate > 0 {line = fmt.tprintf("%s   ·   %s", line, fmt_money(f64(totals_today[pr.name]) / 3600 * pr.rate))}
+		draw_text(fonts.ui, SZ_SMALL, {p.x + 22, p.y + 30}, col32(C_MUTED), line)
 		// Since the stretch began: after a bridged break that includes the gap.
 		el := fmt_duration(now - tracker_stretch_start(tracker_view(now)), true)
 		esz := measure(fonts.mono, 24, el)
@@ -71,6 +74,22 @@ draw_time :: proc(w: f32) {
 		draw_text(fonts.ui, SZ_SMALL, {p.x, p.y + 30}, col32(C_FAINT), hint)
 	}
 	im.Dummy({inner, 50})
+
+	// Claude working on projects that count it (also while you're elsewhere).
+	for c in tracker.claude_segs {
+		pi := project_find(c.project)
+		if pi < 0 || !tracker.projects[pi].claude {continue}
+		pr := tracker.projects[pi]
+		cp := im.GetCursorScreenPos()
+		draw_text(fonts.ui, 14, {cp.x + 1, cp.y + 3}, col32(pr.color), ICON_CLAUDE)
+		draw_text(fonts.ui, SZ_SMALL, {cp.x + 22, cp.y + 3}, col32(C_TEXT), fmt.tprintf("Claude is working on %s", pr.name))
+		el := fmt_duration(now - c.start, true)
+		esz := measure(fonts.mono, SZ_SMALL + 1, el)
+		draw_text(fonts.mono, SZ_SMALL + 1, {cp.x + inner - esz.x, cp.y + 2}, col32(pr.color), el)
+		cap := "counts"
+		draw_text(fonts.ui, SZ_SMALL, {cp.x + inner - esz.x - measure(fonts.ui, SZ_SMALL, cap).x - 10, cp.y + 3}, col32(C_GREEN), cap)
+		im.Dummy({inner, 22})
+	}
 
 	// Gathering banner.
 	if tracker_pin_active() {
@@ -123,7 +142,7 @@ draw_time :: proc(w: f32) {
 		pencil_hovered := im.IsItemHovered()
 		if pencil_hovered {
 			im.SetMouseCursor(.Hand)
-			tip(fmt.tprintf("Edit %s: count its short breaks as work,\nor rename it (time log, config.ini section\nand, if you like, its sway workspaces)", pr.name))
+			tip(fmt.tprintf("Edit %s: count its short breaks as work,\npaying and its rate, Claude's background work,\nor rename it (time log, config.ini section\nand, if you like, its sway workspaces)", pr.name))
 		}
 		row_hovered := im.IsMouseHoveringRect({rp.x - 6, rp.y}, {rp.x + inner + 6, rp.y + h})
 		if row_hovered || editing {
@@ -154,6 +173,22 @@ draw_time :: proc(w: f32) {
 			if pr.client != "" {
 				draw_text(fonts.ui, SZ_SMALL, {nx, rp.y + 10}, col32(C_FAINT), pr.client)
 				nx += measure(fonts.ui, SZ_SMALL, pr.client).x + 8
+			}
+			// A paid job, and Claude's work counting (bright while it works).
+			mark :: proc(x, y: f32, icon: string, col: u32, alpha: f32, tooltip: string) -> f32 {
+				sz := measure(fonts.ui, 14, icon)
+				draw_text(fonts.ui, 14, {x, y}, col32(col, alpha), icon)
+				if im.IsMouseHoveringRect({x - 2, y - 2}, {x + sz.x + 2, y + sz.y + 2}) {tip(tooltip)}
+				return x + sz.x + 8
+			}
+			if pr.paying {
+				t := pr.rate > 0 ? fmt.tprintf("Paying job: %s/h", fmt_money(pr.rate)) : "Paying job (no rate set: the pencil sets one)"
+				nx = mark(nx, rp.y + 9, ICON_PAYING, C_GREEN, 0.9, t)
+			}
+			if pr.claude {
+				working := tracker_claude_active(pr.name)
+				t := working ? fmt.tprintf("Claude is working on %s: it counts", pr.name) : fmt.tprintf("Claude's background work on %s counts as work", pr.name)
+				nx = mark(nx, rp.y + 9, ICON_CLAUDE, working ? pr.color : C_FAINT, working ? 1 : 0.8, t)
 			}
 			// Bridging on: say so on the row, so it isn't a hidden rule.
 			if b := project_bridge(pr); b > 0 {
@@ -317,13 +352,12 @@ Exp :: struct {
 	frac:    f32, // its slider
 	// The preview (with and without bridging), recomputed when its inputs change.
 	pv_key:  Preview_Key,
-	pv_without, pv_with: i64,
-	pv_gaps: int,
+	pv:      Export_Summary,
 }
 @(private = "file")
 Preview_Key :: struct {
 	n, running, project, bridge, gen: int,
-	seg_start, away_start, from, to, minute: i64,
+	seg_start, away_start, from, to, minute, claude: i64,
 	away, valid: bool,
 }
 @(private = "file")
@@ -339,18 +373,21 @@ export_rules :: proc() -> Bridge_Rules {
 // in memory. Only recomputed when the range, project, bridge value or log
 // changes (and once a minute for the running segment), not every frame.
 @(private = "file")
-export_preview :: proc(project: string, from, to, now: i64) -> (without, with: i64, gaps: int) {
+export_preview :: proc(project: string, from, to, now: i64) -> Export_Summary {
 	rules := export_rules()
-	key := Preview_Key{len(tracker.entries), tracker.running, exp.project, exp.bridge, rules.gen, tracker.seg_start, tracker.away_start, from, to, now / 60, tracker.away, true}
+	claude_key := i64(len(tracker.claude_segs))
+	for c in tracker.claude_segs {claude_key = claude_key * 31 + c.start}
+	key := Preview_Key{len(tracker.entries), tracker.running, exp.project, exp.bridge, rules.gen, tracker.seg_start, tracker.away_start, from, to, now / 60, claude_key, tracker.away, true}
 	if key != exp.pv_key {
-		entries := make([dynamic]Export_Entry, 0, len(tracker.entries) + 2, context.temp_allocator)
-		for e in tracker.entries {append(&entries, Export_Entry{e.start, e.end, e.project, "", e.idle, false})}
-		if tracker.running >= 0 {append(&entries, Export_Entry{tracker.seg_start, now, tracker.projects[tracker.running].name, "", false, false})}
-		if tracker.away {append(&entries, Export_Entry{tracker.away_start, now, tracker.away_project, "", true, false})}
-		exp.pv_without, exp.pv_with, exp.pv_gaps = export_bridge_summary(entries[:], {project = project, from = from, to = to > 0 ? to : now + 1, bridge = rules})
+		entries := make([dynamic]Export_Entry, 0, len(tracker.entries) + 2 + len(tracker.claude_segs), context.temp_allocator)
+		for e in tracker.entries {append(&entries, Export_Entry{e.start, e.end, e.project, "", e.idle, false, e.claude})}
+		if tracker.running >= 0 {append(&entries, Export_Entry{tracker.seg_start, now, tracker.projects[tracker.running].name, "", false, false, false})}
+		if tracker.away {append(&entries, Export_Entry{tracker.away_start, now, tracker.away_project, "", true, false, false})}
+		for c in tracker.claude_segs {append(&entries, Export_Entry{c.start, max(now, c.last), c.project, "", false, false, true})}
+		exp.pv = export_bridge_summary(entries[:], {project = project, from = from, to = to > 0 ? to : now + 1, bridge = rules})
 		exp.pv_key = key
 	}
-	return exp.pv_without, exp.pv_with, exp.pv_gaps
+	return exp.pv
 }
 
 // The bridge-gap control: a slider (0–120 min) and − / + for this export,
@@ -528,9 +565,10 @@ draw_export :: proc(now: i64, inner: f32) {
 	// What it covers, from the log in memory: with and without bridging.
 	project := exp.project >= 0 ? tracker.projects[exp.project].name : ""
 	if range_ok {
-		without, with, gaps := export_preview(project, from, to, now)
+		pv := export_preview(project, from, to, now)
 		who := project != "" ? project : "all projects"
-		label(fonts.ui, SZ_SMALL + 1, col32(C_TEXT), fmt.tprintf("%s  ·  %s  ·  %s  (%.2f h)", title, who, fmt_bridge_summary(without, with, gaps), f64(with) / 3600))
+		label(fonts.ui, SZ_SMALL + 1, col32(C_TEXT), fmt.tprintf("%s  ·  %s  ·  %s  (%.2f h)", title, who, fmt_bridge_summary(pv.without, pv.with, pv.gaps), f64(pv.with) / 3600))
+		if extra := fmt_summary_extra(pv); extra != "" {label(fonts.ui, SZ_SMALL, col32(C_MUTED), extra)}
 	} else {
 		label(fonts.ui, SZ_SMALL + 1, col32(C_RED), "Enter both days as YYYY-MM-DD (from before to)")
 	}
@@ -597,9 +635,12 @@ tl_clamp_view :: proc() {
 	tl.start = clamp(tl.start, 0, 86400 - tl.span)
 }
 
-// Today as a 24 h timeline: work in the project's color, breaks in a dim
-// version of it, breaks outside projects in gray; untracked time is the track.
-// Short breaks counted as work (bridged) are hatched in the project's color.
+// Today as a 24 h timeline, one lane per project (Claude can work on one
+// while you work on another): work in the project's color, breaks in a dim
+// version of it, breaks outside projects in gray on a lane of their own;
+// untracked time is the track. Short breaks counted as work (bridged) are
+// hatched in the project's color, Claude's counted work is a lighter fill
+// with a solid top edge.
 @(private = "file")
 draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 	Seg :: struct {
@@ -607,17 +648,47 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 		project: string,
 		idle:    bool,
 		bridged: bool,
+		claude:  bool,
+		lane:    int,
 	}
 	segs: [dynamic]Seg
 	segs.allocator = context.temp_allocator
 	day_end := day_start + 86400
-	any_bridged := false
+	any_bridged, any_claude := false, false
 	for e in tracker_view(now) {
 		if e.end > day_start && e.start < day_end {
-			append(&segs, Seg{e.start, e.end, e.project, e.idle, e.bridged})
+			append(&segs, Seg{e.start, e.end, e.project, e.idle, e.bridged, e.claude, 0})
 			any_bridged ||= e.bridged
+			any_claude ||= e.claude
 		}
 	}
+	// Lanes: projects in config order, then names only the log knows, then
+	// breaks outside projects.
+	lanes: [dynamic]string
+	lanes.allocator = context.temp_allocator
+	lane_of :: proc(lanes: []string, name: string) -> int {
+		for l, i in lanes {if l == name {return i}}
+		return -1
+	}
+	for pr in tracker.projects {
+		for sg in segs {
+			if sg.project == pr.name {
+				append(&lanes, pr.name)
+				break
+			}
+		}
+	}
+	for sg in segs {
+		if sg.project != NO_PROJECT && lane_of(lanes[:], sg.project) < 0 {append(&lanes, sg.project)}
+	}
+	for sg in segs {
+		if sg.project == NO_PROJECT {
+			append(&lanes, NO_PROJECT)
+			break
+		}
+	}
+	if len(lanes) == 0 {append(&lanes, "")}
+	for &sg in segs {sg.lane = max(lane_of(lanes[:], sg.project), 0)}
 	// Merge back-to-back pieces of the same kind (restarts split the log).
 	for i in 1 ..< len(segs) {
 		for j := i; j > 0 && segs[j].s < segs[j - 1].s; j -= 1 {segs[j], segs[j - 1] = segs[j - 1], segs[j]}
@@ -627,7 +698,7 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 	for sg in segs {
 		if n := len(merged); n > 0 {
 			last := &merged[n - 1]
-			if last.project == sg.project && last.idle == sg.idle && last.bridged == sg.bridged && sg.s - last.e <= 90 {
+			if last.project == sg.project && last.idle == sg.idle && last.bridged == sg.bridged && last.claude == sg.claude && sg.s - last.e <= 90 {
 				last.e = max(last.e, sg.e)
 				continue
 			}
@@ -642,7 +713,12 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 	}
 
 	p := im.GetCursorScreenPos()
-	bh: f32 = 22
+	// One lane: as tall as it always was; more share a little more height.
+	n_lanes := len(lanes)
+	lane_h: f32 = n_lanes == 1 ? 18 : 13
+	LANE_GAP :: f32(3)
+	bh := 4 + f32(n_lanes) * lane_h + f32(n_lanes - 1) * LANE_GAP
+	lane_y :: proc(top: f32, lane: int, lane_h: f32) -> f32 {return top + 2 + f32(lane) * (lane_h + LANE_GAP)}
 	d := dl()
 
 	// Zoom & pan: scroll zooms around the pointer, drag pans, double-click resets.
@@ -699,29 +775,39 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 	}
 	hovered_seg := -1
 	mouse := im.GetMousePos()
-	for sg, i in segs {
-		x0 := x_of(sg.s, view_from, view_span, p.x, inner)
-		x1 := max(x_of(sg.e, view_from, view_span, p.x, inner), x0 + 1)
-		if x1 < p.x || x0 > p.x + inner {continue}
-		col, is_project := color_of(sg.project)
-		c: u32
-		switch {
-		case sg.bridged:
-			// Hatched: counts as work, but you weren't at the keyboard.
-			im.DrawList_AddRectFilled(d, {x0, p.y + 2}, {x1, p.y + bh - 2}, col32(col, 0.4), 2)
-			im.DrawList_PushClipRect(d, {max(x0, p.x), p.y + 2}, {min(x1, p.x + inner), p.y + bh - 2}, true)
-			for hx := x0 - bh; hx < x1; hx += 6 {
-				im.DrawList_AddLine(d, {hx, p.y + bh - 2}, {hx + bh - 4, p.y + 2}, col32(col, 0.9), 1.5)
+	// Claude's pieces last: they sit on top of the breaks they overlap.
+	for pass in 0 ..< 2 {
+		for sg, i in segs {
+			if sg.claude != (pass == 1) {continue}
+			x0 := x_of(sg.s, view_from, view_span, p.x, inner)
+			x1 := max(x_of(sg.e, view_from, view_span, p.x, inner), x0 + 1)
+			if x1 < p.x || x0 > p.x + inner {continue}
+			col, is_project := color_of(sg.project)
+			y0 := lane_y(p.y, sg.lane, lane_h)
+			y1 := y0 + lane_h
+			if mouse.x >= x0 && mouse.x < x1 && mouse.y >= y0 - 1 && mouse.y < y1 + 1 {hovered_seg = i}
+			c: u32
+			switch {
+			case sg.claude:
+				// Counts as work, done by Claude in the background.
+				im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, col32(col, 0.45), 2)
+				im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y0 + 3}, col32(col), 2)
+				continue
+			case sg.bridged:
+				// Hatched: counts as work, but you weren't at the keyboard.
+				im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, col32(col, 0.4), 2)
+				im.DrawList_PushClipRect(d, {max(x0, p.x), y0}, {min(x1, p.x + inner), y1}, true)
+				for hx := x0 - lane_h; hx < x1; hx += 6 {
+					im.DrawList_AddLine(d, {hx, y1}, {hx + lane_h, y0}, col32(col, 0.9), 1.5)
+				}
+				im.DrawList_PopClipRect(d)
+				continue
+			case !sg.idle:     c = col32(col)
+			case is_project:   c = col32(col, 0.22) // a break during a project session
+			case:              c = col32(C_MUTED, 0.45) // a break outside projects
 			}
-			im.DrawList_PopClipRect(d)
-			if mouse.x >= x0 && mouse.x < x1 && mouse.y >= p.y && mouse.y < p.y + bh {hovered_seg = i}
-			continue
-		case !sg.idle:     c = col32(col)
-		case is_project:   c = col32(col, 0.22) // a break during a project session
-		case:              c = col32(C_MUTED, 0.45) // a break outside projects
+			im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, c, 2)
 		}
-		im.DrawList_AddRectFilled(d, {x0, p.y + 2}, {x1, p.y + bh - 2}, c, 2)
-		if mouse.x >= x0 && mouse.x < x1 && mouse.y >= p.y && mouse.y < p.y + bh {hovered_seg = i}
 	}
 	// "Now" marker.
 	nx := x_of(now, view_from, view_span, p.x, inner)
@@ -752,13 +838,18 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 		lg := im.GetCursorScreenPos()
 		x := lg.x
 		accent: u32 = tracker.running >= 0 ? tracker.projects[tracker.running].color : C_TEAL
-		items := [4]struct {
+		items := [5]struct {
 			col:   u32,
 			alpha: f32,
 			text:  string,
-		}{{accent, 1, "working"}, {accent, 0.22, "break during a project"}, {0x8a92a3, 0.45, "break, no project"}, {accent, -1, "short break, counted as work"}}
+		}{{accent, 1, "working"}, {accent, 0.22, "break during a project"}, {0x8a92a3, 0.45, "break, no project"}, {accent, -1, "short break, counted as work"}, {accent, -2, "Claude, counted"}}
 		for it in items {
-			if it.alpha < 0 {
+			if it.alpha == -2 {
+				// Only on days that have some.
+				if !any_claude {continue}
+				im.DrawList_AddRectFilled(dl(), {x, lg.y + 4}, {x + 10, lg.y + 12}, col32(it.col, 0.45), 2)
+				im.DrawList_AddRectFilled(dl(), {x, lg.y + 4}, {x + 10, lg.y + 6}, col32(it.col), 1)
+			} else if it.alpha < 0 {
 				// Only on days that have one.
 				if !any_bridged {continue}
 				im.DrawList_AddRectFilled(dl(), {x, lg.y + 4}, {x + 10, lg.y + 12}, col32(it.col, 0.4), 2)
@@ -784,6 +875,7 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 		if sg.bridged {
 			what = fmt.tprintf("%s: short break, counted as work\n(breaks under %d min bridge on %s)", sg.project, bridge_limit(bridge_rules(), sg.project) / 60, sg.project)
 		}
+		if sg.claude {what = fmt.tprintf("%s: Claude working, counted as work", sg.project)}
 		tip(fmt.tprintf("%s\n%s – %s  (%s)", what, hm(sg.s), hm(sg.e), fmt_duration(sg.e - sg.s)))
 	}
 }
@@ -811,6 +903,8 @@ Ren :: struct {
 	ws_n:       int,
 	result:     string,
 	result_ok:  bool,
+	rate:       [24]u8, // the hourly rate field
+	rate_focus: bool,
 }
 @(private = "file")
 ren: Ren
@@ -843,6 +937,8 @@ rename_open :: proc(pr: Project) {
 	// The workspaces still carry the old name: renaming them is what keeps
 	// the project counting, so it's on unless you turn it off.
 	ren.workspaces = true
+	ren.rate = {}
+	if pr.rate > 0 {copy(ren.rate[:len(ren.rate) - 1], fmt_rate(pr.rate))}
 	delete(ren.result)
 	ren.result = ""
 }
@@ -951,6 +1047,8 @@ draw_rename_editor :: proc(pr: Project, inner: f32) -> bool {
 		wrapped(fonts.ui, SZ_SMALL, col32(C_FAINT), why, w)
 	}
 	im.Dummy({1, 8})
+	draw_project_billing(pr, w)
+	im.Dummy({1, 8})
 
 	label(fonts.bold, SZ_SMALL, col32(C_MUTED), fmt.tprintf("Rename %s to", pr.name))
 	im.Dummy({1, 2})
@@ -1018,6 +1116,71 @@ draw_rename_editor :: proc(pr: Project, inner: f32) -> bool {
 	im.SetCursorScreenPos({top.x, bot + 6})
 	im.Dummy({inner, 1})
 	return go
+}
+
+// Paying job and hourly rate, and whether Claude's background work counts
+// ([project.KEY] paying, rate, claude_counts; applied at once).
+@(private = "file")
+draw_project_billing :: proc(pr: Project, w: f32) {
+	idx := project_find(pr.name)
+	row :: proc(id: string, on: bool, accent: u32, icon, text: string) -> bool {
+		tp := im.GetCursorScreenPos()
+		clicked := toggle_switch(id, on, accent)
+		draw_text(fonts.ui, 14, {tp.x + 48, tp.y + 3}, col32(on ? accent : C_FAINT), icon)
+		draw_text(fonts.ui, SZ_SMALL + 1, {tp.x + 70, tp.y + 2}, col32(on ? C_TEXT : C_MUTED), text)
+		return clicked
+	}
+	if row(fmt.tprintf("##paying:%s", pr.key), pr.paying, pr.color, ICON_PAYING, "Paying job") {tracker_set_paying(idx, !pr.paying)}
+	if pr.paying {
+		// The rate, saved on Enter or when the field loses focus.
+		rp := im.GetCursorScreenPos()
+		im.Dummy({1, 2})
+		lbl := "Hourly rate"
+		draw_text(fonts.ui, SZ_SMALL, {rp.x + 48, rp.y + 8}, col32(C_MUTED), lbl)
+		fx := rp.x + 48 + measure(fonts.ui, SZ_SMALL, lbl).x + 10
+		cur_w := measure(fonts.ui, SZ_SMALL + 1, tracker.currency).x
+		draw_text(fonts.ui, SZ_SMALL + 1, {fx, rp.y + 7}, col32(C_MUTED), tracker.currency)
+		fp := Vec2{fx + cur_w + 6, rp.y + 2}
+		fw: f32 = 100
+		fe := fp + Vec2{fw, SZ_BODY + 10}
+		im.SetCursorScreenPos(fp)
+		field_fill(fp, fe, 7, col32(C_BG))
+		im.PushFontFloat(fonts.mono, SZ_BODY)
+		im.PushStyleVarImVec2(.FramePadding, {8, 5})
+		im.PushStyleVar(.FrameBorderSize, 0)
+		im.PushStyleColorImVec4(.FrameBg, {})
+		im.PushStyleColorImVec4(.FrameBgHovered, {})
+		im.PushStyleColorImVec4(.FrameBgActive, {})
+		im.SetNextItemWidth(fw)
+		entered := im.InputTextWithHint(cstr(fmt.tprintf("##rate:%s", pr.key)), "none", cstring(&ren.rate[0]), uint(len(ren.rate)), {.CharsDecimal, .EnterReturnsTrue})
+		active := im.IsItemActive()
+		done := entered || im.IsItemDeactivatedAfterEdit()
+		im.PopStyleVar(2)
+		im.PopStyleColor(3)
+		im.PopFont()
+		text := strings.trim_space(string(cstring(&ren.rate[0])))
+		text, _ = strings.replace_all(text, ",", ".", context.temp_allocator)
+		r, ok := strconv.parse_f64(text)
+		valid := text == "" || (ok && r >= 0)
+		field_outline(fp, fe, 7, active ? col32(pr.color, 0.85) : valid ? col32(C_BORDER) : col32(C_RED, 0.7))
+		if done && valid {
+			if text == "" {r = 0}
+			if r != pr.rate {tracker_set_rate(idx, r)}
+		}
+		hint := "per hour; the export adds rate and amount"
+		if pr.rate > 0 {
+			today := tracker_totals(local_day_start(time.to_unix_seconds(time.now())), time.to_unix_seconds(time.now()) + 1)[pr.name]
+			hint = fmt.tprintf("per hour  ·  today %s", fmt_money(f64(today) / 3600 * pr.rate))
+		}
+		draw_text(fonts.ui, SZ_SMALL, {fe.x + 10, rp.y + 8}, col32(C_FAINT), hint)
+		im.SetCursorScreenPos(rp)
+		im.Dummy({w, SZ_BODY + 16})
+	}
+	im.Dummy({1, 6})
+	if row(fmt.tprintf("##claude:%s", pr.key), pr.claude, pr.color, ICON_CLAUDE, "Count Claude's background work") {tracker_set_claude(idx, !pr.claude)}
+	im.Dummy({1, 2})
+	why := pr.claude ? fmt.tprintf("While Claude Code works in a terminal on one of %s's workspaces (its spinner in the window title), the time counts for %s, also when you're on another project or away. Time you work on it yourself counts once.", pr.name, pr.name) : fmt.tprintf("Off: Claude working on %s's workspaces is logged but doesn't count. Turning it on counts past days too.", pr.name)
+	wrapped(fonts.ui, SZ_SMALL, col32(C_FAINT), why, w)
 }
 
 // The outcome of the last rename, until dismissed.

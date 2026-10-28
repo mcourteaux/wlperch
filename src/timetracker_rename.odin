@@ -49,6 +49,7 @@ timelog_rename :: proc(data, old, new: string, allocator := context.temp_allocat
 		fields:     []string,
 		start, end: i64,
 		ok, idle:   bool,
+		claude:     bool, // Claude's stretches overlap only with each other
 		target:     bool, // under `new` after the rename
 		changed:    bool,
 		drop:       bool,
@@ -66,6 +67,7 @@ timelog_rename :: proc(data, old, new: string, allocator := context.temp_allocat
 		r.ok = ok1 && ok2 && e > s
 		r.start, r.end = s, e
 		r.idle = len(f) > 4 && f[4] == "idle"
+		r.claude = len(f) > 4 && f[4] == "claude"
 		switch {
 		case f[2] == old:
 			f[2] = new
@@ -75,7 +77,7 @@ timelog_rename :: proc(data, old, new: string, allocator := context.temp_allocat
 			if r.idle {
 				st.breaks += 1
 				st.break_secs += e - s
-			} else {
+			} else if !r.claude {
 				st.work_entries += 1
 				st.work_secs += e - s
 			}
@@ -90,10 +92,11 @@ timelog_rename :: proc(data, old, new: string, allocator := context.temp_allocat
 		}
 	}
 	if st.entries > 0 && st.target > 0 {
-		for idle in ([]bool{false, true}) {
+		for kind in 0 ..< 3 { // work, breaks, Claude
+			idle := kind == 1
 			idx: [dynamic]int
 			idx.allocator = context.temp_allocator
-			for r, i in recs {if r.target && r.ok && r.idle == idle {append(&idx, i)}}
+			for r, i in recs {if r.target && r.ok && r.idle == idle && r.claude == (kind == 2) {append(&idx, i)}}
 			// Stable insertion sort by start (logs are nearly sorted already).
 			for i in 1 ..< len(idx) {
 				for j := i; j > 0 && recs[idx[j]].start < recs[idx[j - 1]].start; j -= 1 {idx[j], idx[j - 1] = idx[j - 1], idx[j]}
@@ -104,11 +107,11 @@ timelog_rename :: proc(data, old, new: string, allocator := context.temp_allocat
 				if r.end <= covered {
 					r.drop = true
 					st.dropped += 1
-					if !idle {st.overlap_secs += r.end - r.start}
+					if kind == 0 {st.overlap_secs += r.end - r.start}
 					continue
 				}
 				if r.start < covered {
-					if !idle {st.overlap_secs += covered - r.start}
+					if kind == 0 {st.overlap_secs += covered - r.start}
 					r.start = covered
 					r.fields[0] = iso_utc(covered)
 					r.changed = true
@@ -462,6 +465,7 @@ tracker_apply_rename :: proc(p: Rename_Plan) {
 		delete(tracker.away_project)
 		tracker.away_project = strings.clone(p.new)
 	}
+	tracker_claude_rename(p.old, p.new)
 	request_redraw()
 }
 

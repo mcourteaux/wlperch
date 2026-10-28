@@ -231,6 +231,32 @@ value applies to past days too, and setting it back undoes it. The timeline
 hatches bridged gaps in the project's colour, and "Away from keyboard" lists
 them as "N short, counted as work" instead of as breaks.
 
+**Paying jobs and rates.** `paying = true` in a `[project.KEY]` section (or the
+"Paying job" switch under the project's pencil in the Time panel) marks a paid
+job: a cash icon on its row and in the bar's timer. Give it `rate = 85` (the
+same editor has the field; `[timetracker] currency`, default `€`, is the unit)
+and the panel shows today's amount next to its time, the export preview adds
+the total for the range, and the CSV fills in `rate` and `amount` for its work
+rows.
+
+**Claude's background work.** While Claude Code works in a terminal, it spins
+the terminal's title: `◐ task`, `◑ task`, alternating about once a second
+(`✳ task` when it's done). wlperch watches sway's title events, so it knows
+when Claude is working on one of a project's workspaces, whether or not that
+workspace is focused or you're at the keyboard. Each such stretch is logged
+with a fifth column `claude`, from the first spinner frame to the last (no
+frame for 10 s, or another title, ends it). With `claude_counts = true` (or
+"Count Claude's background work" under the pencil) those minutes count as work
+for the project. Where you were working on it yourself, or a bridged break
+already counts, it counts once; two Claude terminals on one project count
+once too. Like bridging this is applied when counting, so switching it on
+counts past days, and off leaves the log alone. The Time panel says what Claude
+is working on right now ("counts"), its rows show a sparkle icon (bright while
+it works), and the bar shows the project with class `claude` when nothing of
+yours is counting. Today's timeline has one lane per project, because Claude
+can be working on one while you work on another; Claude's counted time is a
+lighter fill with a solid top edge.
+
 While you're away from such a project, the timer can't know yet whether you'll
 be back in time, so it doesn't count: the panel shows the project dimmed with
 "waiting…" and how long you have left, and the bar's pill turns dim (class
@@ -265,9 +291,9 @@ wlperch track export --from 2026-10-01 --to 2026-10-15 --by project
 
 | `--by` | Columns (one row per …) |
 |---|---|
-| `entries` (default) | `date,start,end,minutes,hours,project,client,type`: each tracked stretch |
-| `day` | `date,project,client,minutes,hours,type`: each day and project |
-| `project` | `project,client,minutes,hours,days,type`: each project in the range |
+| `entries` (default) | `date,start,end,minutes,hours,project,client,type,rate,amount`: each tracked stretch |
+| `day` | `date,project,client,minutes,hours,type,rate,amount`: each day and project |
+| `project` | `project,client,minutes,hours,days,type,rate,amount`: each project in the range |
 
 Times are local, entries are cut at the range's ends and at midnight (so each
 row is one day), `hours` has two decimals computed from the seconds (sum those,
@@ -275,8 +301,11 @@ not the rounded `minutes`), and `client` comes from the log line. Breaks are
 left out unless you ask for them (`--breaks`, or "Include breaks"; `type` is
 then `work` or `break`). Bridged breaks are worked hours, so they are in the
 `work` rows; with `--breaks`, entry rows mark them `bridged` instead (still
-worked hours: work + bridged = the hours the panel shows). The segment that is
-counting right now is included.
+worked hours: work + bridged = the hours the panel shows). Claude's counted
+background work is in the `work` rows of `day` and `project`; entry rows mark it
+`claude`. `rate` and `amount` (hours × rate, two decimals) are filled in for the
+work rows of paying projects with a rate, and empty otherwise. The segment that
+is counting right now, and what Claude is doing now, are included.
 
 The Export section also has a "Count breaks shorter than" slider (0–120 min, with
 − / + for single minutes). It starts at the configured value. Moving it changes
@@ -1216,12 +1245,16 @@ columns = github | github-repo github-inbox
 [timetracker]
 idle_seconds = 300            # no input this long = a break (idle_minutes still works)
 bridge_breaks = 0             # minutes: shorter breaks between work on one project count as work
+currency = €                  # the unit of the rates: a symbol or a code (EUR)
 
 [project.acme]                # one section per project
 name = ACME                   # workspaces "ACME 1", "ACME 2", ...
 client = ACME Corp            # omit for personal projects
 color = #7aa2f7               # optional
 bridge_breaks = 10            # optional: this project's own bridging (minutes, 0 = off)
+paying = true                 # optional: a paid job (cash icon)
+rate = 85                     # optional: hourly rate, for the export's amount
+claude_counts = true          # optional: Claude Code working on its workspaces counts as work
 ```
 
 Restart the daemon (`wlperch quit`) to apply changes.

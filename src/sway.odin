@@ -55,8 +55,50 @@ Sway_State :: struct {
 	tree_seq:       int,
 	fs:             [dynamic]Fs_Cover,   // outputs a fullscreen view covers (fullscreen.odin)
 	fs_seq:         int,                 // bumped when fs changes
+	views:          map[i64]Sway_View,   // con id -> where it is, for Claude's spinner
 }
 sway: Sway_State
+
+// A window as far as the time tracker's Claude detection cares.
+Sway_View :: struct {
+	ws:   string,
+	spin: i64, // unix time of the latest Claude spinner frame in its title, 0 = none
+}
+
+// Claude Code's terminal title while it works: "◐ task" and "◑ task",
+// alternating about once a second ("✳ task" when it's done).
+claude_spinning :: proc(title: string) -> bool {
+	return strings.has_prefix(title, "◐") || strings.has_prefix(title, "◑")
+}
+
+// A window's title changed: a spinner frame stamps it. True when that
+// starts or stops a spin (the tracker wants to know right away).
+@(private = "file")
+claude_title_event :: proc(payload: string) -> bool {
+	v, _ := jparse(payload)
+	if jstr(jobj(v, "change")) != "title" {return false}
+	c := jobj(v, "container")
+	id := jint(jobj(c, "id"))
+	spinning := claude_spinning(jstr(jobj(c, "name")))
+	sync.guard(&sway.mu)
+	view, known := &sway.views[id]
+	if !known {return false}
+	was := view.spin != 0
+	view.spin = spinning ? time.to_unix_seconds(time.now()) : 0
+	return was != spinning
+}
+
+// Workspace -> the latest spinner frame on it (only workspaces with one), temp-allocated.
+sway_claude_spins :: proc() -> map[string]i64 {
+	out := make(map[string]i64, 8, context.temp_allocator)
+	sync.guard(&sway.mu)
+	for _, v in sway.views {
+		if v.spin == 0 {continue}
+		ws := strings.clone(v.ws, context.temp_allocator)
+		out[ws] = max(out[ws], v.spin)
+	}
+	return out
+}
 
 @(private = "file")
 cmd_mu: sync.Mutex
@@ -234,18 +276,49 @@ sway_refresh_tree :: proc() {
 			}
 		}
 	}
-	walk :: proc(n: json.Value, counts: ^map[string]int, at: ^map[string]string) {
+	View :: struct {
+		id:       i64,
+		ws:       string,
+		spinning: bool,
+	}
+	views := make([dynamic]View, context.temp_allocator)
+	find_views :: proc(n: json.Value, ws: string, out: ^[dynamic]View) {
+		for k in ([]string{"nodes", "floating_nodes"}) {
+			for child in jarr(jobj(n, k)) {
+				if jobj(child, "pid") != nil {
+					append(out, View{jint(jobj(child, "id")), ws, claude_spinning(jstr(jobj(child, "name")))})
+				} else {
+					find_views(child, ws, out)
+				}
+			}
+		}
+	}
+	walk :: proc(n: json.Value, counts: ^map[string]int, at: ^map[string]string, views: ^[dynamic]View) {
 		if jstr(jobj(n, "type")) == "workspace" {
 			name := jstr(jobj(n, "name"))
 			counts[name] = count_views(n)
 			find_placeholders(n, name, at)
+			find_views(n, name, views)
 			return
 		}
-		for child in jarr(jobj(n, "nodes")) {walk(child, counts, at)}
+		for child in jarr(jobj(n, "nodes")) {walk(child, counts, at, views)}
 	}
-	walk(v, &counts, &at)
+	walk(v, &counts, &at, &views)
 	fullscreen_update(v)
 	sync.guard(&sway.mu)
+	// Windows keep their last spinner frame (a frame is only stamped by a
+	// title change, so a stale "◐" left behind by a dead Claude doesn't count).
+	{
+		old := sway.views
+		sway.views = make(map[i64]Sway_View, len(views))
+		for w in views {
+			nv := Sway_View{ws = strings.clone(w.ws)}
+			if o, had := old[w.id]; had && w.spinning {nv.spin = o.spin}
+			sway.views[w.id] = nv
+		}
+		for _, o in old {delete(o.ws)}
+		delete(old)
+	}
 	for k in sway.ws_windows {delete(k)}
 	clear(&sway.ws_windows)
 	for k, c in counts {sway.ws_windows[strings.clone(k)] = c}
@@ -388,8 +461,10 @@ sway_start :: proc() {
 				if type & 0x80000000 != 0 {
 					kinds := classify(type, payload)
 					if kinds == {} {
+						// e.g. a window title changed: maybe Claude's spinner.
+						if type == EVENT_WINDOW && claude_title_event(payload) {wake_main()}
 						free_all(context.temp_allocator)
-						continue // e.g. a window title changed
+						continue
 					}
 					// Right away: the titlebars show the config's colours until then.
 					if .Reload in kinds {theme_sway_reapply()}

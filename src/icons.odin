@@ -128,3 +128,5 @@ ICON_KEY :: "\U000F0306" // md-key
 ICON_KEY_VARIANT :: "\U000F030B" // md-key_variant
 ICON_KEY_REMOVE :: "\U000F030A" // md-key_remove
 ICON_LOCK_OPEN :: "\U000F0340" // md-lock_open_outline
+ICON_PAYING :: "\U000F0114" // md-cash: a paid job
+ICON_CLAUDE :: "\U000F0674" // md-creation: Claude working on it

@@ -13,6 +13,12 @@
 // two stretches of work on that same project, counts as work. The log keeps
 // what was recorded; bridging is applied when reading it (totals, timeline,
 // export, the bar), so changing the setting applies to the past too.
+//
+// Claude: while Claude Code works in a terminal on one of a project's
+// workspaces (its title starts with a spinning ◐ / ◑), that stretch is logged
+// with a fifth column "claude", whether or not you are there. A project with
+// claude_counts = true counts those minutes as work, minus what already
+// counts (your own work, bridged breaks); applied when reading, like bridging.
 package main
 
 import "base:runtime"
@@ -35,6 +41,9 @@ Project :: struct {
 	client: string, // "" = personal
 	color:  u32,
 	bridge: int, // bridge_breaks in minutes; -1 = not set: the [timetracker] default
+	paying: bool, // a paid job: marked with ICON_PAYING
+	rate:   f64,  // hourly rate (0 = none), in [timetracker] currency
+	claude: bool, // claude_counts: Claude's background work counts as work
 }
 
 Time_Entry :: struct {
@@ -42,6 +51,7 @@ Time_Entry :: struct {
 	project:    string, // NO_PROJECT for breaks taken outside project workspaces
 	idle:       bool,   // a break (away from keyboard), not work
 	bridged:    bool,   // (views only) a short break counted as work, see bridge_mask
+	claude:     bool,   // Claude working in the project's workspaces (not idle, not work by itself; see tracker_fold)
 }
 
 NO_PROJECT :: "(no project)"
@@ -68,6 +78,12 @@ Tracker :: struct {
 	cur_path:   string,
 	idle:       time.Duration,
 	bridge_default: int, // [timetracker] bridge_breaks, minutes (0 = off)
+	currency:       string, // [timetracker] currency, for the rates
+
+	// Claude working on a project's workspaces right now, one per project.
+	claude_segs: [dynamic]Claude_Seg,
+	claude_path: string,
+	claude_beat: time.Tick,
 
 	// Group lock: monitors follow each other into and out of project workspaces.
 	lock:         bool,
@@ -77,6 +93,14 @@ Tracker :: struct {
 	sync_at:      time.Tick,         // our own switch; ignore the events it causes
 }
 tracker := Tracker{running = -1, last = -1, pinned = -1}
+
+Claude_Seg :: struct {
+	project, client: string,
+	start, last:     i64, // last: the latest spinner frame seen
+}
+
+// No spinner frame for this long: Claude stopped (it flips about once a second).
+CLAUDE_STALE :: 10
 
 PIN_DURATION :: 60 * time.Second
 
@@ -115,12 +139,19 @@ projects_load :: proc(src: string, m: ini.Map) {
 		if v, has := kv["bridge_breaks"]; has && strings.trim_space(unquote(v)) != "" {
 			p.bridge = parse_int_lim(unquote(v), LIM_BRIDGE_BREAKS)
 		}
+		p.paying, _ = parse_bool_value(unquote(strings.trim_space(kv["paying"])))
+		p.claude, _ = parse_bool_value(unquote(strings.trim_space(kv["claude_counts"])))
+		if r, ok := strconv.parse_f64(strings.trim_space(unquote(kv["rate"]))); ok && r > 0 {p.rate = r}
 		append(&tracker.projects, p)
 	}
 	tracker.bridge_default = 0
+	delete(tracker.currency)
+	tracker.currency = ""
 	if sec, ok := m["timetracker"]; ok {
 		if v, has := sec["bridge_breaks"]; has {tracker.bridge_default = parse_int_lim(unquote(v), LIM_BRIDGE_BREAKS)}
+		tracker.currency = strings.clone(strings.trim_space(unquote(sec["currency"])))
 	}
+	if tracker.currency == "" {tracker.currency = strings.clone("€")}
 	bridge_rules_update()
 }
 
@@ -182,7 +213,7 @@ fmt_idle :: proc(d: time.Duration) -> string {
 
 @(private = "file")
 append_entry :: proc(e: Time_Entry, client: string) {
-	line := fmt.tprintf("%s\t%s\t%s\t%s%s\n", iso_utc(e.start), iso_utc(e.end), e.project, client, e.idle ? "\tidle" : "")
+	line := fmt.tprintf("%s\t%s\t%s\t%s%s\n", iso_utc(e.start), iso_utc(e.end), e.project, client, e.idle ? "\tidle" : e.claude ? "\tclaude" : "")
 	f, err := os.open(tracker.log_path, {.Write, .Create, .Append}, os.Permissions_Default_File)
 	if err != nil {
 		log.errorf("time log %s: %v", tracker.log_path, err)
@@ -190,7 +221,7 @@ append_entry :: proc(e: Time_Entry, client: string) {
 	}
 	defer os.close(f)
 	os.write_string(f, line)
-	append(&tracker.entries, Time_Entry{e.start, e.end, strings.clone(e.project), e.idle, false})
+	append(&tracker.entries, Time_Entry{e.start, e.end, strings.clone(e.project), e.idle, false, e.claude})
 }
 
 timelog_parse :: proc(data: string, out: ^[dynamic]Time_Entry) {
@@ -201,7 +232,7 @@ timelog_parse :: proc(data: string, out: ^[dynamic]Time_Entry) {
 		s, ok1 := parse_iso_utc(f[0])
 		e, ok2 := parse_iso_utc(f[1])
 		if !ok1 || !ok2 || e <= s {continue}
-		append(out, Time_Entry{s, e, strings.clone(f[2]), len(f) > 4 && f[4] == "idle", false})
+		append(out, Time_Entry{s, e, strings.clone(f[2]), len(f) > 4 && f[4] == "idle", false, len(f) > 4 && f[4] == "claude"})
 	}
 }
 
@@ -216,7 +247,7 @@ close_segment :: proc(end: i64) {
 	if tracker.running < 0 {return}
 	p := tracker.projects[tracker.running]
 	if end - tracker.seg_start >= MIN_SEGMENT {
-		append_entry({tracker.seg_start, end, p.name, false, false}, p.client)
+		append_entry({tracker.seg_start, end, p.name, false, false, false}, p.client)
 	}
 	os.remove(tracker.cur_path)
 	tracker.running = -1
@@ -230,6 +261,7 @@ tracker_paths :: proc() {
 	tracker.cur_path = strings.concatenate({dir, "/timetracker.current"})
 	tracker.lock_path = strings.concatenate({dir, "/timetracker.lock"})
 	tracker.away_path = strings.concatenate({dir, "/timetracker.away"})
+	tracker.claude_path = strings.concatenate({dir, "/timetracker.claude"})
 }
 
 // Read the log and recover a segment left open by a crash.
@@ -245,7 +277,7 @@ tracker_init :: proc() {
 			s, _ := strconv.parse_i64(f[0])
 			e, _ := strconv.parse_i64(f[1])
 			client := len(f) > 3 ? f[3] : ""
-			if e - s >= MIN_SEGMENT {append_entry({s, e, f[2], false, false}, client)}
+			if e - s >= MIN_SEGMENT {append_entry({s, e, f[2], false, false, false}, client)}
 		}
 		os.remove(tracker.cur_path)
 	}
@@ -255,10 +287,17 @@ tracker_init :: proc() {
 		if len(f) >= 3 {
 			s, _ := strconv.parse_i64(f[0])
 			e, _ := strconv.parse_i64(f[1])
-			if e > s {append_entry({s, e, f[2], true, false}, len(f) > 3 ? f[3] : "")}
+			if e > s {append_entry({s, e, f[2], true, false, false}, len(f) > 3 ? f[3] : "")}
 		}
 		os.remove(tracker.away_path)
 	}
+	// Claude stretches that were open: up to their last heartbeat.
+	if data, err := os.read_entire_file(tracker.claude_path, context.temp_allocator); err == nil {
+		for c in claude_state_parse(string(data)) {
+			if c.last - c.start >= MIN_SEGMENT {append_entry({c.start, c.last, c.project, false, false, true}, c.client)}
+		}
+	}
+	os.remove(tracker.claude_path)
 	// The most recent project in the log is the default target of `track go/move`.
 	for i := len(tracker.entries) - 1; i >= 0 && tracker.last < 0; i -= 1 {
 		if !tracker.entries[i].idle {tracker.last = project_find(tracker.entries[i].project)}
@@ -281,6 +320,7 @@ tracker_tick :: proc() {
 	want := plat.idle ? -1 : project_for_workspace(ws)
 	now := time.to_unix_seconds(time.now())
 	track_away(ws, now)
+	track_claude(now)
 	if want != tracker.running {
 		if tracker.running >= 0 {
 			end := now
@@ -337,10 +377,111 @@ close_away :: proc(end: i64) {
 	if !tracker.away {return}
 	tracker.away = false
 	if end > tracker.away_start {
-		append_entry({tracker.away_start, end, tracker.away_project, true, false}, tracker.away_client)
+		append_entry({tracker.away_start, end, tracker.away_project, true, false, false}, tracker.away_client)
 	}
 	os.remove(tracker.away_path)
 	request_redraw()
+}
+
+// Claude: one open stretch per project while any of its workspaces has a
+// terminal with Claude's spinner; closed at the last frame seen once it stops.
+@(private = "file")
+track_claude :: proc(now: i64) {
+	spins := sway_claude_spins() // workspace -> last spinner frame
+	last := make([]i64, len(tracker.projects), context.temp_allocator)
+	for ws, t in spins {
+		if p := project_for_workspace(ws); p >= 0 {last[p] = max(last[p], t)}
+	}
+	changed := false
+	// Close the ones that stopped (or whose project is gone).
+	for i := len(tracker.claude_segs) - 1; i >= 0; i -= 1 {
+		c := &tracker.claude_segs[i]
+		p := project_find(c.project)
+		if p >= 0 && last[p] > c.last {c.last = last[p]}
+		// Still spinning on one of its workspaces, and recently.
+		if p >= 0 && last[p] != 0 && now - c.last < CLAUDE_STALE {continue}
+		if c.last - c.start >= MIN_SEGMENT {append_entry({c.start, c.last, c.project, false, false, true}, c.client)}
+		delete(c.project)
+		delete(c.client)
+		ordered_remove(&tracker.claude_segs, i)
+		changed = true
+	}
+	// Open the ones that started.
+	for t, p in last {
+		if t == 0 || now - t >= CLAUDE_STALE {continue}
+		open := false
+		for c in tracker.claude_segs {open ||= project_find(c.project) == p}
+		if open {continue}
+		pr := tracker.projects[p]
+		append(&tracker.claude_segs, Claude_Seg{strings.clone(pr.name), strings.clone(pr.client), t, t})
+		changed = true
+	}
+	if changed || (len(tracker.claude_segs) > 0 && time.tick_since(tracker.claude_beat) >= HEARTBEAT) {
+		write_claude()
+		if changed {request_redraw()}
+	}
+}
+
+@(private = "file")
+write_claude :: proc() {
+	tracker.claude_beat = time.tick_now()
+	if len(tracker.claude_segs) == 0 {
+		os.remove(tracker.claude_path)
+		return
+	}
+	b := strings.builder_make(context.temp_allocator)
+	for c in tracker.claude_segs {fmt.sbprintf(&b, "%d\t%d\t%s\t%s\n", c.start, c.last, c.project, c.client)}
+	_ = os.write_entire_file(tracker.claude_path, strings.to_string(b))
+}
+
+// timetracker.claude: "start\tlast\tproject\tclient" per line (temp-allocated).
+claude_state_parse :: proc(data: string) -> []Claude_Seg {
+	out: [dynamic]Claude_Seg
+	out.allocator = context.temp_allocator
+	text := data
+	for line in strings.split_lines_iterator(&text) {
+		f := strings.split(line, "\t", context.temp_allocator)
+		if len(f) < 3 {continue}
+		s, ok1 := strconv.parse_i64(f[0])
+		l, ok2 := strconv.parse_i64(f[1])
+		if !ok1 || !ok2 || l < s {continue}
+		append(&out, Claude_Seg{f[2], len(f) > 3 ? f[3] : "", s, l})
+	}
+	return out[:]
+}
+
+// The open Claude stretches as entries up to `now` (still counting).
+claude_live :: proc(segs: []Claude_Seg, now: i64, out: ^[dynamic]Time_Entry) {
+	for c in segs {append(out, Time_Entry{c.start, max(now, c.last), c.project, false, false, true})}
+}
+
+// A rename: Claude's open stretches carry on under the new name (merged
+// into an open one of `new` if there is one).
+tracker_claude_rename :: proc(old, new: string) {
+	have_new := false
+	for c in tracker.claude_segs {have_new ||= c.project == new}
+	for i := len(tracker.claude_segs) - 1; i >= 0; i -= 1 {
+		c := &tracker.claude_segs[i]
+		if c.project != old {continue}
+		if have_new {
+			for &n in tracker.claude_segs {
+				if n.project == new {n.start, n.last = min(n.start, c.start), max(n.last, c.last)}
+			}
+			delete(c.project)
+			delete(c.client)
+			ordered_remove(&tracker.claude_segs, i)
+		} else {
+			delete(c.project)
+			c.project = strings.clone(new)
+		}
+	}
+	write_claude()
+}
+
+// Whether Claude is working on project `name` right now.
+tracker_claude_active :: proc(name: string) -> bool {
+	for c in tracker.claude_segs {if c.project == name {return true}}
+	return false
 }
 
 // How long the main loop may sleep before the next heartbeat is due.
@@ -355,6 +496,11 @@ tracker_timeout :: proc() -> time.Duration {
 		pl := tracker_pin_left()
 		t = t < 0 ? pl : min(t, pl)
 	}
+	// Notice when Claude stops (no more frames to wake us).
+	if len(tracker.claude_segs) > 0 {
+		c: time.Duration = 2 * time.Second
+		t = t < 0 ? c : min(t, c)
+	}
 	return t
 }
 
@@ -362,6 +508,11 @@ tracker_shutdown :: proc() {
 	now := time.to_unix_seconds(time.now())
 	close_segment(now)
 	close_away(now)
+	for c in tracker.claude_segs {
+		if c.last - c.start >= MIN_SEGMENT {append_entry({c.start, c.last, c.project, false, false, true}, c.client)}
+	}
+	clear(&tracker.claude_segs)
+	os.remove(tracker.claude_path)
 }
 
 // Active outputs, left to right; a project's workspace "<name> N" lives on the N-th.
@@ -543,6 +694,8 @@ Bridge_Rules :: struct {
 	default_secs: i64,
 	names:        []string,
 	secs:         []i64,
+	claude:       []bool, // per name: claude_counts (unlisted projects: off)
+	paying:       []bool, // per name: a paid job (for the bar's icon)
 	gen:          int, // changes whenever the rules do
 }
 
@@ -573,13 +726,18 @@ bridge_rules_update :: proc() {
 	for n in r.names {delete(n)}
 	delete(r.names)
 	delete(r.secs)
+	delete(r.claude)
+	delete(r.paying)
 	names := make([]string, len(tracker.projects))
 	secs := make([]i64, len(tracker.projects))
+	claude := make([]bool, len(tracker.projects))
+	paying := make([]bool, len(tracker.projects))
 	for p, i in tracker.projects {
 		names[i] = strings.clone(p.name)
 		secs[i] = i64(p.bridge >= 0 ? p.bridge : tracker.bridge_default) * 60
+		claude[i], paying[i] = p.claude, p.paying
 	}
-	r.names, r.secs = names, secs
+	r.names, r.secs, r.claude, r.paying = names, secs, claude, paying
 	r.default_secs = i64(tracker.bridge_default) * 60
 	r.gen += 1
 }
@@ -591,9 +749,25 @@ bridge_rules :: proc() -> Bridge_Rules {
 	out := Bridge_Rules{default_secs = r.default_secs, gen = r.gen}
 	out.names = make([]string, len(r.names), context.temp_allocator)
 	out.secs = make([]i64, len(r.secs), context.temp_allocator)
+	out.claude = make([]bool, len(r.claude), context.temp_allocator)
+	out.paying = make([]bool, len(r.paying), context.temp_allocator)
 	for n, i in r.names {out.names[i] = strings.clone(n, context.temp_allocator)}
 	copy(out.secs, r.secs)
+	copy(out.claude, r.claude)
+	copy(out.paying, r.paying)
 	return out
+}
+
+// Whether `project` is a paid job.
+rules_paying :: proc(r: Bridge_Rules, project: string) -> bool {
+	for n, i in r.names {if n == project {return i < len(r.paying) && r.paying[i]}}
+	return false
+}
+
+// Whether Claude's work on `project` counts (claude_counts).
+claude_counts :: proc(r: Bridge_Rules, project: string) -> bool {
+	for n, i in r.names {if n == project {return i < len(r.claude) && r.claude[i]}}
+	return false
 }
 
 // Which entries are bridged: breaks (idle) of project P, back to back with each
@@ -611,9 +785,10 @@ bridge_mask :: proc(entries: []$T, rules: Bridge_Rules, allocator := context.tem
 		start: i64,
 		i:     int,
 	}
-	ord := make([]Ord, len(entries), context.temp_allocator)
-	for e, i in entries {ord[i] = {e.start, i}}
-	slice.sort_by(ord, proc(a, b: Ord) -> bool {return a.start < b.start || (a.start == b.start && a.i < b.i)})
+	// Claude's stretches run alongside the rest: they neither are nor split breaks.
+	ord := make([dynamic]Ord, 0, len(entries), context.temp_allocator)
+	for e, i in entries {if !e.claude {append(&ord, Ord{e.start, i})}}
+	slice.sort_by(ord[:], proc(a, b: Ord) -> bool {return a.start < b.start || (a.start == b.start && a.i < b.i)})
 	n := len(ord)
 	for k := 0; k < n; {
 		first := entries[ord[k].i]
@@ -652,34 +827,108 @@ tracker_bridge :: proc(entries: []Time_Entry, rules: Bridge_Rules) -> []Time_Ent
 	return out
 }
 
-// The mask for the daemon's own log, recomputed only when the log, the
-// running segment, the break in progress or the rules change.
+// The log as it counts, as one list: bridged breaks flagged, and Claude's
+// stretches cut down to what they add. For a project with claude_counts,
+// each moment Claude worked on it counts once: not again where your own work
+// or a bridged break of it already counts, and overlapping stretches
+// (two terminals, a restart) merge. Those pieces stay claude = true and are
+// not idle, so whatever sums `!idle || bridged` counts them; projects without
+// the option lose their Claude entries. Sorted by start. `entries` needs a
+// start, end, project, idle, bridged and claude field.
+tracker_fold :: proc(entries: []$T, rules: Bridge_Rules, allocator := context.temp_allocator) -> []T {
+	mask := bridge_mask(entries, rules)
+	out := make([dynamic]T, 0, len(entries), allocator)
+	Span :: struct {
+		a, b: i64,
+		i:    int, // the Claude entry it came from (-1: counted already)
+	}
+	per := make(map[string][dynamic]Span, 8, context.temp_allocator)
+	for e, i in entries {
+		if !e.claude {
+			x := e
+			x.bridged = mask[i]
+			append(&out, x)
+			continue
+		}
+		if !claude_counts(rules, e.project) || e.end <= e.start {continue}
+		if _, ok := per[e.project]; !ok {per[e.project] = make([dynamic]Span, context.temp_allocator)}
+		append(&per[e.project], Span{e.start, e.end, i})
+	}
+	if len(per) > 0 {
+		for x in out[:] {
+			if x.idle && !x.bridged {continue}
+			if spans, ok := &per[x.project]; ok {append(spans, Span{x.start, x.end, -1})}
+		}
+		for _, spans in per {
+			// Sweep in time order: Claude's pieces fill what nothing else covers.
+			slice.sort_by(spans[:], proc(a, b: Span) -> bool {return a.a < b.a || (a.a == b.a && a.i < b.i)})
+			covered := min(i64)
+			for sp, k in spans {
+				if sp.i < 0 {
+					covered = max(covered, sp.b)
+					continue
+				}
+				if sp.b <= covered {continue}
+				// What started before is in `covered`; counted time starting
+				// inside this stretch splits it.
+				a := max(sp.a, covered)
+				for o in spans[k + 1:] {
+					if o.a >= sp.b {break}
+					if o.i >= 0 || o.b <= a {continue}
+					if o.a > a {
+						x := entries[sp.i]
+						x.start, x.end, x.idle, x.bridged = a, o.a, false, false
+						append(&out, x)
+					}
+					a = max(a, o.b)
+					if a >= sp.b {break}
+				}
+				if a < sp.b {
+					x := entries[sp.i]
+					x.start, x.end, x.idle, x.bridged = a, sp.b, false, false
+					append(&out, x)
+				}
+				covered = max(covered, sp.b)
+			}
+		}
+	}
+	slice.sort_by(out[:], proc(a, b: T) -> bool {return a.start < b.start})
+	return out[:]
+}
+
+// The daemon's own log as it counts (tracker_fold), recomputed only when the
+// log, the running segment, the break in progress, Claude's stretches, the
+// rules or the second change.
 @(private = "file")
 view_cache: struct {
-	mask:                   [dynamic]bool,
+	view:                   [dynamic]Time_Entry,
 	n, running, gen:        int,
 	seg_start, away_start:  i64,
+	now, claude:            i64,
 	away, valid:            bool,
 }
 
-// The log as it counts: recorded entries, the segment counting now and the
-// break in progress (both up to `now`), with bridged breaks flagged. Temp-allocated.
+// The log as it counts: recorded entries, the segment counting now, the
+// break in progress and what Claude is doing (all up to `now`), with bridged
+// breaks flagged and Claude's stretches folded in. Temp-allocated.
 tracker_view :: proc(now: i64) -> []Time_Entry {
-	v := make([dynamic]Time_Entry, 0, len(tracker.entries) + 2, context.temp_allocator)
-	append(&v, ..tracker.entries[:])
-	if tracker.running >= 0 {append(&v, Time_Entry{tracker.seg_start, now, tracker.projects[tracker.running].name, false, false})}
-	if tracker.away {append(&v, Time_Entry{tracker.away_start, now, tracker.away_project, true, false})}
 	rules := bridge_rules()
+	claude_key: i64
+	for c in tracker.claude_segs {claude_key = claude_key * 31 + c.start + 1}
 	c := &view_cache
-	if !c.valid || c.n != len(tracker.entries) || c.running != tracker.running || c.seg_start != tracker.seg_start || c.away != tracker.away || c.away_start != tracker.away_start || c.gen != rules.gen || len(c.mask) != len(v) {
-		m := bridge_mask(v[:], rules)
-		if c.mask.allocator.procedure == nil {c.mask.allocator = runtime.default_allocator()}
-		resize(&c.mask, len(m))
-		copy(c.mask[:], m)
-		c.n, c.running, c.seg_start, c.away, c.away_start, c.gen, c.valid = len(tracker.entries), tracker.running, tracker.seg_start, tracker.away, tracker.away_start, rules.gen, true
+	if !c.valid || c.n != len(tracker.entries) || c.running != tracker.running || c.seg_start != tracker.seg_start || c.away != tracker.away || c.away_start != tracker.away_start || c.gen != rules.gen || c.now != now || c.claude != claude_key {
+		v := make([dynamic]Time_Entry, 0, len(tracker.entries) + 2 + len(tracker.claude_segs), context.temp_allocator)
+		append(&v, ..tracker.entries[:])
+		if tracker.running >= 0 {append(&v, Time_Entry{tracker.seg_start, now, tracker.projects[tracker.running].name, false, false, false})}
+		if tracker.away {append(&v, Time_Entry{tracker.away_start, now, tracker.away_project, true, false, false})}
+		claude_live(tracker.claude_segs[:], now, &v)
+		folded := tracker_fold(v[:], rules)
+		if c.view.allocator.procedure == nil {c.view.allocator = runtime.default_allocator()}
+		resize(&c.view, len(folded))
+		copy(c.view[:], folded)
+		c.n, c.running, c.seg_start, c.away, c.away_start, c.gen, c.now, c.claude, c.valid = len(tracker.entries), tracker.running, tracker.seg_start, tracker.away, tracker.away_start, rules.gen, now, claude_key, true
 	}
-	for &e, i in v {e.bridged = c.mask[i]}
-	return v[:]
+	return slice.clone(c.view[:], context.temp_allocator)
 }
 
 // Where the stretch counting now began: back through bridged breaks and
@@ -828,6 +1077,55 @@ tracker_set_bridge :: proc(index, minutes: int) -> bool {
 		return false
 	}
 	pr.bridge = m
+	bridge_rules_update()
+	request_redraw()
+	return true
+}
+
+// Mark the project as a paid job (paying = true/false in its section).
+tracker_set_paying :: proc(index: int, on: bool) -> bool {
+	if index < 0 || index >= len(tracker.projects) {return false}
+	pr := &tracker.projects[index]
+	if !config_set_value(fmt.tprintf("project.%s", pr.key), "paying", on ? "true" : "false") {
+		log.errorf("time tracking: couldn't write paying for %s to config.ini", pr.name)
+		return false
+	}
+	pr.paying = on
+	bridge_rules_update()
+	request_redraw()
+	return true
+}
+
+// Its hourly rate (rate = N; 0 = none), in [timetracker] currency.
+tracker_set_rate :: proc(index: int, rate: f64) -> bool {
+	if index < 0 || index >= len(tracker.projects) {return false}
+	pr := &tracker.projects[index]
+	r := max(rate, 0)
+	if !config_set_value(fmt.tprintf("project.%s", pr.key), "rate", fmt_rate(r)) {
+		log.errorf("time tracking: couldn't write rate for %s to config.ini", pr.name)
+		return false
+	}
+	pr.rate = r
+	request_redraw()
+	return true
+}
+
+// "85", "92.5" (no trailing zeros).
+fmt_rate :: proc(r: f64) -> string {
+	s := fmt.tprintf("%.2f", r)
+	s = strings.trim_right(s, "0")
+	return strings.trim_right(s, ".")
+}
+
+// Count Claude's background work on the project as work (claude_counts).
+tracker_set_claude :: proc(index: int, on: bool) -> bool {
+	if index < 0 || index >= len(tracker.projects) {return false}
+	pr := &tracker.projects[index]
+	if !config_set_value(fmt.tprintf("project.%s", pr.key), "claude_counts", on ? "true" : "false") {
+		log.errorf("time tracking: couldn't write claude_counts for %s to config.ini", pr.name)
+		return false
+	}
+	pr.claude = on
 	bridge_rules_update()
 	request_redraw()
 	return true
