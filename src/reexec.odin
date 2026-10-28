@@ -56,6 +56,7 @@ reexec_self :: proc(show_after := false) {
 	}
 	state.mem_low, state.mem_dismissed = memwarn_saved()
 	state.idle_since = countdown_saved()
+	if state.idle_since == 0 {state.idle_since = screen_off_saved()}
 
 	mfd, err := linux.memfd_create("wlperch-state", {})
 	if err != .NONE {
@@ -149,6 +150,7 @@ resume_from_args :: proc() -> (ipc_fd: posix.FD, ok: bool, show: bool) {
 		perf_resumed = true
 		memwarn_restore(state.mem_low, state.mem_dismissed)
 		countdown_restore(state.idle_since)
+		screen_off_restore(state.idle_since)
 	}
 	reap_children()
 	return posix.FD(ifd), true, show

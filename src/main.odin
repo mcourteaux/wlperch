@@ -503,6 +503,7 @@ main :: proc() {
 	placeholders_init()
 	notifications_start()
 	countdown_init()
+	screen_off_init()
 	log.debugf("services_start took %v, rss %d kB", time.tick_since(t0), rss_kb())
 
 	if resume_show {
@@ -677,6 +678,10 @@ loop_iteration :: proc() {
 		ms := int(time.duration_milliseconds(ct)) + 1
 		timeout = timeout < 0 ? ms : min(timeout, ms)
 	}
+	if sc := screen_off_timeout(); sc >= 0 {
+		ms := int(time.duration_milliseconds(sc)) + 1
+		timeout = timeout < 0 ? ms : min(timeout, ms)
+	}
 	if st := ssh_timeout(); st >= 0 {
 		ms := int(time.duration_milliseconds(st)) + 1
 		timeout = timeout < 0 ? ms : min(timeout, ms)
@@ -728,6 +733,7 @@ loop_iteration :: proc() {
 	notifications_tick()
 	memwarn_tick()
 	countdown_tick()
+	screen_off_tick()
 	ssh_tick()
 	update_tick()
 

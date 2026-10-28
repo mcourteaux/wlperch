@@ -595,6 +595,15 @@ keyboard or the pointer.
   way (the lock key, `before-sleep`) ends it. `wlperch countdown-preview
   [seconds]` shows it without locking.
 
+**Monitors off after a long idle.** After `[lock] screen_off_seconds` (600
+by default, 0 = off) without input, locked or not, the daemon powers off
+every monitor that is on; the next key or mouse move turns them back on.
+Like the lock it waits while an idle inhibitor is active. Monitors that were
+already off (the lock screen's monitors-off button, or by hand) are left to
+whoever turned them off, and a daemon restart while they're dark still
+wakes them at the next input. A swayidle `output * power off` timeout does
+the same and can stay.
+
 **Setup → Lock screen → Use wlperch lock** switches an existing swaylock
 setup over:
 - **What changes:** every `swaylock` command in your sway config,

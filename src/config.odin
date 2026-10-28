@@ -88,6 +88,7 @@ Config :: struct {
 	lock_background_light: u32, // used instead with the light theme (no image)
 	lock_countdown_seconds: int, // overlay before the idle lock; 0 = off (idle_countdown.odin)
 	lock_idle_seconds:      int, // > 0: wlperch itself locks after this much idle time
+	lock_screen_off_seconds: int, // > 0: monitors off after this much idle time (screen_off.odin)
 
 	// [launcher]
 	launcher_terminal:  string, // prefix for Terminal=true apps; "" = detect
@@ -263,6 +264,10 @@ countdown_seconds = 15
 # countdown before it; for setups without an idle lock in swayidle. Needs
 # the daemon running; a swayidle lock that comes earlier still wins.
 idle_lock_seconds = 0
+# Monitors off after this many seconds without input (locked or not); the
+# next key or mouse move turns them back on. Like the lock, it waits while
+# an idle inhibitor (a playing video) is active. 0 = off.
+screen_off_seconds = 600
 
 [launcher]
 # The app launcher: "wlperch toggle launch --center" (apps, calculator,
@@ -666,6 +671,8 @@ config_load :: proc() {
 	c.lock_countdown_seconds = parse_int_lim(get(m, defaults, "lock", "countdown_seconds"), LIM_LOCK_COUNTDOWN)
 	c.lock_idle_seconds = parse_int_lim(get(m, defaults, "lock", "idle_lock_seconds"), LIM_LOCK_IDLE)
 	if c.lock_idle_seconds > 0 {c.lock_idle_seconds = max(c.lock_idle_seconds, 10)}
+	c.lock_screen_off_seconds = parse_int_lim(get(m, defaults, "lock", "screen_off_seconds"), LIM_LOCK_SCREEN_OFF)
+	if c.lock_screen_off_seconds > 0 {c.lock_screen_off_seconds = max(c.lock_screen_off_seconds, 10)}
 
 	c.launcher_terminal = strings.clone(get(m, defaults, "launcher", "terminal"))
 
@@ -858,6 +865,7 @@ LIM_BAR_TRAY :: Int_Limits{12, 48, 20}
 LIM_BAR_VOLSTEP :: Int_Limits{1, 25, 5}
 LIM_LOCK_COUNTDOWN :: Int_Limits{0, 120, 15}
 LIM_LOCK_IDLE :: Int_Limits{0, 86400, 0}
+LIM_LOCK_SCREEN_OFF :: Int_Limits{0, 86400, 600}
 LIM_SETUP_DIM :: Int_Limits{5, 90, 40}
 LIM_SSH_LIFETIME :: Int_Limits{0, 1440, 60}
 LIM_SSH_IDLE :: Int_Limits{0, 1440, 0}
