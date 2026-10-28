@@ -2,6 +2,7 @@
 package main
 
 import "core:fmt"
+import "core:math"
 import "core:log"
 import "core:os"
 import "core:strings"
@@ -272,7 +273,7 @@ needs_attention :: proc(s: Comp_State) -> bool {return s == .Outdated || s == .P
 
 // One summary tile: caption, big value, optional sub line and progress bar.
 @(private = "file")
-stat_tile :: proc(id: string, w: f32, icon, caption, value, sub: string, accent: u32, progress: f32 = -1) {
+stat_tile :: proc(id: string, w: f32, icon, caption, value, sub: string, accent: u32, progress: f32 = -1, clickable := false) -> (clicked: bool) {
 	card_begin(id, w)
 	p := im.GetCursorScreenPos()
 	iw := im.GetContentRegionAvail().x
@@ -292,8 +293,37 @@ stat_tile :: proc(id: string, w: f32, icon, caption, value, sub: string, accent:
 		im.DrawList_AddRectFilled(dl(), {p.x, y}, {p.x + iw, y + 5}, col32(C_BORDER), 3)
 		im.DrawList_AddRectFilled(dl(), {p.x, y}, {p.x + iw * clamp(progress, 0, 1), y + 5}, col32(accent), 3)
 	}
-	im.Dummy({iw, TILE_H})
+	if clickable {
+		clicked = im.InvisibleButton("##click", {iw, TILE_H})
+		if im.IsItemHovered() {im.SetMouseCursor(.Hand)}
+	} else {
+		im.Dummy({iw, TILE_H})
+	}
 	card_end()
+	return
+}
+
+// Clicking the "Set up" or "Needs attention" tile makes the cards that
+// aren't set up pulse for a few seconds (scrolled into view first).
+@(private = "file")
+pulse: struct {
+	at:     time.Tick,
+	scroll: bool,
+}
+@(private = "file") PULSE_FOR :: 3 * time.Second
+
+// How bright the pulse ring is now, and whether a pulse runs at all.
+@(private = "file")
+pulse_alpha :: proc() -> (a: f32, on: bool) {
+	if pulse.at == {} {return}
+	t := time.tick_since(pulse.at)
+	if t >= PULSE_FOR {return}
+	request_redraw(2)
+	// Three beats, fading out over the last one.
+	ph := f32(time.duration_seconds(t))
+	beat := 0.5 - 0.5 * math.cos(ph * 2 * math.PI)
+	fade := clamp(f32(time.duration_seconds(PULSE_FOR)) - ph, 0, 1)
+	return beat * fade, true
 }
 
 // One component card; returns the action to run if one was clicked.
@@ -388,6 +418,23 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 	im.Dummy({inner, row_y - fp.y + 28})
 	card_end()
 	return
+}
+
+// A pulsing ring around the card just drawn, while a pulse runs; the first
+// one scrolls the window so the card is in view.
+@(private = "file")
+pulse_ring :: proc(col: u32) {
+	a, on := pulse_alpha()
+	if !on {return}
+	r0, r1 := im.GetItemRectMin(), im.GetItemRectMax()
+	if pulse.scroll {
+		pulse.scroll = false
+		wy, wh := im.GetWindowPos().y, im.GetWindowSize().y
+		if r0.y < wy || r1.y > wy + wh {im.SetScrollFromPosY(r0.y - wy, 0.25)}
+	}
+	rad := im.GetStyle().ChildRounding
+	grow := 1 + 3 * a
+	im.DrawList_AddRect(dl(), r0 - grow, r1 + grow, col32(col, 0.25 + 0.65 * a), rad + grow, 1.5 + 1.5 * a)
 }
 
 // Narrowest column on the Components tab; as many as fit, up to MAX_COLS.
@@ -499,7 +546,11 @@ draw_setup :: proc() {
 		for t, i in tiles {
 			if i > 0 && i % per_row == 0 {ty += tile_h + GAP}
 			im.SetCursorScreenPos({p.x + f32(i % per_row) * (tw + GAP), ty})
-			stat_tile(fmt.tprintf("tile:%d", i), tw, t.icon, t.caption, t.value, t.sub, t.accent, t.progress)
+			// The count tiles point at the cards that aren't set up yet.
+			clickable := done < applicable && (i == 0 || i == 3)
+			if stat_tile(fmt.tprintf("tile:%d", i), tw, t.icon, t.caption, t.value, t.sub, t.accent, t.progress, clickable) {
+				pulse = {time.tick_now(), true}
+			}
 			tile_h = max(tile_h, im.GetItemRectSize().y)
 		}
 		top := ty + tile_h + 18
@@ -547,6 +598,7 @@ draw_setup :: proc() {
 				for b, j in cols {if b < cols[k] - 1 {k = j}}
 				im.SetCursorScreenPos({x0 + f32(k) * (cw + GAP), cols[k]})
 				if r := comp_card(id, &setup.comps[id], cw); r != nil {run = r}
+				if s := setup.comps[id].state; s != .Unavailable && !is_done(s) {pulse_ring(needs_attention(s) ? C_ORANGE : C_BLUE)}
 				cols[k] = im.GetItemRectMax().y + GAP
 			}
 		}
