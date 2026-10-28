@@ -263,17 +263,20 @@ status_timer_item :: proc() -> (it: Status_Item) {
 	marks := fmt.tprintf("%s%s", rules_paying(rules, project) ? " " + ICON_PAYING : "", claude_here ? " " + ICON_CLAUDE : "")
 	it.text = fmt.tprintf("%s %s%s %s", ICON_CLOCK, project, marks, fmt_duration(total))
 	claude_line := claude_here ? "\nClaude is working on it: that counts too" : ""
+	// Paying: the money made today, in every tooltip.
+	money := ""
+	if rate := project_rate(project); rate > 0 {money = fmt.tprintf(" · %s", fmt_money(f64(total) / 3600 * rate))}
 	switch {
 	case running:
 		it.class = "running"
-		it.tooltip = fmt.tprintf("%s: %s today%s", project, fmt_duration(total), claude_line)
+		it.tooltip = fmt.tprintf("%s: %s today%s%s", project, fmt_duration(total), money, claude_line)
 	case waiting:
 		limit := bridge_limit(rules, project)
 		it.class = "waiting"
-		it.tooltip = fmt.tprintf("%s: %s today\nAway %s: back within %s and it counts as work\n(breaks under %d min bridge on %s)%s", project, fmt_duration(total), fmt_duration(now - away_start, true), fmt_duration(limit - (now - away_start), true), limit / 60, project, claude_line)
+		it.tooltip = fmt.tprintf("%s: %s today%s\nAway %s: back within %s and it counts as work\n(breaks under %d min bridge on %s)%s", project, fmt_duration(total), money, fmt_duration(now - away_start, true), fmt_duration(limit - (now - away_start), true), limit / 60, project, claude_line)
 	case:
 		it.class = "claude"
-		it.tooltip = fmt.tprintf("%s: %s today\nClaude is working on it, so it counts while you're elsewhere", project, fmt_duration(total))
+		it.tooltip = fmt.tprintf("%s: %s today%s\nClaude is working on it, so it counts while you're elsewhere", project, fmt_duration(total), money)
 	}
 	return
 }

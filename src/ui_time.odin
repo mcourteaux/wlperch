@@ -204,7 +204,7 @@ draw_time :: proc(w: f32) {
 				return x + sz.x + 8
 			}
 			if pr.paying {
-				t := pr.rate > 0 ? fmt.tprintf("Paying job: %s/h", fmt_money(pr.rate)) : "Paying job (no rate set: the pencil sets one)"
+				t := pr.rate > 0 ? fmt.tprintf("Paying job: %s/h\n%s today", fmt_money(pr.rate), fmt_money(f64(totals_today[pr.name]) / 3600 * pr.rate)) : "Paying job (no rate set: the pencil sets one)"
 				nx = mark(nx, rp.y + 9, ICON_PAYING, C_GREEN, 0.9, t)
 			}
 			if pr.claude {
