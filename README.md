@@ -853,6 +853,11 @@ bar {
   urgent one red. A project with several workspaces on one monitor shows its
   name with a number chip per workspace. Click goes there, scrolling steps
   through this monitor's workspaces.
+  A speaker follows the workspace of an app that is playing audio (an
+  unpaused, unmuted stream in `pactl`, owned by that window's process or one
+  of its children). When one app has windows on several workspaces, as a
+  browser does, the playing media player's title picks the window showing it;
+  otherwise all of that app's workspaces get one.
 - **Left side:** the binding mode (`resize`), the scratchpad (count; the
   windows in the tooltip; click shows it) and the focused window's title.
 - **Right side:** idle inhibitor (click: keep the screen awake), power profile

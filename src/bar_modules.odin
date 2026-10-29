@@ -320,6 +320,11 @@ bar_data_start :: proc() {
 				set_s(&bar_data.bl_dev, bl_dev)
 			}
 			if tick % 2 == 0 || poke {
+				use_ws: bool
+				{
+					sync.guard(&bar_data.mu)
+					use_ws = .Workspaces in bar_mods_used()
+				}
 				timer := status_timer_item()
 				media_bus, track, tip: string
 				status := Media_Status.Stopped
@@ -343,8 +348,15 @@ bar_data_start :: proc() {
 						track = strings.clone(track, context.temp_allocator)
 						can_prev, can_next = p.can_prev, p.can_next
 					}
+					if use_ws {
+						pp := make([dynamic]Play_Player, context.temp_allocator)
+						for p in players {append(&pp, Play_Player{bus_name_pid(bus, p.bus_name), strings.clone(p.title, context.temp_allocator), p.status == .Playing})}
+						changed |= bar_playing_update(pp[:])
+					}
 					for &p in players {media_player_free(&p)}
 					delete(players)
+				} else if use_ws {
+					changed |= bar_playing_update(nil)
 				}
 				sync.guard(&bar_data.mu)
 				changed |= set_item(&bar_data.timer, timer)
@@ -500,6 +512,7 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 				case:
 					bar_seg(&it, w.name, p.muted)
 				}
+				ws_speaker(&it, w)
 				add(lay, it)
 				continue
 			}
@@ -514,7 +527,7 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 				w := g.ws[0]
 				it := Bar_Item{mod = .Workspaces, key = w.name, pad = 10, margin = 3, inset = 6, hover = true, group = len(lay.groups), icon_alpha = 1}
 				ws_style(&it, w, proj.name, col)
-				it.tooltip = fmt.tprintf("%s\nRight-click: switch only this monitor", proj.name)
+				it.tooltip = fmt.tprintf("%s\nRight-click: switch only this monitor%s", proj.name, it.tooltip != "" ? strings.concatenate({"\n", it.tooltip}, context.temp_allocator) : "")
 				add(lay, it)
 			} else {
 				label := Bar_Item{mod = .Workspaces, key = g.ws[0].name, pad = 8, margin = 2, inset = 6, hover = false, group = len(lay.groups), icon_alpha = 1}
@@ -782,6 +795,19 @@ ws_style :: proc(it: ^Bar_Item, w: Bar_Ws, label: string, col: u32) {
 	case:
 		bar_seg(it, label, bar_ink(col))
 	}
+	ws_speaker(it, w)
+}
+
+// A speaker after the label when an app on the workspace plays audio, in the
+// label's colour.
+@(private = "file")
+ws_speaker :: proc(it: ^Bar_Item, w: Bar_Ws) {
+	app := bar_ws_playing(w.name)
+	if app == "" || len(it.segs) == 0 {return}
+	last := it.segs[len(it.segs) - 1]
+	bar_seg(it, " " + ICON_VOLUME_HIGH, last.color)
+	line := strings.concatenate({"Playing audio: ", app}, context.temp_allocator)
+	it.tooltip = it.tooltip == "" ? line : strings.concatenate({it.tooltip, "\n", line}, context.temp_allocator)
 }
 
 battery_alt: bool
