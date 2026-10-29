@@ -419,9 +419,11 @@ theme_apply_desktop :: proc(m: Theme_Mode) -> []string {
 
 	// swaymsg, not sway_command: this runs off the main thread (and a slow
 	// wallpaper load would hold the shared connection).
-	if t.wallpaper != "" && os.get_env("SWAYSOCK", context.temp_allocator) != "" {
-		_, c := run_code({"swaymsg", "output", "*", "bg", t.wallpaper, "fill"}, allocator = context.temp_allocator)
-		note(&done, c == 0, fmt.tprintf("wallpaper %s", filepath.base(t.wallpaper)))
+	// A random one of the mode's wallpaper set (wallpapers.odin), else the fixed one.
+	wallpaper := wallpaper_for_mode(m)
+	if wallpaper == "" {wallpaper = t.wallpaper}
+	if wallpaper != "" && os.get_env("SWAYSOCK", context.temp_allocator) != "" {
+		note(&done, wallpaper_apply(wallpaper), fmt.tprintf("wallpaper %s", filepath.base(wallpaper)))
 	}
 	if t.kitty_theme != "" && have_program("kitty") {
 		_, c := run_code({"kitty", "+kitten", "themes", "--reload-in=all", t.kitty_theme}, 30 * time.Second, context.temp_allocator)

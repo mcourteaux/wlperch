@@ -479,8 +479,8 @@ draw_setup :: proc() {
 	im.DrawList_AddCircleFilled(dl(), {p.x + 22, p.y + 22}, 22, col32(C_BLUE, 0.16))
 	draw_icon_centered(fonts.ui, 24, {p.x + 22, p.y + 22}, col32(C_BLUE), ICON_TUNE_BAR)
 	draw_text(fonts.bold, 26, {p.x + 58, p.y - 2}, col32(C_TEXT), "wlperch")
-	// Components | Settings, right-aligned; the recommended install left of it.
-	tabs := []string{"Components", "Settings"}
+	// Components | Settings | Wallpapers, right-aligned; the recommended install left of it.
+	tabs := []string{"Components", "Settings", "Wallpapers"}
 	tw := f32(4)
 	for t in tabs {tw += measure(fonts.ui, SZ_SMALL + 1, t).x + 24}
 	right := p.x + width - tw
@@ -495,13 +495,28 @@ draw_setup :: proc() {
 		if pill_button("##recommended", rec, C_BLUE, true) {setup_install_recommended(); setup_check()}
 	}
 	// The subtitle only where it fits next to the buttons.
-	sub := setup_tab == .Settings ? "Change wlperch's settings here instead of in config.ini." : "Pick the parts you want. Run `wlperch setup` any time to change them."
+	sub: string
+	switch setup_tab {
+	case .Components: sub = "Pick the parts you want. Run `wlperch setup` any time to change them."
+	case .Settings:   sub = "Change wlperch's settings here instead of in config.ini."
+	case .Wallpapers: sub = "Pick wallpapers for the dark and the light theme; each switch shows one at random."
+	}
 	if p.x + 58 + measure(fonts.ui, SZ_BODY, sub).x + 16 <= right {
 		draw_text(fonts.ui, SZ_BODY, {p.x + 58, p.y + 28}, col32(C_MUTED), sub)
 	}
 	im.SetCursorScreenPos(p)
 	im.Dummy({width, 56})
 	im.Dummy({1, 6})
+	// Thumbnail textures only while the tab shows.
+	if setup_tab != .Wallpapers {wallpapers_release()}
+	if setup_tab == .Wallpapers {
+		q := im.GetCursorScreenPos()
+		draw_wallpapers(q.x, q.y, width)
+		im.Dummy({1, 8})
+		log_content_height()
+		im.End()
+		return
+	}
 	if setup_tab == .Settings {
 		q := im.GetCursorScreenPos()
 		draw_settings(q.x, q.y, width)

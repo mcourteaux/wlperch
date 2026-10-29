@@ -98,6 +98,7 @@ Config :: struct {
 	theme_nvim_file:    string,
 	theme_nvim_background: bool,
 	theme_targets:      [Theme_Mode]Theme_Targets,
+	wallpapers_dir:     string, // [wallpapers] directory, "~" expanded, no trailing '/'
 }
 
 config: Config
@@ -345,6 +346,13 @@ kvantum_theme =
 vscode_theme =
 command =
 sway_colors = auto
+
+[wallpapers]
+# A folder of wallpapers (jpg, png). In the setup window's Wallpapers tab,
+# mark each one for the dark theme, the light theme or both (kept in
+# wallpapers.tsv next to this file): a theme switch then shows a random one
+# of that mode's set instead of [theme.*] wallpaper.
+directory =
 
 [bar]
 # wlperch's own bar ("wlperch bar"), a waybar replacement: run it from sway
@@ -725,6 +733,7 @@ config_load_theme :: proc(m, defaults: ini.Map) {
 	for l in split_list(get(m, defaults, "theme", "links"), ",") {append(&c.theme_links, expand_home(l))}
 	c.theme_nvim_file = expand_home(get(m, defaults, "theme", "nvim_file"))
 	c.theme_nvim_background = parse_bool(get(m, defaults, "theme", "nvim_background"), true)
+	c.wallpapers_dir = strings.trim_right(expand_home(get(m, defaults, "wallpapers", "directory")), "/")
 	for mode in Theme_Mode {
 		sec := mode == .Dark ? "theme.dark" : "theme.light"
 		t := &c.theme_targets[mode]

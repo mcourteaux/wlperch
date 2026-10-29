@@ -64,7 +64,7 @@ ss: struct {
 	plan_frames:   int, // frames since the key changed; heights settle first
 } = {dragging = -1}
 
-Setup_Tab :: enum {Components, Settings}
+Setup_Tab :: enum {Components, Settings, Wallpapers}
 setup_tab: Setup_Tab
 
 @(private = "file")

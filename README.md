@@ -732,6 +732,15 @@ running, the CLI switches the desktop itself and prints what it changed.
   `kvantummanager`), `vscode_theme` (`workbench.colorTheme` in the settings of
   Code, Code - OSS or VSCodium, when they set one) and `command` (anything
   else, through `sh -c`).
+- **Wallpaper sets**: the setup window's **Wallpapers** tab
+  (`wlperch setup wallpapers`) shows the jpg and png files of a folder
+  (`[wallpapers] directory`) as thumbnails, each with a **Dark** and a
+  **Light** switch; click one to show it now. A switch to dark or light then
+  shows a random wallpaper of that set, never the one already showing; with
+  an empty set the mode's `wallpaper` applies. The marks are kept in
+  `wallpapers.tsv` next to `config.ini` (file names can hold anything an INI
+  key can't) with a fingerprint per file, so a renamed file keeps its marks.
+  Thumbnails are cached in `~/.cache/wlperch/wallpaper-thumbs`.
 - **The mode** is kept in `~/.local/share/wlperch/theme`. Before the first
   switch, the gsettings `color-scheme` decides.
 
@@ -925,6 +934,7 @@ it:
 wlperch setup      # later: the same window (or the ⚙ button in a panel)
 wlperch setup settings  # straight to the Settings tab
 wlperch setup components  # straight to the Components tab
+wlperch setup wallpapers  # straight to the Wallpapers tab
 ```
 
 Once every component is set up, the window opens on the Settings tab.

@@ -1141,6 +1141,7 @@ run_setup :: proc() {
 	// "wlperch setup settings", or nothing left to install: open on Settings.
 	if len(os.args) > 2 && os.args[2] == "settings" || setup_all_done() {setup_tab = .Settings}
 	if len(os.args) > 2 && os.args[2] == "components" {setup_tab = .Components}
+	if len(os.args) > 2 && os.args[2] == "wallpapers" {setup_tab = .Wallpapers}
 	win_w, win_h := setup_window_size()
 	if !platform_open_window("wlperch setup", "wlperch-setup", win_w, win_h, SETUP_MIN_W, SETUP_MIN_H) {
 		log.error("couldn't open the setup window")
@@ -1195,7 +1196,7 @@ run_setup :: proc() {
 			// Only what changed is drawn again.
 			before := setup_fingerprint()
 			setup_check()
-			if setup_fingerprint() != before {request_redraw(1)}
+			if setup_fingerprint() != before || wallpapers_poll() {request_redraw(1)}
 			if settings_poll() {
 				setup_dim_load_config() // config.ini changed elsewhere
 				request_redraw(1)

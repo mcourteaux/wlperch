@@ -38,6 +38,7 @@ commands:
   setup settings   the setup window on its Settings tab (common config.ini keys);
                    the default once every component is set up
   setup components the setup window on its Components tab
+  setup wallpapers the setup window on its Wallpapers tab (dark / light sets)
   restart  restart the daemon (new binary, re-read config); keeps graph history
   audio refresh    fix stuck audio: switch the output's card profile and back
   audio restart    restart PipeWire, WirePlumber and pipewire-pulse

@@ -116,6 +116,9 @@ ICON_TAG :: "\U000F04F9" // md-tag
 ICON_AT :: "\U000F0065" // md-at
 ICON_INBOX :: "\U000F0687" // md-inbox
 ICON_EYE :: "\U000F0208" // md-eye
+ICON_IMAGE :: "\U000F02E9" // md-image
+ICON_FOLDER_IMAGE :: "\U000F024F" // md-folder_image
+ICON_SHUFFLE :: "\U000F049D" // md-shuffle
 ICON_COMMENT :: "\U000F0182" // md-comment_outline
 ICON_CIRCLE_MEDIUM :: "\U000F09DE" // md-circle_medium
 ICON_APPS :: "\U000F003B" // md-apps
