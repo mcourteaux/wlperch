@@ -34,6 +34,7 @@ Platform :: struct {
 	viewporter:       ^wl.Wp_Viewporter,
 	frac_scale_mgr:   ^wl.Wp_Fractional_Scale_Manager_V1,
 	idle_notifier:    ^wl.Ext_Idle_Notifier_V1,
+	inhibit_mgr:      ^wl.Zwp_Idle_Inhibit_Manager_V1, // game_hold.odin
 	xdg_wm_base:      ^wl.Xdg_Wm_Base, // for placeholder windows
 	deco_mgr:         ^wl.Zxdg_Decoration_Manager_V1,
 	shm:              ^wl.Shm,
@@ -144,6 +145,8 @@ registry_listener := wl.Registry_Listener {
 			plat.deco_mgr = cast(^wl.Zxdg_Decoration_Manager_V1)wl.registry_bind(registry, name, &wl.zxdg_decoration_manager_v1_interface, 1)
 		case "ext_idle_notifier_v1":
 			plat.idle_notifier = cast(^wl.Ext_Idle_Notifier_V1)wl.registry_bind(registry, name, &wl.ext_idle_notifier_v1_interface, 1)
+		case "zwp_idle_inhibit_manager_v1":
+			plat.inhibit_mgr = cast(^wl.Zwp_Idle_Inhibit_Manager_V1)wl.registry_bind(registry, name, &wl.zwp_idle_inhibit_manager_v1_interface, 1)
 		case "wp_single_pixel_buffer_manager_v1":
 			plat.single_pixel = cast(^wl.Wp_Single_Pixel_Buffer_Manager_V1)wl.registry_bind(registry, name, &wl.wp_single_pixel_buffer_manager_v1_interface, 1)
 		case "wp_cursor_shape_manager_v1":

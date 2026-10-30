@@ -142,6 +142,9 @@ lock_setup_check :: proc(p: ^Component, add_detail: proc(c: ^Component, line: st
 			add_detail(p, "no countdown: swayidle has no idle lock (see [lock] idle_lock_seconds)")
 		}
 	}
+	if app, why := game_hold_current(); app != "" {
+		add_detail(p, fmt.tprintf("on hold: fullscreen game %s (%s) keeps the screen awake", app, why))
+	}
 }
 
 @(private = "file")

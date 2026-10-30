@@ -89,6 +89,7 @@ Config :: struct {
 	lock_countdown_seconds: int, // overlay before the idle lock; 0 = off (idle_countdown.odin)
 	lock_idle_seconds:      int, // > 0: wlperch itself locks after this much idle time
 	lock_screen_off_seconds: int, // > 0: monitors off after this much idle time (screen_off.odin)
+	lock_games_awake:        bool, // a fullscreen game holds off the idle lock and monitors-off (game_hold.odin)
 
 	// [launcher]
 	launcher_terminal:  string, // prefix for Terminal=true apps; "" = detect
@@ -271,6 +272,12 @@ idle_lock_seconds = 0
 # swayidle (e.g. for a game stream) keeps the monitors on as well, and it
 # waits while an idle inhibitor (a playing video) is active. 0 = off.
 screen_off_seconds = 600
+# While a fullscreen game runs (wine / Proton or another .exe, Steam,
+# gamescope, Lutris: the same rules as [notifications] fullscreen), wlperch
+# holds an idle inhibitor: no idle lock, no countdown and no monitors-off,
+# from swayidle or from wlperch, even when you play with a controller only.
+# Going to sleep still locks.
+games_keep_awake = true
 
 [launcher]
 # The app launcher: "wlperch toggle launch --center" (apps, calculator,
@@ -683,6 +690,7 @@ config_load :: proc() {
 	if c.lock_idle_seconds > 0 {c.lock_idle_seconds = max(c.lock_idle_seconds, 10)}
 	c.lock_screen_off_seconds = parse_int_lim(get(m, defaults, "lock", "screen_off_seconds"), LIM_LOCK_SCREEN_OFF)
 	if c.lock_screen_off_seconds > 0 {c.lock_screen_off_seconds = max(c.lock_screen_off_seconds, 10)}
+	c.lock_games_awake = parse_bool(get(m, defaults, "lock", "games_keep_awake"), true)
 
 	c.launcher_terminal = strings.clone(get(m, defaults, "launcher", "terminal"))
 

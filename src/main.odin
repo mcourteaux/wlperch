@@ -735,6 +735,7 @@ loop_iteration :: proc() {
 	memwarn_tick()
 	countdown_tick()
 	screen_off_tick()
+	game_hold_tick()
 	ssh_tick()
 	update_tick()
 

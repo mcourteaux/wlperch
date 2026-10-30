@@ -608,6 +608,16 @@ whoever turned them off, and a daemon restart while they're dark still
 wakes them at the next input. A swayidle `output * power off` timeout does
 the same and can stay.
 
+**Fullscreen games keep the screen awake.** While a fullscreen view is a
+game, by the same rules that keep popups off it (a wine / Proton or other
+`.exe` program, Steam's `steam_app_*`, gamescope, Lutris), the daemon holds
+an idle inhibitor. Everything that waits for inactivity honours it: swayidle's
+lock and power-off timeouts, the countdown, and wlperch's own idle lock and
+monitors-off. So a game played with only a controller isn't locked or blanked.
+It's released as soon as the game leaves fullscreen or exits; going to sleep
+still locks. `[lock] games_keep_awake = false` turns it off; Setup's Lock
+screen card says when a game is holding the screen awake.
+
 **Setup → Lock screen → Use wlperch lock** switches an existing swaylock
 setup over:
 - **What changes:** every `swaylock` command in your sway config,
