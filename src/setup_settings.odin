@@ -245,6 +245,13 @@ applied :: proc(i: int) {
 	case .Setup:
 		setup_dim_load_config()
 		r.note, r.note_ok = "applied", true
+	case .Wallpaper:
+		config_reload_theme() // the Wallpapers tab reads it
+		if wallpaper_running() > 0 {
+			r.note, r.note_ok = "applied to the wallpaper", true
+		} else {
+			r.note = "saved; used by wlperch's wallpaper (setup's Wallpaper card)"
+		}
 	}
 }
 
@@ -339,6 +346,7 @@ group_look :: proc(g: string) -> Group_Look {
 	case "Updates":           return {ICON_UPDATE, C_GREEN}
 	case "GitHub":            return {ICON_GITHUB, C_PURPLE}
 	case "Launcher":          return {ICON_MAGNIFY, C_GREEN}
+	case "Wallpapers":        return {ICON_IMAGE, C_BLUE}
 	case "Dark theme":        return {ICON_MOON, C_PURPLE}
 	case "Light theme":       return {ICON_SUNNY, C_YELLOW}
 	}
@@ -760,4 +768,16 @@ draw_settings :: proc(x, y, width: f32) {
 	}
 	im.SetCursorScreenPos({x, bottom - GAP}) // no gap after the last card
 	im.Dummy({width, 0})
+}
+
+// One setting's row on another tab (the Wallpapers tab's rotation), with the
+// same editing, saving and notes as on the Settings tab.
+settings_row :: proc(section, key: string, inner: f32, accent: u32) {
+	if !ss.loaded {settings_load()}
+	for s, i in SETTINGS {
+		if s.section == section && s.key == key {
+			draw_row(i, inner, accent)
+			return
+		}
+	}
 }

@@ -283,6 +283,7 @@ Setting_Apply :: enum {
 	Lock,       // read when the screen locks
 	Theme,      // the daemon restarts; used at the next dark / light switch
 	Setup,      // the setup window itself, right away
+	Wallpaper,  // the wallpaper process re-reads config.ini by itself
 }
 
 Setting_Choice :: struct {value, label: string}
@@ -306,7 +307,7 @@ Setting :: struct {
 	old_scale:  int,              // old value * old_scale = new value (0 = 1)
 }
 
-SETTINGS_GROUPS := [?]string{"Panel", "Clock and weather", "Bar", "Memory", "Notifications", "Lock screen", "Lock screen info", "Idle lock", "Time tracking", "SSH keys", "GitHub", "Launcher", "Setup window", "Updates", "Dark theme", "Light theme"}
+SETTINGS_GROUPS := [?]string{"Panel", "Clock and weather", "Bar", "Memory", "Notifications", "Lock screen", "Lock screen info", "Idle lock", "Time tracking", "SSH keys", "GitHub", "Launcher", "Setup window", "Updates", "Wallpapers", "Dark theme", "Light theme"}
 
 @(private = "file") CH_UNITS :: []Setting_Choice{{"metric", "Metric"}, {"imperial", "Imperial"}}
 @(private = "file") CH_BAR_POS :: []Setting_Choice{{"top", "Top"}, {"bottom", "Bottom"}}
@@ -392,6 +393,7 @@ SETTINGS := [?]Setting {
 	{group = "Setup window", section = "setup", key = "dim_background", label = "Dim the rest of the screen", kind = .Bool, apply = .Setup, help = "While this window is open and focused, everything around it is dimmed (not while it is tiled). A click on the dim closes the window, like Escape."},
 	{group = "Setup window", section = "setup", key = "dim_strength", label = "Dim strength", kind = .Int, apply = .Setup, ilim = LIM_SETUP_DIM, slider = true, unit = "%", help = "How dark the dim is; the light theme uses a bit less."},
 	// Dark / light
+	{group = "Wallpapers", section = "wallpapers", key = "rotate_minutes", label = "Next wallpaper every", kind = .Int, apply = .Wallpaper, ilim = LIM_WALLPAPER_ROTATE, step = 5, unit = "min", help = "wlperch's wallpaper (setup's Wallpaper card) crossfades to another picture of the current mode's set (the Wallpapers tab) this often. 0 = only when the theme switches or you pick one."},
 	{group = "Dark theme", section = "theme.dark", key = "wallpaper", label = "Wallpaper", kind = .Path, apply = .Theme, hint = "leave alone", help = "An image for sway's outputs."},
 	{group = "Dark theme", section = "theme.dark", key = "gtk_theme", label = "GTK theme", kind = .Text, apply = .Theme, hint = "leave alone", help = THEME_HELP_GTK},
 	{group = "Dark theme", section = "theme.dark", key = "icon_theme", label = "Icon theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Icon theme name (gsettings icon-theme)."},

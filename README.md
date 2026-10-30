@@ -755,6 +755,10 @@ running, the CLI switches the desktop itself and prints what it changed.
   `wallpapers.tsv` next to `config.ini` (file names can hold anything an INI
   key can't) with a fingerprint per file, so a renamed file keeps its marks.
   Thumbnails are cached in `~/.cache/wlperch/wallpaper-thumbs`.
+- **wlperch's wallpaper** (setup's **Wallpaper** card, see below) draws the
+  wallpaper instead of swaybg: every change crossfades, and with
+  `[wallpapers] rotate_minutes` (also on the Wallpapers tab) it moves on to
+  another picture of the current mode's set that often.
 - **The mode** is kept in `~/.local/share/wlperch/theme`. Before the first
   switch, the gsettings `color-scheme` decides.
 
@@ -791,6 +795,50 @@ that are already running:
   lazy.nvim, which sources it from `lazy.setup()`); remove those
   lines and the file when you like. **Remove** deletes the plugin and puts
   `nvim_file` back.
+
+### Wallpaper
+
+`wlperch wallpaper` replaces swaybg. It is its own small process (one
+layer-shell surface per monitor on the background layer, drawn in shared
+memory, no GPU), so the daemon's restarts never touch the wallpaper and the
+last picture is there at login before anything else runs.
+
+- **Crossfades:** every change (a dark / light switch, a click on the
+  Wallpapers tab, Shuffle, the rotation, `wlperch wallpaper set`) blends from
+  the old picture into the new one over 0.8 s, on every monitor at once.
+- **Rotation:** `[wallpapers] rotate_minutes` (Settings → Wallpapers, or the
+  Wallpapers tab): every so many minutes the next picture of the current
+  mode's set, never the same one twice in a row; a picture you pick, or a
+  theme switch, starts the count again. 0 = off.
+- **Sharp at any scale:** each monitor gets the picture scaled ("fill":
+  cover, centred) to its own pixels, also at fractional scales; a monitor
+  plugged in later gets it too.
+- **How it's told:** the full path of the picture is kept in
+  `~/.local/share/wlperch/wallpaper`; whoever changes it (the daemon, setup,
+  the command line) replaces that file, and the process follows it. So it
+  needs nothing else running, and a restart shows the same picture.
+- **Memory:** about 20 MB with two monitors (one buffer per monitor). A
+  picture is decoded only while it's scaled (a 9K photo briefly takes about
+  200 MB, then goes back).
+- **Commands:** `wlperch wallpaper next` (another picture of the current
+  mode's set), `wlperch wallpaper set <file>`, `wlperch wallpaper restart` (a
+  fresh one takes over without a flash, e.g. after an update).
+
+**Setup → Wallpaper → Use wlperch wallpaper** writes
+`config.d/wlperch-wallpaper.conf`:
+
+```
+swaybg_command -
+exec_always wlperch wallpaper
+```
+
+`swaybg_command -` keeps sway from starting swaybg (an `output * bg` line in
+your config then does nothing), and `exec_always` starts the wallpaper at
+login and after a reload (a second one exits at once). Setup then starts it,
+it stops the swaybg that runs once it has drawn, and sway is reloaded (after
+the usual config check). **Switch back** removes the file, reloads sway (so
+swaybg returns), shows the current picture through swaybg and stops
+wlperch's. Without the file, wlperch keeps using `output * bg` as before.
 
 ### SSH keys
 
@@ -1359,6 +1407,8 @@ src/launcher.odin        launcher data: desktop entries, $PATH, matching, usage 
 src/ui_launcher.odin     the launcher module (search field, rows, calculator row, keys)
 src/setup_menu.odin      setup component: switch rofi/wofi/fuzzel/… key bindings to the launcher and back
 src/config_switch.odin   rewriting sway files with backups and restoring them (lock screen, launcher, bar)
+src/wallpaper_proc.odin  `wlperch wallpaper`: background layer surfaces, scaling and crossfades (own process, shm)
+src/setup_wallpaper_card.odin  setup component: wlperch's wallpaper instead of swaybg, and back
 src/bar.odin             `wlperch bar`: layer surfaces per output, input, tooltips and tray menus (own process, shm)
 src/bar_draw.odin        the bar's palette and software drawing (rounded rects, text, icons)
 src/bar_modules.odin     the bar's modules: data worker, items, clicks and scrolling, clock and calendar

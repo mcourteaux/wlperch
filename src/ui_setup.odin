@@ -35,6 +35,7 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	case .Portal:   return {ICON_THEME, "Desktop portal", "GTK4 apps and Flatpaks read the system dark / light setting from xdg-desktop-portal, which needs systemd's graphical session (screen sharing and file pickers use it too). Starts it from sway (with sway-systemd when installed). Discord and Chrome follow the GTK theme without it.", C_ORANGE, ""}
 	case .Bar:      return {ICON_MONITORS, "Bar", "wlperch's own bar instead of waybar: workspaces (project workspaces in their colour), tray, media, timer, sensors, notifications, clock. Switches sway's bar over (with backups).", C_TEAL, BAR_CONF}
 	case .Ssh:      return {ICON_KEY, "SSH agent", "OpenSSH's own ssh-agent (not GNOME Keyring's), started by systemd on first use, for the SSH keys panel and the bar's key icon: unlock keys for a while ([ssh] lifetime), forget them when the screen locks. Sets SSH_AUTH_SOCK for your next login (with backups).", C_YELLOW, SSH_PROFILE_BLOCK}
+	case .Wallpaper: return {ICON_IMAGE, "Wallpaper", "wlperch draws the wallpaper instead of swaybg: a soft crossfade on every change, the dark / light sets of the Wallpapers tab, and a new picture every few minutes if you like ([wallpapers] rotate_minutes). Turns sway's swaybg off.", C_BLUE, WALLPAPER_CONF}
 	case .Launcher: return {ICON_HOME, "App launcher entry", "Adds \"wlperch setup\" to your application launcher (rofi, wofi, fuzzel…).", C_YELLOW, ""}
 	}
 	return {}
@@ -227,6 +228,14 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 		}
 		if s == .Installed || s == .Partial || s == .Custom {append(&out, Action{"Show keys", false, setup_ssh_show_keys, false})}
 		if s == .Installed || s == .Partial || s == .Outdated {append(&out, Action{"Remove", false, setup_remove_ssh, true})}
+	case .Wallpaper:
+		switch s {
+		case .Missing:  append(&out, Action{"Use wlperch wallpaper", true, setup_install_wallpaper, false})
+		case .Stopped:  append(&out, Action{"Start", true, setup_start_wallpaper, false})
+		case .Running:  append(&out, Action{"Restart", false, setup_restart_wallpaper, false})
+		case .Installed, .Outdated, .Custom, .Unavailable, .Partial:
+		}
+		if s == .Running || s == .Stopped {append(&out, Action{"Switch back", false, setup_remove_wallpaper, true})}
 	case .Lock:
 		switch s {
 		case .Missing:   append(&out, Action{"Use wlperch lock", true, setup_install_lock, false})
@@ -247,7 +256,7 @@ COLUMNS := [4]struct {
 } {
 	{"Basics", {.Program, .Service, .Config}},
 	{"Desktop", {.Sway, .Menu, .Launcher, .Portal}},
-	{"Bar and look", {.Bar, .Waybar, .Theme, .Nvim}},
+	{"Bar and look", {.Bar, .Waybar, .Theme, .Wallpaper, .Nvim}},
 	{"Extras", {.Notifications, .Lock, .Ssh, .Rapl}},
 }
 

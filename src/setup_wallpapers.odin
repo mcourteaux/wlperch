@@ -491,6 +491,12 @@ draw_wallpapers :: proc(x, y, width: f32) {
 	case len(wp.thumbs) == 0:
 		hint(fmt.tprintf("%s No jpg or png files in this folder", ICON_ALERT), inner, C_ORANGE)
 	}
+	// Rotation (the wallpaper process does it; only with wlperch's wallpaper).
+	im.Dummy({1, 4})
+	settings_row("wallpapers", "rotate_minutes", inner, C_BLUE)
+	if config.wallpapers_rotate_minutes > 0 && !wallpaper_conf_installed() && wallpaper_running() == 0 {
+		hint(fmt.tprintf("%s Rotating needs wlperch's wallpaper instead of swaybg: the Wallpaper card on the Components tab.", ICON_INFO), inner, C_ORANGE)
+	}
 	hint("Switching to dark or light shows a random wallpaper of that set, never the one already showing. With an empty set, the theme's own Wallpaper setting (Settings, Dark / Light theme) is used. Click a picture to show it now.", inner, C_FAINT)
 	card_end()
 

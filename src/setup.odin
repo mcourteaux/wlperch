@@ -54,6 +54,7 @@ Comp_Id :: enum {
 	Portal,
 	Bar,
 	Ssh,
+	Wallpaper,
 }
 
 Component :: struct {
@@ -323,6 +324,8 @@ setup_check :: proc() {
 	bar_setup_check(&c[.Bar], detail)
 	// OpenSSH's agent for the SSH keys panel
 	ssh_setup_check(&c[.Ssh], detail)
+	// wlperch's wallpaper instead of swaybg
+	wallpaper_setup_check(&c[.Wallpaper], detail)
 	// Launcher entry
 	{
 		p := &c[.Launcher]
