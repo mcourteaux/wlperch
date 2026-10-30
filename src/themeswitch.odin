@@ -232,13 +232,14 @@ theme_watch_open :: proc() -> linux.Fd {
 
 // Drains the watch: true when the mode file was written or replaced.
 theme_watch_changed :: proc(fd: linux.Fd) -> bool {
-	theme, _ := data_watch_changed(fd)
+	theme, _, _ := data_watch_changed(fd)
 	return theme
 }
 
 // The same watch: was the mode file, or the SSH key records (ssh.odin),
-// written or replaced?
-data_watch_changed :: proc(fd: linux.Fd) -> (theme, ssh: bool) {
+// written or replaced? hold: the game-hold file (game_hold.odin), for a
+// watch that also covers $XDG_RUNTIME_DIR (the bar's).
+data_watch_changed :: proc(fd: linux.Fd) -> (theme, ssh, hold: bool) {
 	buf: [4096]u8
 	for {
 		n, err := linux.read(fd, buf[:])
@@ -248,6 +249,7 @@ data_watch_changed :: proc(fd: linux.Fd) -> (theme, ssh: bool) {
 			name := string(cstring(&buf[off + size_of(linux.Inotify_Event)])) if ev.len > 0 else ""
 			if name == "theme" {theme = true}
 			if name == SSH_RECORDS_NAME {ssh = true}
+			if name == GAME_HOLD_NAME {hold = true}
 			off += size_of(linux.Inotify_Event) + int(ev.len)
 		}
 	}

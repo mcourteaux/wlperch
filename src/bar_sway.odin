@@ -5,6 +5,7 @@
 package main
 
 import "core:encoding/json"
+import "core:fmt"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
@@ -31,6 +32,9 @@ Bar_Sway :: struct {
 	mode:        string, // "" = default
 	scratch:     [dynamic]Bar_Scratch,
 	titles:      map[string]string, // output -> focused window title
+	inhibits:    [dynamic]string, // views sway keeps the session awake for: "mpv: …"
+	game_app:    string, // the daemon's fullscreen-game hold ("": none)
+	game_why:    string,
 	focused_out: string,
 	want_ws:     bool,
 	want_tree:   bool,
@@ -236,6 +240,12 @@ read_tree :: proc() {
 	scratch: [dynamic]Bar_Scratch
 	scratch.allocator = context.temp_allocator
 	focused_out := ""
+	inhibits: [dynamic]string
+	inhibits.allocator = context.temp_allocator
+	collect_inhibits(root, &inhibits)
+	// The daemon's hold follows the same fullscreen changes; a crashed
+	// daemon's file goes stale without an event.
+	bar_game_hold_read()
 	for out in jarr(jobj(root, "nodes")) {
 		oname := jstr(jobj(out, "name"))
 		if oname == "__i3" {
@@ -258,6 +268,12 @@ read_tree :: proc() {
 		}
 		titles[oname] = title
 		if jbool(jobj(out, "focused")) || jbool(jobj(ws, "focused")) {focused_out = oname}
+	}
+	if !slice.equal(inhibits[:], bsway.inhibits[:]) {
+		for s in bsway.inhibits {delete(s)}
+		clear(&bsway.inhibits)
+		for s in inhibits {append(&bsway.inhibits, strings.clone(s))}
+		bsway.changed = true
 	}
 	changed := len(titles) != len(bsway.titles) || focused_out != bsway.focused_out || len(scratch) != len(bsway.scratch)
 	if !changed {
@@ -297,6 +313,45 @@ focused_leaf_ws :: proc(out: json.Value) -> json.Value {
 		if jint(jobj(ws, "id")) == want {return ws}
 	}
 	return nil
+}
+
+// Views sway says inhibit idle right now (get_tree's inhibit_idle: a
+// for_window inhibit_idle rule in force, or the app's own inhibitor while
+// it's visible), as "app: why". Inhibitors on surfaces that aren't views
+// (wlperch's own, wljoywake's) aren't in the tree.
+@(private = "file")
+collect_inhibits :: proc(node: json.Value, out: ^[dynamic]string) {
+	if jbool(jobj(node, "inhibit_idle")) {
+		app := jstr(jobj(node, "app_id"))
+		if app == "" {app = jstr(jobj(jobj(node, "window_properties"), "class"))}
+		if app == "" {app = jstr(jobj(node, "name"))}
+		ii := jobj(node, "idle_inhibitors")
+		user, appl := jstr(jobj(ii, "user")), jstr(jobj(ii, "application"))
+		why: string
+		switch {
+		case user != "" && user != "none" && appl == "enabled":
+			why = fmt.tprintf("sway rule inhibit_idle %s, and the app asks", user)
+		case user != "" && user != "none":
+			why = fmt.tprintf("sway rule inhibit_idle %s", user)
+		case:
+			why = "the app asks (e.g. a playing video)"
+		}
+		append(out, fmt.tprintf("%s: %s", app, why))
+	}
+	for list in ([]string{"nodes", "floating_nodes"}) {
+		for c in jarr(jobj(node, list)) {collect_inhibits(c, out)}
+	}
+}
+
+// Re-read the daemon's game hold; true when it changed.
+bar_game_hold_read :: proc() -> bool {
+	app, why := game_hold_current()
+	if app == bsway.game_app && why == bsway.game_why {return false}
+	delete(bsway.game_app)
+	delete(bsway.game_why)
+	bsway.game_app, bsway.game_why = strings.clone(app), strings.clone(why)
+	bsway.changed = true
+	return true
 }
 
 @(private = "file")

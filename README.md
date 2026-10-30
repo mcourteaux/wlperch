@@ -883,7 +883,10 @@ bar {
   otherwise all of that app's workspaces get one.
 - **Left side:** the binding mode (`resize`), the scratchpad (count; the
   windows in the tooltip; click shows it) and the focused window's title.
-- **Right side:** idle inhibitor (click: keep the screen awake), power profile
+- **Right side:** idle inhibitor (click: keep the screen awake; yellow while
+  that's on, teal while something else keeps it awake: a fullscreen game or a
+  window sway inhibits idle for, by an `inhibit_idle` rule or the app's own
+  request; the tooltip says who), power profile
   (click / right click: next / previous), backlight (scroll), battery (click:
   time left), media (⏮ · track · ⏭; click: play/pause, scroll: skip, right
   click: main panel), project timer, sensors, memory (orange and pulsing from

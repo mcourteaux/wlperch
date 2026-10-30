@@ -12,8 +12,8 @@
 // it's visible). It goes away with the daemon (or a re-exec, after which the
 // new image takes it again), so nothing can stay held by accident.
 //
-// The setup window (another process) reads $XDG_RUNTIME_DIR/wlperch-game-hold:
-// "<daemon pid>\t<app>\t<why>" while held.
+// The setup window and the bar (other processes) read
+// $XDG_RUNTIME_DIR/wlperch-game-hold: "<daemon pid>\t<app>\t<why>" while held.
 package main
 
 import "core:fmt"
@@ -42,11 +42,13 @@ game_hold_pick :: proc(covers: []Fs_Cover, enabled: bool) -> (hold: bool, app, w
 	return
 }
 
+GAME_HOLD_NAME :: "wlperch-game-hold"
+
 @(private = "file")
 hold_path :: proc() -> string {
 	dir := os.get_env("XDG_RUNTIME_DIR", context.temp_allocator)
 	if dir == "" {dir = "/tmp"}
-	return fmt.tprintf("%s/wlperch-game-hold", dir)
+	return fmt.tprintf("%s/%s", dir, GAME_HOLD_NAME)
 }
 
 // Main loop: take or release the inhibitor when the fullscreen views change.
@@ -90,7 +92,7 @@ game_hold_release :: proc() {
 	_ = os.remove(hold_path())
 }
 
-// For the setup window: the game holding the screen awake now ("" if none,
+// For the setup window and the bar: the game holding the screen awake now ("" if none,
 // or if the daemon that wrote it is gone).
 game_hold_current :: proc() -> (app, why: string) {
 	data, err := os.read_entire_file(hold_path(), context.temp_allocator)

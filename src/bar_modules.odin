@@ -577,14 +577,29 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		bar_seg(&it, clip_runes_bar(title, 90), p.soft)
 		add(lay, it)
 	case .Idle:
+		// What keeps the session awake now: the click (yellow), else wlperch's
+		// game rule or sway's inhibitors (teal). The click only toggles its own.
 		it := module_item(.Idle)
-		if idle_inhibit_on {
-			it.bg, it.bg_alpha = p.yellow, 0.18
-			bar_seg(&it, ICON_EYE_ON, p.yellow)
-			it.tooltip = "Idle inhibitor: on (the screen stays awake)"
+		held := make([dynamic]string, context.temp_allocator)
+		if idle_inhibit_on {append(&held, "manually (click to stop)")}
+		if bsway.game_app != "" {append(&held, fmt.tprintf("fullscreen game %s (%s)", bsway.game_app, bsway.game_why))}
+		for s in bsway.inhibits {
+			// The game's own inhibitor is the same hold.
+			if bsway.game_app != "" && strings.has_prefix(s, fmt.tprintf("%s: ", bsway.game_app)) {continue}
+			append(&held, s)
+		}
+		if len(held) > 0 {
+			col := idle_inhibit_on ? p.yellow : p.teal
+			it.bg, it.bg_alpha = col, idle_inhibit_on ? 0.18 : 0.12
+			bar_seg(&it, ICON_EYE_ON, col)
+			b := strings.builder_make(context.temp_allocator)
+			strings.write_string(&b, "Kept awake (no idle lock or monitors-off):")
+			for h in held {fmt.sbprintf(&b, "\n• %s", h)}
+			if !idle_inhibit_on {strings.write_string(&b, "\nClick: also keep it awake manually")}
+			it.tooltip = strings.to_string(b)
 		} else {
 			bar_seg(&it, ICON_EYE_OFF, p.muted)
-			it.tooltip = "Idle inhibitor: off"
+			it.tooltip = "Idle: nothing keeps the screen awake\nClick: keep it awake manually"
 		}
 		add(lay, it)
 	case .Power_Profile:

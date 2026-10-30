@@ -1178,12 +1178,18 @@ bar_on_term :: proc "c" (sig: posix.Signal) {
 theme_watch_start :: proc() {
 	bar_set_theme(theme_mode_load() == .Light)
 	theme_fd = theme_watch_open()
+	// The same watch follows the daemon's game hold, for the eye.
+	if dir := posix_getenv("XDG_RUNTIME_DIR"); theme_fd >= 0 && dir != "" {
+		linux.inotify_add_watch(theme_fd, strings.clone_to_cstring(dir, context.temp_allocator), {.CLOSE_WRITE, .MOVED_TO, .DELETE})
+	}
+	bar_game_hold_read()
 }
 
 @(private = "file")
 theme_watch_read :: proc() {
-	theme, ssh_records := data_watch_changed(theme_fd)
+	theme, ssh_records, hold := data_watch_changed(theme_fd)
 	if ssh_records {bar_ssh_poke()}
+	if hold && bar_game_hold_read() {mark_all_dirty()}
 	if !theme {return}
 	light := theme_mode_load() == .Light
 	if light == theme_light {return}
