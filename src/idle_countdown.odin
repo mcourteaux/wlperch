@@ -172,6 +172,32 @@ countdown_plan :: proc(swayidle_secs, own, countdown: int) -> Countdown_Plan {
 	return p
 }
 
+// ---- The idle policy ------------------------------------------------------------------
+
+// Whether an idle lock is in effect right now: this session's swayidle locks
+// after a timeout, or [lock] idle_lock_seconds > 0. The countdown, the idle
+// lock and monitors-off (screen_off.odin) all follow this one answer, read
+// again when they are about to act, so a setup that stops swayidle to keep
+// the session awake (a game stream's prep command running `pkill swayidle`)
+// stops all three, and they come back with swayidle. Idle inhibitors (a
+// playing video, a joystick waker, sway's inhibit_idle) hold all of them as
+// well: every idle watch is ext-idle-notify's get_idle_notification, which
+// honours them (unlike get_input_idle_notification).
+Idle_Policy :: struct {
+	locked:        bool, // a screen locker runs
+	swayidle_secs: int, // swayidle's lock timeout (0: none)
+	lock_after:    int, // seconds of idleness before the lock (0: no idle lock in effect)
+}
+
+idle_policy_of :: proc(locked: bool, swayidle_secs, own: int) -> Idle_Policy {
+	return {locked, swayidle_secs, countdown_plan(swayidle_secs, own, 0).lock_after}
+}
+
+idle_policy :: proc() -> Idle_Policy {
+	locked, secs := session_lock_state()
+	return idle_policy_of(locked, secs, config.lock_idle_seconds)
+}
+
 // ---- This session's processes ---------------------------------------------------------
 
 @(private = "file")
@@ -390,11 +416,11 @@ full_timeout :: proc() -> time.Duration {
 	return time.Duration(cd.plan.lock_after - cd.plan.length) * time.Second
 }
 
-// Re-read swayidle's timeout; true when the plan changed.
+// Follow the idle policy (swayidle's timeout read again); true when the plan changed.
 @(private = "file")
-replan :: proc(swayidle_secs: int) -> bool {
-	cd.swayidle_secs = swayidle_secs
-	p := countdown_plan(swayidle_secs, config.lock_idle_seconds, config.lock_countdown_seconds)
+replan :: proc(pol: Idle_Policy) -> bool {
+	cd.swayidle_secs = pol.swayidle_secs
+	p := countdown_plan(pol.swayidle_secs, config.lock_idle_seconds, config.lock_countdown_seconds)
 	changed := p != cd.plan
 	cd.plan = p
 	if p.length == 0 && config.lock_countdown_seconds > 0 && config.lock_idle_seconds == 0 {
@@ -435,8 +461,7 @@ countdown_restore :: proc(idle_since_ns: i64) {
 // After platform_init: find the lock timeout and start watching.
 countdown_init :: proc() {
 	if config.lock_countdown_seconds <= 0 {return}
-	_, secs := session_lock_state()
-	replan(secs)
+	replan(idle_policy())
 	if cd.plan.length == 0 {return}
 	if restored_idle != {} {
 		// The user has been away since before the re-exec: a short watch tells
@@ -497,8 +522,7 @@ countdown_tick :: proc() {
 	if cd.detect_at != {} && time.tick_diff(cd.detect_at, now) >= 0 {
 		cd.detect_at = {}
 		cd.detect_wait = min(cd.detect_wait * 2, 5 * time.Minute)
-		_, secs := session_lock_state()
-		if replan(secs) && cd.plan.length > 0 {watch(full_timeout())}
+		if replan(idle_policy()) && cd.plan.length > 0 {watch(full_timeout())}
 	}
 	if cd.ev_idled {
 		cd.ev_idled = false
@@ -510,8 +534,7 @@ countdown_tick :: proc() {
 	}
 	if cd.show_at != {} && time.tick_diff(cd.show_at, now) >= 0 {
 		cd.show_at = {}
-		locked, _ := session_lock_state()
-		if !locked && cd.idle_now {show(time.tick_add(cd.idle_start, time.Duration(cd.plan.lock_after) * time.Second))}
+		if !idle_policy().locked && cd.idle_now {show(time.tick_add(cd.idle_start, time.Duration(cd.plan.lock_after) * time.Second))}
 	}
 	if cd.phase != .Off {overlay_tick(now)}
 }
@@ -525,9 +548,9 @@ on_idled :: proc() {
 	cd.idle_now = true
 	cd.idle_start = start
 	cd.locked_seen = false
-	locked, secs := session_lock_state()
-	replan(secs)
-	if locked || cd.plan.length == 0 {return}
+	pol := idle_policy()
+	replan(pol)
+	if pol.locked || cd.plan.length == 0 {return}
 	show_at := time.tick_add(start, time.Duration(cd.plan.lock_after - cd.plan.length) * time.Second)
 	if time.tick_diff(show_at, now) >= 0 {
 		show(time.tick_add(start, time.Duration(cd.plan.lock_after) * time.Second))
@@ -543,8 +566,7 @@ on_resumed :: proc() {
 	if cd.phase == .Shown || cd.phase == .Ending {
 		if cd.locked_seen {destroy_overlay()} else {start_fade(time.tick_now())}
 	}
-	_, secs := session_lock_state()
-	replan(secs)
+	replan(idle_policy())
 	if cd.plan.length == 0 {
 		watch(0)
 	} else if cd.note_timeout != full_timeout() || cd.known_idle != {} || cd.note == nil {

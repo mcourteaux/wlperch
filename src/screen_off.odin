@@ -3,7 +3,10 @@
 // powers those back on. Like the idle countdown it asks the compositor
 // (ext-idle-notify-v1) when there was no input for that long, so idle
 // inhibitors (a playing video) keep the screens on, and it runs whether or
-// not the screen is locked.
+// not the screen is locked. It follows the same idle policy as the idle lock
+// (idle_policy, idle_countdown.odin): without an idle lock in effect (no
+// swayidle lock, e.g. stopped for a game stream, and no idle_lock_seconds)
+// the monitors stay on too; it looks again every HELD_RECHECK while idle.
 //
 // Only monitors it turned off itself are turned back on: ones the lock
 // screen's "screens off" button or the user powered off stay off (the lock
@@ -26,6 +29,9 @@ Out_Power :: struct {
 	active, power: bool,
 }
 
+// Monitors go off only while an idle lock is in effect: one decision for both.
+screen_off_allowed :: proc(pol: Idle_Policy) -> bool {return pol.lock_after > 0}
+
 // The monitors to power off: enabled and on.
 screens_to_power_off :: proc(outs: []Out_Power, allocator := context.temp_allocator) -> []string {
 	names := make([dynamic]string, allocator)
@@ -47,6 +53,8 @@ screen_power_command :: proc(names: []string, on: bool) -> string {
 
 @(private = "file")
 SHORT_WATCH :: time.Second // after a re-exec: is the user still away?
+@(private = "file")
+HELD_RECHECK :: 30 * time.Second // idle, but no idle lock in effect: look again
 
 @(private = "file")
 so: struct {
@@ -60,6 +68,7 @@ so: struct {
 	off_at:       time.Tick, // pending power-off ({}: none)
 	owned:        [dynamic]string, // monitors we powered off
 	idle_start:   time.Tick, // while idle ({}: active or unknown)
+	held:         bool, // the last power-off was held back by the idle policy (logged once)
 }
 
 @(private = "file")
@@ -208,9 +217,16 @@ screen_off_tick :: proc() {
 		power_on()
 		watch(config.lock_screen_off_seconds > 0 ? full_timeout() : 0)
 	}
-	if so.off_at != {} && time.tick_diff(so.off_at, time.tick_now()) >= 0 {
+	if now := time.tick_now(); so.off_at != {} && time.tick_diff(so.off_at, now) >= 0 {
 		so.off_at = {}
-		power_off()
+		if screen_off_allowed(idle_policy()) {
+			so.held = false
+			power_off()
+		} else {
+			if !so.held {log.info("screen off: held, no idle lock in effect (swayidle not running, idle_lock_seconds = 0)")}
+			so.held = true
+			so.off_at = time.tick_add(now, HELD_RECHECK)
+		}
 	}
 }
 

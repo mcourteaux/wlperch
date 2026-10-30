@@ -266,8 +266,10 @@ countdown_seconds = 15
 # the daemon running; a swayidle lock that comes earlier still wins.
 idle_lock_seconds = 0
 # Monitors off after this many seconds without input (locked or not); the
-# next key or mouse move turns them back on. Like the lock, it waits while
-# an idle inhibitor (a playing video) is active. 0 = off.
+# next key or mouse move turns them back on. It follows the idle lock: only
+# while one is in effect (swayidle's, or idle_lock_seconds), so stopping
+# swayidle (e.g. for a game stream) keeps the monitors on as well, and it
+# waits while an idle inhibitor (a playing video) is active. 0 = off.
 screen_off_seconds = 600
 
 [launcher]

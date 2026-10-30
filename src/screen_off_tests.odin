@@ -16,3 +16,19 @@ test_screen_off_targets :: proc(t: ^testing.T) {
 	testing.expect_value(t, screen_power_command(names[:1], true), `output "DP-1" power on`)
 	testing.expect_value(t, screen_power_command(nil, true), "")
 }
+
+// Monitors-off follows the idle lock: no lock in effect, no monitors off.
+@(test)
+test_screen_off_follows_idle_lock :: proc(t: ^testing.T) {
+	// swayidle locks after 300 s: monitors may go off.
+	testing.expect(t, screen_off_allowed(idle_policy_of(false, 300, 0)))
+	// swayidle stopped (a game stream's prep command), no idle_lock_seconds: they stay on.
+	testing.expect(t, !screen_off_allowed(idle_policy_of(false, 0, 0)))
+	// Locked by hand while swayidle is stopped: still no idle lock, still on.
+	testing.expect(t, !screen_off_allowed(idle_policy_of(true, 0, 0)))
+	// wlperch locks by itself (idle_lock_seconds): allowed without swayidle.
+	testing.expect(t, screen_off_allowed(idle_policy_of(false, 0, 600)))
+	// The earlier of the two locks is the policy's.
+	testing.expect_value(t, idle_policy_of(false, 300, 600).lock_after, 300)
+	testing.expect_value(t, idle_policy_of(false, 900, 600).lock_after, 600)
+}
