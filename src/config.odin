@@ -100,6 +100,7 @@ Config :: struct {
 	theme_nvim_background: bool,
 	theme_targets:      [Theme_Mode]Theme_Targets,
 	wallpapers_dir:     string, // [wallpapers] directory, "~" expanded, no trailing '/'
+	wallpapers_rotate_minutes: int, // [wallpapers] rotate_minutes (0: off)
 }
 
 config: Config
@@ -362,6 +363,10 @@ sway_colors = auto
 # wallpapers.tsv next to this file): a theme switch then shows a random one
 # of that mode's set instead of [theme.*] wallpaper.
 directory =
+# With wlperch's wallpaper (setup's Wallpaper card, instead of swaybg): show
+# the next picture of the current mode's set every this many minutes,
+# crossfading. 0 = only when the theme switches (or you pick one).
+rotate_minutes = 0
 
 [bar]
 # wlperch's own bar ("wlperch bar"), a waybar replacement: run it from sway
@@ -744,6 +749,7 @@ config_load_theme :: proc(m, defaults: ini.Map) {
 	c.theme_nvim_file = expand_home(get(m, defaults, "theme", "nvim_file"))
 	c.theme_nvim_background = parse_bool(get(m, defaults, "theme", "nvim_background"), true)
 	c.wallpapers_dir = strings.trim_right(expand_home(get(m, defaults, "wallpapers", "directory")), "/")
+	c.wallpapers_rotate_minutes = parse_int_lim(get(m, defaults, "wallpapers", "rotate_minutes"), LIM_WALLPAPER_ROTATE)
 	for mode in Theme_Mode {
 		sec := mode == .Dark ? "theme.dark" : "theme.light"
 		t := &c.theme_targets[mode]
@@ -885,6 +891,7 @@ LIM_BAR_VOLSTEP :: Int_Limits{1, 25, 5}
 LIM_LOCK_COUNTDOWN :: Int_Limits{0, 120, 15}
 LIM_LOCK_IDLE :: Int_Limits{0, 86400, 0}
 LIM_LOCK_SCREEN_OFF :: Int_Limits{0, 86400, 600}
+LIM_WALLPAPER_ROTATE :: Int_Limits{0, 10080, 0}
 LIM_SETUP_DIM :: Int_Limits{5, 90, 40}
 LIM_SSH_LIFETIME :: Int_Limits{0, 1440, 60}
 LIM_SSH_IDLE :: Int_Limits{0, 1440, 0}

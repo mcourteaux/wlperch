@@ -160,20 +160,28 @@ wallpaper_pick :: proc(entries: []Wallpaper_Entry, dir: string, files: []string,
 	return cands[rand.int_max(len(cands), gen)]
 }
 
-// The image last put on sway's outputs by wlperch (a full path, or "").
-wallpaper_current :: proc() -> string {
+WALLPAPER_STATE_NAME :: "wallpaper"
+
+// The data dir's "wallpaper": the picture wlperch shows (a full path). The
+// wallpaper process (wallpaper_proc.odin) watches it.
+wallpaper_state_path :: proc() -> string {
 	dir := data_dir()
 	defer delete(dir)
-	data, err := os.read_entire_file(fmt.tprintf("%s/wallpaper", dir), context.temp_allocator)
+	return fmt.tprintf("%s/%s", dir, WALLPAPER_STATE_NAME)
+}
+
+// The image wlperch last showed (a full path, or "").
+wallpaper_current :: proc() -> string {
+	data, err := os.read_entire_file(wallpaper_state_path(), context.temp_allocator)
 	return err == nil ? strings.trim_space(string(data)) : ""
 }
 
-@(private = "file")
-wallpaper_current_save :: proc(path: string) {
+// Replaced in one go (a rename), so the watcher never reads half a path.
+wallpaper_state_save :: proc(path: string) -> bool {
 	dir := data_dir()
 	defer delete(dir)
 	os.make_directory_all(dir)
-	_ = os.write_entire_file(fmt.tprintf("%s/wallpaper", dir), fmt.tprintf("%s\n", path))
+	return write_file_atomic(wallpaper_state_path(), fmt.tprintf("%s\n", path))
 }
 
 // For a theme switch to `m`: the full path of a random image of its set, or
@@ -193,8 +201,21 @@ wallpaper_for_mode :: proc(m: Theme_Mode) -> string {
 	return pick == "" ? "" : fmt.tprintf("%s/%s", dir, pick)
 }
 
-// Put `path` on every output (swaymsg, like the theme switch; safe off the main thread).
+// Show `path` on every output: through wlperch's wallpaper process when it's
+// set up (it crossfades; started if it isn't running), else with sway's
+// `output * bg` (swaybg). Safe off the main thread.
 wallpaper_apply :: proc(path: string) -> bool {
+	running := wallpaper_running() > 0
+	if running || wallpaper_conf_installed() {
+		if !wallpaper_state_save(path) {return false}
+		if !running {launch_detached({wallpaper_exe(), "wallpaper"})}
+		return true
+	}
+	return wallpaper_apply_sway(path)
+}
+
+// With sway's own `output * bg` (sway starts swaybg for it).
+wallpaper_apply_sway :: proc(path: string) -> bool {
 	if os.get_env("SWAYSOCK", context.temp_allocator) == "" {return false}
 	// Quoted twice: swaymsg joins its arguments into one command (a space
 	// would split the path), and sway expands the path with wordexp, which
@@ -219,6 +240,6 @@ wallpaper_apply :: proc(path: string) -> bool {
 	}
 	quoted := fmt.tprintf("\"'%s'\"", target)
 	_, c := run_code({"swaymsg", "output", "*", "bg", quoted, "fill"}, allocator = context.temp_allocator)
-	if c == 0 {wallpaper_current_save(path)}
+	if c == 0 {wallpaper_state_save(path)}
 	return c == 0
 }

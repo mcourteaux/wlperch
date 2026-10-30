@@ -71,6 +71,11 @@ commands:
   bar              the status bar (instead of waybar); run it from sway:
                    bar { swaybar_command wlperch-bar }
   bar restart      start a fresh bar; it takes over from the running one
+  wallpaper        the desktop background (instead of swaybg): crossfades, the
+                   Wallpapers tab's dark / light sets, [wallpapers] rotate_minutes;
+                   sway runs it from config.d/wlperch-wallpaper.conf (setup)
+  wallpaper restart|next|set <file>  a fresh one takes over; the next picture of
+                   the current mode's set; show that picture
   ssh [status|unlock <key>|forget <key>|forget-all|lock|unlock-agent]
                    SSH keys in the agent (unlock asks in wlperch's popup and
                    adds the key for [ssh] lifetime minutes)
@@ -408,6 +413,9 @@ main :: proc() {
 		// Its own process too: see bar.odin.
 		config_load()
 		os.exit(bar_main(os.args[2:]))
+	case "wallpaper":
+		config_load()
+		os.exit(wallpaper_cli(os.args[2:]))
 	case "update":
 		config_load()
 		os.exit(update_cli(os.args[2:]))
