@@ -452,6 +452,8 @@ draw_wallpapers :: proc(x, y, width: f32) {
 	inner := im.GetContentRegionAvail().x
 	shuffle := fmt.tprintf("%s  Shuffle", ICON_SHUFFLE)
 	sw := measure(fonts.bold, SZ_SMALL + 1, shuffle).x + 24
+	rescan := fmt.tprintf("%s  Rescan", ICON_REFRESH)
+	rw := measure(fonts.bold, SZ_SMALL + 1, rescan).x + 24
 	fp := im.GetCursorScreenPos()
 	im.PushFontFloat(fonts.ui, SZ_BODY)
 	im.PushStyleVarImVec2(.FramePadding, {9, 5})
@@ -462,12 +464,16 @@ draw_wallpapers :: proc(x, y, width: f32) {
 	im.PushStyleColorImVec4(.FrameBgActive, rgba(C_WELL))
 	im.PushStyleColorImVec4(.Border, rgba(C_BORDER))
 	im.PushStyleColorImVec4(.TextDisabled, rgba(C_FAINT))
-	im.SetNextItemWidth(inner - sw - 12)
+	im.SetNextItemWidth(inner - sw - rw - 20)
 	entered := im.InputTextWithHint("##wp-dir", "~/Pictures/wallpapers", cstring(&wp.dir_buf[0]), len(wp.dir_buf), {.EnterReturnsTrue})
 	if entered || im.IsItemDeactivatedAfterEdit() {set_dir(wbuf_str(wp.dir_buf[:]))}
 	im.PopStyleColor(5)
 	im.PopStyleVar(3)
 	im.PopFont()
+	// Rescan: new or changed files the automatic check missed.
+	im.SetCursorScreenPos({fp.x + inner - sw - rw - 8, fp.y})
+	if pill_button("##wp-rescan", rescan, wp.dir_ok ? C_BLUE : C_FAINT) && wp.dir_ok {scan()}
+	if im.IsItemHovered() {tip("Read the folder again: new, changed and removed images")}
 	im.SetCursorScreenPos({fp.x + inner - sw, fp.y})
 	can_shuffle := mode == .Dark ? n_dark > 0 : n_light > 0
 	if pill_button("##wp-shuffle", shuffle, can_shuffle ? C_BLUE : C_FAINT) && can_shuffle {
