@@ -496,7 +496,7 @@ draw_wallpapers :: proc(x, y, width: f32) {
 	if config.wallpapers_rotate_minutes > 0 && !wallpaper_conf_installed() && wallpaper_running() == 0 {
 		hint(fmt.tprintf("%s Rotating (Next wallpaper every, above) needs wlperch's wallpaper instead of swaybg: the Wallpaper card at the top of this page.", ICON_INFO), inner, C_ORANGE)
 	}
-	hint("Switching to dark or light shows a random wallpaper of that set, never the one already showing. With an empty set, the theme's own Wallpaper setting (the Dark / Light theme cards above) is used. Click a picture to show it now.", inner, C_FAINT)
+	hint("Switching to dark or light shows a random wallpaper of that set, never the one already showing. With an empty set, the wallpaper stays as it is ([theme.dark] / [theme.light] wallpaper in config.ini, if set). Click a picture to show it now.", inner, C_FAINT)
 	card_end()
 
 	// ---- The grid ----------------------------------------------------------------------

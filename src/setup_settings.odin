@@ -352,6 +352,7 @@ group_look :: proc(g: string) -> Group_Look {
 	case "GitHub":            return {ICON_GITHUB, C_PURPLE}
 	case "Launcher":          return {ICON_MAGNIFY, C_GREEN}
 	case "Wallpapers":        return {ICON_IMAGE, C_BLUE}
+	case "Theme switcher":    return {ICON_THEME, C_TEAL}
 	case "Dark theme":        return {ICON_MOON, C_PURPLE}
 	case "Light theme":       return {ICON_SUNNY, C_YELLOW}
 	}
@@ -363,6 +364,7 @@ group_look :: proc(g: string) -> Group_Look {
 group_when :: proc(g: string) -> string {
 	switch g {
 	case "Lock screen", "Lock screen info": return "next time the screen locks"
+	case "Theme switcher": return "next switch"
 	case "Dark theme":  return theme_light ? "next switch to dark" : "applies right away"
 	case "Light theme": return theme_light ? "applies right away" : "next switch to light"
 	}

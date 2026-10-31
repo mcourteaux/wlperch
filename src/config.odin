@@ -338,7 +338,8 @@ nvim_background = true
 # Per mode. Empty = leave alone. gtk_theme "auto" switches Adwaita <->
 # Adwaita-dark only while one of those is in use.
 # kitty_theme: a theme name from "kitty +kitten themes" (all kitty windows).
-# wallpaper: an image for sway's outputs. command: anything else (sh -c).
+# wallpaper: only used while the mode has no wallpapers marked on setup's
+# Look page ([wallpapers] below). command: anything else (sh -c).
 # sway_colors: auto = sway's window decorations (titlebars, borders) in
 # wlperch's palette for the mode, re-applied after "swaymsg reload"; off =
 # leave sway's client.* colours alone. One class can be overridden with
