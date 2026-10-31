@@ -802,7 +802,7 @@ running, the CLI switches the desktop itself and prints what it changed.
   `kvantummanager`), `vscode_theme` (`workbench.colorTheme` in the settings of
   Code, Code - OSS or VSCodium, when they set one) and `command` (anything
   else, through `sh -c`).
-- **Wallpaper sets**: the setup window's **Wallpapers** tab
+- **Wallpaper sets**: the wallpapers on the setup window's **Look** page
   (`wlperch setup wallpapers`) shows the jpg and png files of a folder
   (`[wallpapers] directory`) as thumbnails, each with a **Dark** and a
   **Light** switch; click one to show it now. A switch to dark or light then
@@ -813,7 +813,7 @@ running, the CLI switches the desktop itself and prints what it changed.
   Thumbnails are cached in `~/.cache/wlperch/wallpaper-thumbs`.
 - **wlperch's wallpaper** (setup's **Wallpaper** card, see below) draws the
   wallpaper instead of swaybg: every change crossfades, and with
-  `[wallpapers] rotate_minutes` (also on the Wallpapers tab) it moves on to
+  `[wallpapers] rotate_minutes` (setup's Look page) it moves on to
   another picture of the current mode's set that often.
 - **The mode** is kept in `~/.local/share/wlperch/theme`. Before the first
   switch, the gsettings `color-scheme` decides.
@@ -859,11 +859,11 @@ layer-shell surface per monitor on the background layer, drawn in shared
 memory, no GPU), so the daemon's restarts never touch the wallpaper and the
 last picture is there at login before anything else runs.
 
-- **Crossfades:** every change (a dark / light switch, a click on the
-  Wallpapers tab, Shuffle, the rotation, `wlperch wallpaper set`) blends from
+- **Crossfades:** every change (a dark / light switch, a click on a
+  wallpaper in setup, Shuffle, the rotation, `wlperch wallpaper set`) blends from
   the old picture into the new one over 0.8 s, on every monitor at once.
-- **Rotation:** `[wallpapers] rotate_minutes` (Settings → Wallpapers, or the
-  Wallpapers tab): every so many minutes the next picture of the current
+- **Rotation:** `[wallpapers] rotate_minutes` (setup's Look page,
+  Wallpapers): every so many minutes the next picture of the current
   mode's set, never the same one twice in a row; a picture you pick, or a
   theme switch, starts the count again. 0 = off.
 - **Sharp at any scale:** each monitor gets the picture scaled ("fill":
@@ -927,7 +927,7 @@ a while instead of for the whole session.
   itself removes them), when the screen locks with `wlperch lock`
   (`forget_on_lock`, default on; the lock screen does it, so it works without
   the daemon), and after `forget_on_idle` minutes without input (off by
-  default). All in the Settings tab under **SSH keys**.
+  default). All on the **SSH keys** page of the setup window.
 - **Security:** passphrases only ever exist in the askpass process, which
   hands them to `ssh-add` over its pipe: never in the daemon, IPC, logs or
   config. Its buffer is locked in memory where allowed, wiped after use, and
@@ -1053,21 +1053,35 @@ it:
 ```sh
 ./wlperch          # not installed yet and nothing running -> opens setup
 wlperch setup      # later: the same window (or the ⚙ button in a panel)
-wlperch setup settings  # straight to the Settings tab
-wlperch setup components  # straight to the Components tab
-wlperch setup wallpapers  # straight to the Wallpapers tab
+wlperch setup lock      # straight to a page: overview, basics, bar, look,
+                        # lock, notifications, launcher, time, ssh
+wlperch setup wallpapers  # Look, scrolled to the wallpapers
 ```
 
-Once every component is set up, the window opens on the Settings tab.
+![The setup window: a sidebar of pages, here Lock & idle with its two components and its settings](docs/screenshots/setup.png)
 
-![The setup window's Components tab: status cards and one card per component with its actions](docs/screenshots/setup.png)
+The setup window has a page per part of the desktop, in a sidebar: **Overview**,
+**Basics** (program, background service, settings file, sway, launcher entry,
+updates), **Bar & panels**, **Look** (dark / light, Neovim, desktop portal,
+wallpaper and the wallpaper sets), **Lock & idle**, **Notifications**,
+**Launcher**, **Time tracking** and **SSH keys**. Each page has the components
+to set up at the top and their settings below, so a feature is installed and
+configured in one place. A badge on a page counts what isn't set up there
+(orange when something needs attention). The Overview shows how much is set
+up, a to-do list that opens the right page (the card then pulses), and
+updates. The search box at the top of the sidebar (Ctrl+F) finds settings and
+components on every page by name and help text; Escape clears it. The old
+names still work: `wlperch setup components` opens the Overview, `settings`
+Basics.
 
-The setup window lists each component with its status (installed, update
-available, not installed, set up elsewhere) and actions.
+Each component is one line with its status (installed, update available, not
+installed, set up elsewhere) and its actions; the arrow on the right (or a
+click on its name) shows what it does, the files it writes and, for sway, the
+key editor.
 
 **Your own keys.** wlperch's sway file binds a few keys (`$mod+o` for the
-panel, `$mod+p` for project workspaces, …). Open "Key bindings" on the Sway
-integration card to switch each one on or off and give it another key before
+panel, `$mod+p` for project workspaces, …). Open the Sway integration card
+(Basics) and its "Key bindings" to switch each one on or off and give it another key before
 anything is installed. setup asks `sway -C` whether your sway config already
 uses a key; clashes turn red, and Install changes nothing until they're
 resolved:
@@ -1098,15 +1112,14 @@ the `@import` in your waybar config (with `*.before-wlperch` backups). A removed
 settings file is kept as `config.ini.before-wlperch`. Destructive actions ask
 for a second click.
 
-The **Settings** tab (top right, or "Edit settings" on the Settings file card)
-edits the config keys you're likely to change without opening the file: the
+The settings on each page edit the config keys you're likely to change without opening the file: the
 panel (close on click outside, position, width, GPU release), clocks and weather
 (24-hour clock, world clocks, location, units, night light command), the bar
 (position, height, clock format, tray icon size, outputs, sensor room), the
 memory thresholds, the lock screen (background, colours, picture, blur, what it
 shows), the time tracker's break timeout, GitHub, the launcher's terminal and
 the per-mode dark / light targets (wallpaper, GTK / icon / kitty / nvim / VS Code
-/ Kvantum themes) and the setup window's own dim. Each has its help line and a filter box finds them. Changes
+/ Kvantum themes) and the setup window's own dim. Each has its help line and the search box finds them. Changes
 are written into `config.ini` as you make them (typing and dragging are
 debounced), one key at a time with your comments and layout kept; "reset"
 removes the key so the default applies again. They take effect by themselves:
@@ -1124,7 +1137,7 @@ when the window is tiled, fullscreen, on a hidden workspace or loses focus to
 another window. A click on the dim closes setup, like Escape; the window and
 the resize strip around its edges work as before. Being part of the setup
 process, the dim also disappears if that process crashes. `[setup]
-dim_background = false` (or the Settings tab) turns it off, `dim_strength`
+dim_background = false` (or Basics, Setup window) turns it off, `dim_strength`
 sets how dark it is; both apply to an open window right away.
 
 "Replace whole bar" is the aggressive option: your config and `style.css` are
@@ -1495,7 +1508,8 @@ src/bar_sway.odin        the bar's sway subscription: workspaces (and project gr
 src/bar_tray.odin        StatusNotifierWatcher/Host and dbusmenu
 src/setup_bar.odin       setup component: switch sway's bar from waybar/swaybar to wlperch bar and back
 src/config_edit.odin     config.ini edits that keep comments; the settings table, validated with config.odin's limits
-src/setup_settings.odin  setup's Settings tab: controls, debounced writes, restarting the daemon to apply
+src/setup_pages.odin     setup's pages: which components and settings groups each holds, `wlperch setup <page>`
+src/setup_settings.odin  setup's settings cards: controls, debounced writes, restarting the daemon to apply
 src/setup_dim.odin       setup's dim around its window: layer surfaces with a rounded hole that follow sway's tree
 src/ssh.odin             SSH keys: ~/.ssh scan, ssh-add actions, the expiry records, the daemon's state, `wlperch ssh`
 src/ui_ssh.odin          the SSH keys card and its quick settings tile
