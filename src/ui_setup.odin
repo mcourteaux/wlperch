@@ -7,6 +7,7 @@ import "core:log"
 import "core:os"
 import "core:strings"
 import "core:sync"
+import "core:thread"
 import "core:time"
 
 import im "third_party:odin-imgui"
@@ -23,7 +24,7 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	switch id {
 	case .Program:  return {ICON_DESKTOP, "Program", "Copies this binary to ~/.local/bin so `wlperch` works from anywhere. Run setup again from a newer download to update.", C_BLUE, ""}
 	case .Service:  return {ICON_POWER, "Background service", "The daemon samples CPU/GPU history, tracks time, serves the panels and locks on idle. Sway starts it at login (see Sway integration); optionally systemd does, and restarts it if it crashes.", C_GREEN, DAEMON_UNIT}
-	case .Config:   return {ICON_TUNE, "Settings file", "Panels, weather location, clocks, projects, sensors… Created with defaults. The common settings are on the Settings tab; the rest you edit in the file, then use the restart button in a panel.", C_TEAL, ""}
+	case .Config:   return {ICON_TUNE, "Settings file", "Panels, weather location, clocks, projects, sensors… Created with defaults. The common settings are on this window's pages; the rest you edit in the file, then use the restart button in a panel.", C_TEAL, ""}
 	case .Sway:     return {ICON_KEYBOARD, "Sway integration", "One file in sway/config.d: starts the daemon, binds Mod+O (panel), Mod+P / Mod+Shift+P / Mod+Ctrl+P (project workspaces) and styles placeholder windows.", C_PURPLE, SWAY_FILE}
 	case .Waybar:   return {ICON_MONITOR, "Waybar buttons", "Panel button, timer, sensors, media and notification pills. Adds them to your bar (with backups), or replaces the whole bar with wlperch's own; Restore puts yours back.", C_CYAN, WAYBAR_JSONC}
 	case .Rapl:     return {ICON_LIGHTNING, "CPU power reading", "A udev rule that makes the CPU energy counter readable, so the Temperatures & power module can show CPU watts. Needs your password (root).", C_ORANGE, RAPL_RULE}
@@ -35,7 +36,7 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	case .Portal:   return {ICON_THEME, "Desktop portal", "GTK4 apps and Flatpaks read the system dark / light setting from xdg-desktop-portal, which needs systemd's graphical session (screen sharing and file pickers use it too). Starts it from sway (with sway-systemd when installed). Discord and Chrome follow the GTK theme without it.", C_ORANGE, ""}
 	case .Bar:      return {ICON_MONITORS, "Bar", "wlperch's own bar instead of waybar: workspaces (project workspaces in their colour), tray, media, timer, sensors, notifications, clock. Switches sway's bar over (with backups).", C_TEAL, BAR_CONF}
 	case .Ssh:      return {ICON_KEY, "SSH agent", "OpenSSH's own ssh-agent (not GNOME Keyring's), started by systemd on first use, for the SSH keys panel and the bar's key icon: unlock keys for a while ([ssh] lifetime), forget them when the screen locks. Sets SSH_AUTH_SOCK for your next login (with backups).", C_YELLOW, SSH_PROFILE_BLOCK}
-	case .Wallpaper: return {ICON_IMAGE, "Wallpaper", "wlperch draws the wallpaper instead of swaybg: a soft crossfade on every change, the dark / light sets of the Wallpapers tab, and a new picture every few minutes if you like ([wallpapers] rotate_minutes). Turns sway's swaybg off.", C_BLUE, WALLPAPER_CONF}
+	case .Wallpaper: return {ICON_IMAGE, "Wallpaper", "wlperch draws the wallpaper instead of swaybg: a soft crossfade on every change, the dark / light sets below, and a new picture every few minutes if you like ([wallpapers] rotate_minutes). Turns sway's swaybg off.", C_BLUE, WALLPAPER_CONF}
 	case .Idle:     return {ICON_POWER, "Idle", "wlperch locks on idle instead of swayidle: the lock with its countdown, monitors off (sooner once locked), locking before sleep and on loginctl lock-session (with logind). Fullscreen games, idle inhibitors and `wlperch idle hold` keep the session awake. Comments out swayidle's exec lines (with backups).", C_PURPLE, ""}
 	case .Launcher: return {ICON_HOME, "App launcher entry", "Adds \"wlperch setup\" to your application launcher (rofi, wofi, fuzzel…).", C_YELLOW, ""}
 	}
@@ -134,7 +135,6 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 			append(&out, Action{"Run under systemd", false, setup_service_systemd, false})
 		}
 	case .Config:
-		if s != .Missing {append(&out, Action{"Edit settings", true, proc() {setup_tab = .Settings}, false})}
 		append(&out, Action{s == .Missing ? "Create" : "Open", s == .Missing, setup_create_config, false})
 		if s != .Missing {append(&out, Action{"Remove", false, setup_remove_config, true})}
 	case .Sway:
@@ -263,23 +263,14 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 	return out[:]
 }
 
-// Components grouped into the dashboard's columns.
-@(private = "file")
-COLUMNS := [4]struct {
-	title: string,
-	ids:   []Comp_Id,
-} {
-	{"Basics", {.Program, .Service, .Config}},
-	{"Desktop", {.Sway, .Menu, .Launcher, .Portal}},
-	{"Bar and look", {.Bar, .Waybar, .Theme, .Wallpaper, .Nvim}},
-	{"Extras", {.Notifications, .Lock, .Idle, .Ssh, .Rapl}},
-}
-
 @(private = "file")
 is_done :: proc(s: Comp_State) -> bool {return s == .Installed || s == .Running || s == .Custom}
 
-// Every component that applies here is set up (the window then opens on
-// the Settings tab).
+// Applies here, and isn't set up yet: counted on the sidebar and the overview.
+@(private = "file")
+is_todo :: proc(s: Comp_State) -> bool {return s != .Unavailable && !is_done(s)}
+
+// Every component that applies here is set up.
 setup_all_done :: proc() -> bool {
 	sync.guard(&setup.mu)
 	n := 0
@@ -327,8 +318,9 @@ stat_tile :: proc(id: string, w: f32, icon, caption, value, sub: string, accent:
 	return
 }
 
-// Clicking the "Set up" or "Needs attention" tile makes the cards that
-// aren't set up pulse for a few seconds (scrolled into view first).
+// The overview's count tiles and its to-do rows open the page of a component
+// that isn't set up, whose card then pulses for a few seconds (scrolled into
+// view first).
 @(private = "file")
 pulse: struct {
 	at:     time.Tick,
@@ -350,7 +342,44 @@ pulse_alpha :: proc() -> (a: f32, on: bool) {
 	return beat * fade, true
 }
 
-// One component card; returns the action to run if one was clicked.
+// Open a page (search cleared), optionally pulsing its cards that aren't set up.
+@(private = "file")
+go_page :: proc(p: Setup_Page, pulse_todo := false) {
+	setup_page = p
+	setup_search[0] = 0
+	if pulse_todo {pulse = {time.tick_now(), true}}
+}
+
+// The cards whose details are shown (description, files, key editor).
+@(private = "file")
+expanded: [Comp_Id]bool
+
+@(private = "file")
+comp_matches :: proc(id: Comp_Id, filter: string) -> bool {
+	if filter == "" {return true}
+	inf := info(id)
+	for f in ([]string{inf.title, inf.desc}) {
+		if strings.contains(strings.to_lower(f, context.temp_allocator), filter) {return true}
+	}
+	return false
+}
+
+// A tooltip wrapped to `width`.
+@(private = "file")
+tip_wrapped :: proc(s: string, width: f32) {
+	im.PushStyleVarImVec2(.WindowPadding, {10, 6})
+	if im.BeginTooltip() {
+		im.PushTextWrapPos(width)
+		label(fonts.ui, SZ_SMALL, col32(C_TEXT), s)
+		im.PopTextWrapPos()
+		im.EndTooltip()
+	}
+	im.PopStyleVar()
+}
+
+// One component card: a line with its icon, name, state and actions; the
+// chevron (or a click on the name) shows what it does, its files and, for
+// sway, the key editor. Returns the action to run if one was clicked.
 @(private = "file")
 comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 	inf := info(id)
@@ -358,67 +387,82 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 	inner := im.GetContentRegionAvail().x
 	cp := im.GetCursorScreenPos()
 
-	// Accent strip along the top edge of the card.
+	// Accent strip along the left edge of the card.
 	wp := im.GetWindowPos()
 	ws := im.GetWindowSize()
 	im.DrawList_PushClipRect(dl(), wp, wp + ws, false)
-	im.DrawList_AddRectFilled(dl(), {wp.x + 1, wp.y + 1}, {wp.x + ws.x - 1, wp.y + 4}, col32(inf.accent, 0.55), 6, im.DrawFlags_RoundCornersTop)
+	im.DrawList_AddRectFilled(dl(), {wp.x + 1, wp.y + 1}, {wp.x + 4, wp.y + ws.y - 1}, col32(inf.accent, 0.6), 6, im.DrawFlags_RoundCornersLeft)
 	im.DrawList_PopClipRect(dl())
 
-	// Header: icon badge, title, state pill underneath.
-	im.DrawList_AddCircleFilled(dl(), {cp.x + 18, cp.y + 20}, 18, col32(inf.accent, 0.16))
-	draw_icon_centered(fonts.ui, 19, {cp.x + 18, cp.y + 20}, col32(inf.accent), inf.icon)
-	draw_text(fonts.bold, 16, {cp.x + 48, cp.y + 1}, col32(C_TEXT), inf.title)
+	ROW :: 30
+	CHEV :: 26
+	// Sway's keys clash: the key editor (in the details) is how to fix that.
+	keys := id == .Sway && c.state != .Custom && c.state != .Unavailable
+	open := expanded[id] || keys && sway_keys_clash_count() > 0
+
+	// The line: badge, name, state.
+	im.DrawList_AddCircleFilled(dl(), {cp.x + 15, cp.y + ROW / 2}, 15, col32(inf.accent, 0.16))
+	draw_icon_centered(fonts.ui, 16, {cp.x + 15, cp.y + ROW / 2}, col32(inf.accent), inf.icon)
+	tx := cp.x + 40
+	tsz := measure(fonts.bold, 15, inf.title)
+	draw_text(fonts.bold, 15, {tx, cp.y + (ROW - tsz.y) / 2}, col32(C_TEXT), inf.title)
 	stext, scol := state_pill(c.state, id)
 	ssz := measure(fonts.bold, 11, stext)
-	sx, sy := cp.x + 48, cp.y + 22
+	sx, sy := tx + tsz.x + 10, cp.y + (ROW - 18) / 2
 	im.DrawList_AddCircleFilled(dl(), {sx + 9, sy + 9}, 3, col32(scol))
 	im.DrawList_AddRectFilled(dl(), {sx, sy}, {sx + ssz.x + 24, sy + 18}, col32(scol, 0.14), 9)
 	draw_text(fonts.bold, 11, {sx + 17, sy + 2}, col32(scol), stext)
-	im.Dummy({inner, 44})
-
-	wrapped(fonts.ui, SZ_BODY, C_MUTED, inf.desc, inner)
-	for line in c.detail {wrapped(fonts.mono, SZ_SMALL, C_FAINT, line, inner)}
-	if c.message != "" {
-		wrapped(fonts.ui, SZ_SMALL, c.msg_ok ? C_GREEN : C_RED, fmt.tprintf("%s %s", c.msg_ok ? ICON_CHECK : ICON_ALERT, c.message), inner)
-	}
-	if id == .Sway && c.state != .Custom && c.state != .Unavailable {sway_keys_ui(inner, inf.accent)}
-	if inf.preview != "" && show_preview[id] {
-		text := strings.trim_space(inf.preview)
-		im.PushStyleColorImVec4(.ChildBg, rgba(C_WELL))
-		im.PushStyleVarImVec2(.WindowPadding, {12, 10})
-		im.BeginChild(cstr(fmt.tprintf("##code:%v", id)), {inner, 0}, {.AutoResizeY, .AlwaysUseWindowPadding}, {})
-		wrapped(fonts.mono, SZ_SMALL, C_TEXT, text, inner - 24)
-		im.EndChild()
-		im.PopStyleVar()
-		im.PopStyleColor()
+	head_end := sx + ssz.x + 24
+	im.SetCursorScreenPos(cp)
+	if im.InvisibleButton(cstr(fmt.tprintf("##head:%v", id)), {head_end - cp.x, ROW}) {expanded[id] = !expanded[id]}
+	if im.IsItemHovered() {
+		im.SetMouseCursor(.Hand)
+		if !open {tip_wrapped(inf.desc, 440)}
 	}
 
-	// Footer: actions on the left, file toggle on the right.
-	im.Dummy({1, 2})
-	fp := im.GetCursorScreenPos()
-	im.DrawList_AddLine(dl(), {fp.x, fp.y - 4}, {fp.x + inner, fp.y - 4}, col32(C_BORDER), 1)
-	ax := fp.x
-	row_y := fp.y
+	// The chevron, at the right end.
+	chx := cp.x + inner - CHEV
+	im.SetCursorScreenPos({chx, cp.y + (ROW - CHEV) / 2})
+	if im.InvisibleButton(cstr(fmt.tprintf("##more:%v", id)), {CHEV, CHEV}) {expanded[id] = !expanded[id]}
+	chov := im.IsItemHovered()
+	if chov {
+		im.SetMouseCursor(.Hand)
+		tip(open ? "Hide the details" : "Details: what it does, its files")
+		im.DrawList_AddRectFilled(dl(), {chx, cp.y + (ROW - CHEV) / 2}, {chx + CHEV, cp.y + (ROW + CHEV) / 2}, col32(C_OVERLAY, 0.07), 7)
+	}
+	draw_icon_centered(fonts.ui, 18, {chx + CHEV / 2, cp.y + ROW / 2}, col32(chov ? C_TEXT : C_MUTED), open ? ICON_CHEVRON_DOWN : ICON_CHEVRON_RIGHT)
+
+	// Actions: right-aligned on the line when they fit, else under it (wrapping).
 	acts := actions_for(id, c.state)
+	if armed.index >= 0 && time.tick_since(armed.at) > 4 * time.Second {armed.index = -1}
+	labels := make([]string, len(acts), context.temp_allocator)
+	total: f32
+	for a, i in acts {
+		is_armed := armed.index == i && armed.id == id
+		labels[i] = is_armed ? fmt.tprintf("Really %s?", strings.to_lower(a.label, context.temp_allocator)) : a.label
+		total += pill_width(labels[i]) + (i > 0 ? 8 : 0)
+	}
+	right := chx - 8
+	bottom := cp.y + ROW
 	if c.busy {
-		draw_text(fonts.ui, SZ_SMALL, {ax, fp.y + 6}, col32(C_ORANGE), "working…")
-	} else if len(acts) == 0 {
-		draw_text(fonts.ui, SZ_SMALL, {ax, fp.y + 6}, col32(C_FAINT), is_done(c.state) ? "nothing to do" : "—")
-	} else {
-		if armed.index >= 0 && time.tick_since(armed.at) > 4 * time.Second {armed.index = -1}
-		// Pills wrap onto another row; the file toggle keeps the first row's end.
-		right := fp.x + inner - (inf.preview != "" ? measure(fonts.ui, SZ_SMALL, "Show file").x + 12 : 0)
+		w := measure(fonts.ui, SZ_SMALL, "working…").x
+		draw_text(fonts.ui, SZ_SMALL, {right - w, cp.y + 8}, col32(C_ORANGE), "working…")
+	} else if len(acts) > 0 {
+		ax, row_y := right - total, cp.y + 1
+		start := ax
+		if ax < head_end + 16 {
+			ax, row_y = tx, cp.y + ROW + 6
+			start = tx
+		}
 		for a, i in acts {
-			is_armed := armed.index == i && armed.id == id
-			label := is_armed ? fmt.tprintf("Really %s?", strings.to_lower(a.label, context.temp_allocator)) : a.label
-			if ax > fp.x && ax + pill_width(label) > right {
-				ax = fp.x
+			lw := pill_width(labels[i])
+			if ax > start && ax + lw > cp.x + inner {
+				ax = tx
 				row_y += 34
-				right = fp.x + inner
 			}
 			im.SetCursorScreenPos({ax, row_y})
-			if pill_button(fmt.tprintf("##%v:%d", id, i), label, is_armed ? C_RED : inf.accent, a.primary || is_armed) {
+			is_armed := armed.index == i && armed.id == id
+			if pill_button(fmt.tprintf("##%v:%d", id, i), labels[i], is_armed ? C_RED : inf.accent, a.primary || is_armed) {
 				if !a.confirm || is_armed {
 					run = a.run
 					armed.index = -1
@@ -426,26 +470,48 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 					armed = {id, i, time.tick_now()}
 				}
 			}
-			ax += pill_width(label) + 8
+			ax += lw + 8
+		}
+		bottom = max(bottom, row_y + 28)
+	}
+	im.SetCursorScreenPos({cp.x, bottom})
+	im.Dummy({inner, 0})
+
+	// The last action's result stays in view.
+	if c.message != "" {
+		im.SetCursorScreenPos({tx, im.GetCursorScreenPos().y})
+		wrapped(fonts.ui, SZ_SMALL, c.msg_ok ? C_GREEN : C_RED, fmt.tprintf("%s %s", c.msg_ok ? ICON_CHECK : ICON_ALERT, c.message), inner - 40)
+	}
+	if open {
+		im.Dummy({1, 2})
+		wrapped(fonts.ui, SZ_BODY, C_MUTED, inf.desc, inner)
+		for line in c.detail {wrapped(fonts.mono, SZ_SMALL, C_FAINT, line, inner)}
+		if keys {sway_keys_ui(inner, inf.accent)}
+		if inf.preview != "" {
+			lbl := show_preview[id] ? "Hide file" : "Show file"
+			lsz := measure(fonts.ui, SZ_SMALL, lbl)
+			lp := im.GetCursorScreenPos()
+			if im.InvisibleButton(cstr(fmt.tprintf("##prev:%v", id)), lsz + {0, 4}) {show_preview[id] = !show_preview[id]}
+			if im.IsItemHovered() {im.SetMouseCursor(.Hand)}
+			draw_text(fonts.ui, SZ_SMALL, {lp.x, lp.y + 1}, col32(inf.accent, 0.9), lbl)
+			if show_preview[id] {
+				text := strings.trim_space(inf.preview)
+				im.PushStyleColorImVec4(.ChildBg, rgba(C_WELL))
+				im.PushStyleVarImVec2(.WindowPadding, {12, 10})
+				im.BeginChild(cstr(fmt.tprintf("##code:%v", id)), {inner, 0}, {.AutoResizeY, .AlwaysUseWindowPadding}, {})
+				wrapped(fonts.mono, SZ_SMALL, C_TEXT, text, inner - 24)
+				im.EndChild()
+				im.PopStyleVar()
+				im.PopStyleColor()
+			}
 		}
 	}
-	if inf.preview != "" {
-		lbl := show_preview[id] ? "Hide file" : "Show file"
-		lsz := measure(fonts.ui, SZ_SMALL, lbl)
-		lp := Vec2{fp.x + inner - lsz.x, fp.y + 6}
-		im.SetCursorScreenPos(lp)
-		if im.InvisibleButton(cstr(fmt.tprintf("##prev:%v", id)), lsz + {0, 2}) {show_preview[id] = !show_preview[id]}
-		if im.IsItemHovered() {im.SetMouseCursor(.Hand)}
-		draw_text(fonts.ui, SZ_SMALL, lp, col32(inf.accent, 0.9), lbl)
-	}
-	im.SetCursorScreenPos(fp)
-	im.Dummy({inner, row_y - fp.y + 28})
 	card_end()
 	return
 }
 
 // A pulsing ring around the card just drawn, while a pulse runs; the first
-// one scrolls the window so the card is in view.
+// one scrolls the page so the card is in view.
 @(private = "file")
 pulse_ring :: proc(col: u32) {
 	a, on := pulse_alpha()
@@ -461,20 +527,426 @@ pulse_ring :: proc(col: u32) {
 	im.DrawList_AddRect(dl(), r0 - grow, r1 + grow, col32(col, 0.25 + 0.65 * a), rad + grow, 1.5 + 1.5 * a)
 }
 
-// Narrowest column on the Components tab; as many as fit, up to MAX_COLS.
-@(private = "file") COMP_MIN_COL :: 340
+// Narrowest column of component cards; as many as fit, up to MAX_COLS.
+@(private = "file") COMP_MIN_COL :: 520
 // Gap between the visible window edge and the imgui window: the inner resize strip.
 @(private = "file") FRAME_INSET :: 6
 MAX_COLS :: 6
+@(private = "file") GAP :: 14
 
 // Columns of at least `min_col` that fit `width` (1..MAX_COLS).
 fit_columns :: proc(width, min_col, gap: f32) -> int {
 	return clamp(int((width + gap) / (min_col + gap)), 1, MAX_COLS)
 }
 
+// Cards of the components `ids` that match `filter`, from (x, y), in
+// columns; card i always goes into column i % columns, so opening one never
+// moves the others. Returns the clicked action and the bottom edge.
+@(private = "file")
+draw_comp_cards :: proc(x, y, width: f32, ids: []Comp_Id, filter: string) -> (run: proc(), bottom: f32) {
+	bottom = y
+	shown := make([dynamic]Comp_Id, context.temp_allocator)
+	for id in ids {if comp_matches(id, filter) {append(&shown, id)}}
+	if len(shown) == 0 {return}
+	ncols := min(fit_columns(width, COMP_MIN_COL, GAP), len(shown))
+	cw := (width - GAP * f32(ncols - 1)) / f32(ncols)
+	cols := make([]f32, ncols, context.temp_allocator)
+	for &b in cols {b = y}
+	sync.guard(&setup.mu)
+	for id, i in shown {
+		k := i % ncols
+		im.SetCursorScreenPos({x + f32(k) * (cw + GAP), cols[k]})
+		if r := comp_card(id, &setup.comps[id], cw); r != nil {run = r}
+		if s := setup.comps[id].state; is_todo(s) {pulse_ring(needs_attention(s) ? C_ORANGE : C_BLUE)}
+		cols[k] = im.GetItemRectMax().y + GAP
+	}
+	for b in cols {bottom = max(bottom, b)}
+	bottom -= GAP
+	im.SetCursorScreenPos({x, bottom})
+	im.Dummy({width, 0})
+	return
+}
+
+// A small caps label over a section, with an optional note after it.
+@(private = "file")
+section_label :: proc(x, y, width: f32, text: string, note := "") -> f32 {
+	caps := strings.to_upper(text, context.temp_allocator)
+	draw_text(fonts.bold, SZ_SMALL, {x + 2, y}, col32(C_FAINT), caps)
+	if note != "" {
+		nx := x + 2 + measure(fonts.bold, SZ_SMALL, caps).x + 14
+		if nx + measure(fonts.ui, SZ_SMALL, note).x <= x + width {draw_text(fonts.ui, SZ_SMALL, {nx, y}, col32(C_FAINT), note)}
+	}
+	return y + 24
+}
+
+// Components not set up yet, the ones needing attention first.
+@(private = "file")
+todo_list :: proc() -> []Comp_Id {
+	out := make([dynamic]Comp_Id, context.temp_allocator)
+	sync.guard(&setup.mu)
+	for id in Comp_Id {if needs_attention(setup.comps[id].state) {append(&out, id)}}
+	for id in Comp_Id {if s := setup.comps[id].state; is_todo(s) && !needs_attention(s) {append(&out, id)}}
+	return out[:]
+}
+
+// For the sidebar: how many of a page's components aren't set up, and
+// whether one of them needs attention.
+@(private = "file")
+page_todo :: proc(p: Setup_Page) -> (n: int, attention: bool) {
+	sync.guard(&setup.mu)
+	ids := SETUP_PAGES[p].comps
+	if p == .Overview {
+		for id in Comp_Id {if is_todo(setup.comps[id].state) {n += 1}; attention ||= needs_attention(setup.comps[id].state)}
+		return
+	}
+	for id in ids {
+		s := setup.comps[id].state
+		if is_todo(s) {n += 1}
+		attention ||= needs_attention(s)
+	}
+	return
+}
+
+// For the sidebar while searching: matching cards and settings on a page.
+@(private = "file")
+page_matches :: proc(p: Setup_Page, filter: string) -> int {
+	n := settings_match_count(p, filter)
+	for id in SETUP_PAGES[p].comps {if comp_matches(id, filter) {n += 1}}
+	return n
+}
+
+// ---- Overview ----------------------------------------------------------------------
+
+@(private = "file")
+update_checking: bool
+
+@(private = "file")
+draw_overview :: proc(x, y, width: f32) -> (run: proc()) {
+	// ---- Summary tiles: one row of four, or two rows of two ----------------
+	done, applicable, attention, missing := 0, 0, 0, 0
+	svc_text, ntf_text: string
+	svc_col, ntf_col: u32
+	{
+		sync.guard(&setup.mu)
+		for id in Comp_Id {
+			s := setup.comps[id].state
+			if s == .Unavailable {continue}
+			applicable += 1
+			if is_done(s) {done += 1}
+			if needs_attention(s) {attention += 1}
+			if s == .Missing {missing += 1}
+		}
+		svc_text, svc_col = state_pill(setup.comps[.Service].state)
+		ntf_text, ntf_col = state_pill(setup.comps[.Notifications].state)
+	}
+	per_row := width >= 4 * 210 + 3 * GAP ? 4 : 2
+	tw := (width - GAP * f32(per_row - 1)) / f32(per_row)
+	ty := y
+	tiles := [4]struct {
+		icon, caption, value, sub: string,
+		accent:                    u32,
+		progress:                  f32,
+	} {
+		// Green like the installed components once everything is set up.
+		{ICON_CHECK, "Set up", fmt.tprintf("%d / %d", done, applicable), "components", applicable > 0 && done == applicable ? C_GREEN : C_BLUE, applicable > 0 ? f32(done) / f32(applicable) : 0},
+		{ICON_POWER, "Daemon", svc_text, "", svc_col, -1},
+		{ICON_BELL, "Notifications", ntf_text, "", ntf_col, -1},
+		attention > 0 ? {ICON_ALERT, "Needs attention", fmt.tprintf("%d", attention), attention == 1 ? "component" : "components", C_ORANGE, -1} : missing > 0 ? {ICON_HOME, "Not installed", fmt.tprintf("%d", missing), "optional", C_MUTED, -1} : {ICON_CHECK, "Nothing left", "all set", "", C_GREEN, -1},
+	}
+	todo := todo_list()
+	tile_h: f32 = 0
+	for t, i in tiles {
+		if i > 0 && i % per_row == 0 {ty += tile_h + GAP}
+		im.SetCursorScreenPos({x + f32(i % per_row) * (tw + GAP), ty})
+		// The count tiles open the first page with something to set up.
+		clickable := len(todo) > 0 && (i == 0 || i == 3)
+		if stat_tile(fmt.tprintf("tile:%d", i), tw, t.icon, t.caption, t.value, t.sub, t.accent, t.progress, clickable) {
+			go_page(comp_page(todo[0]), true)
+		}
+		if clickable && im.IsItemHovered() {tip(fmt.tprintf("Open %s, where %s is", SETUP_PAGES[comp_page(todo[0])].title, info(todo[0]).title))}
+		tile_h = max(tile_h, im.GetItemRectSize().y)
+	}
+	top := ty + tile_h + 18
+
+	// ---- To do, and updates --------------------------------------------------------
+	two := width >= 2 * SETTINGS_MIN_COL + GAP
+	uw: f32 = two ? clamp(width * 0.36, SETTINGS_MIN_COL, 520) : width
+	lw := two ? width - uw - GAP : width
+	im.SetCursorScreenPos({x, top})
+	card_begin("##todo", lw)
+	inner := im.GetContentRegionAvail().x
+	card_title(len(todo) > 0 ? ICON_ALERT : ICON_CHECK, "To do", len(todo) > 0 ? (attention > 0 ? C_ORANGE : C_BLUE) : C_GREEN, fmt.tprintf("%d of %d set up", done, applicable))
+	if len(todo) == 0 {
+		wrapped(fonts.ui, SZ_BODY, C_MUTED, "Everything that applies here is set up. The pages on the left hold each part's settings.", inner)
+	}
+	for id, k in todo {
+		if k > 0 {
+			lp := im.GetCursorScreenPos()
+			im.DrawList_AddLine(dl(), {lp.x, lp.y + 1}, {lp.x + inner, lp.y + 1}, col32(C_BORDER), 1)
+			im.Dummy({inner, 4})
+		}
+		inf := info(id)
+		state: Comp_State
+		{
+			sync.guard(&setup.mu)
+			state = setup.comps[id].state
+		}
+		rp := im.GetCursorScreenPos()
+		RH :: 30
+		im.DrawList_AddCircleFilled(dl(), {rp.x + 13, rp.y + RH / 2}, 13, col32(inf.accent, 0.16))
+		draw_icon_centered(fonts.ui, 15, {rp.x + 13, rp.y + RH / 2}, col32(inf.accent), inf.icon)
+		draw_text(fonts.bold, SZ_BODY, {rp.x + 36, rp.y + 6}, col32(C_TEXT), inf.title)
+		stext, scol := state_pill(state, id)
+		sx := rp.x + 36 + measure(fonts.bold, SZ_BODY, inf.title).x + 10
+		ssz := measure(fonts.bold, 11, stext)
+		im.DrawList_AddRectFilled(dl(), {sx, rp.y + 6}, {sx + ssz.x + 16, rp.y + 24}, col32(scol, 0.14), 9)
+		draw_text(fonts.bold, 11, {sx + 8, rp.y + 8}, col32(scol), stext)
+		pg := comp_page(id)
+		open := fmt.tprintf("%s  %s", SETUP_PAGES[pg].title, ICON_CHEVRON_RIGHT)
+		ow := pill_width(open)
+		where_x := sx + ssz.x + 26
+		im.SetCursorScreenPos({rp.x + inner - ow, rp.y + 1})
+		if pill_button(fmt.tprintf("##todo:%v", id), open, page_accent(pg)) {go_page(pg, true)}
+		if im.IsItemHovered() {tip(fmt.tprintf("Open %s: %s", SETUP_PAGES[pg].title, SETUP_PAGES[pg].sub))}
+		_ = where_x
+		im.SetCursorScreenPos({rp.x, rp.y + RH})
+		im.Dummy({inner, 2})
+	}
+	card_end()
+	left_bottom := im.GetItemRectMax().y
+
+	ux := two ? x + lw + GAP : x
+	uy := two ? top : left_bottom + GAP
+	im.SetCursorScreenPos({ux, uy})
+	card_begin("##updates", uw)
+	inner = im.GetContentRegionAvail().x
+	when RELEASE_BUILD {build := "release build"} else {build := "dev build"}
+	ucol, utip, uhi := update_button_info()
+	card_title(ICON_UPDATE, "Updates", uhi ? ucol : C_GREEN, fmt.tprintf("wlperch %s · %s", VERSION, build))
+	wrapped(fonts.ui, SZ_BODY, uhi ? ucol : C_MUTED, strings.trim_suffix(strings.trim_suffix(utip, "\nclick to check again"), "\nclick to try again"), inner)
+	im.Dummy({1, 2})
+	if pill_button("##upd-check", update_checking ? "Checking…" : "Check now", C_GREEN) && !update_checking {
+		update_checking = true
+		thread.create_and_start(proc() {
+			update_check_now()
+			update_checking = false
+			free_all(context.temp_allocator)
+			wake_main()
+		}, self_cleanup = true)
+	}
+	if update_available() {
+		im.SameLine(0, 8)
+		if pill_button("##upd-install", "Install", C_GREEN, true) {launch_detached({setup.self_path, "update"})}
+		if im.IsItemHovered() {tip("Downloads the release, checks it against SHA256SUMS, replaces ~/.local/bin/wlperch and restarts the daemon")}
+	}
+	im.SameLine(0, 8)
+	if pill_button("##upd-settings", "Settings", C_GREEN) {go_page(.Basics)}
+	if im.IsItemHovered() {tip("The daily check: Basics, Updates")}
+	card_end()
+	bottom := max(left_bottom, im.GetItemRectMax().y)
+	im.SetCursorScreenPos({x, bottom})
+	im.Dummy({width, 0})
+	return
+}
+
+// ---- Pages -------------------------------------------------------------------------
+
+// A page under its header: its cards, its settings and, on Look, the wallpapers.
+@(private = "file")
+draw_page :: proc(page: Setup_Page, x, y, width: f32) -> (run: proc()) {
+	if page == .Overview {return draw_overview(x, y, width)}
+	pi := SETUP_PAGES[page]
+	y := y
+	if len(pi.comps) > 0 {
+		y = section_label(x, y, width, "Set up")
+		r, b := draw_comp_cards(x, y, width, pi.comps, "")
+		if r != nil {run = r}
+		y = b + 26
+	}
+	if len(pi.groups) > 0 {
+		y = section_label(x, y, width, "Settings", SETTINGS_NOTE)
+		draw_settings(x, y, width, page, "")
+		y = im.GetCursorScreenPos().y + 26
+	}
+	switch page {
+	case .Time:
+		im.SetCursorScreenPos({x + 2, y - 12})
+		wrapped(fonts.ui, SZ_SMALL, C_FAINT, "Projects (names, colours, rates, Claude's work), the timeline and the export are in the Time panel. More keys ([project.NAME] sections) are in config.ini: Basics, Settings file, Open.", width)
+	case .Look:
+		y = section_label(x, y, width, "Wallpapers")
+		if setup_scroll_wallpapers {
+			im.SetCursorScreenPos({x, y - 24})
+			im.SetScrollHereY(0)
+			// Again until the settings above have their final height.
+			@(static) frames := 0
+			frames += 1
+			if frames > 4 {setup_scroll_wallpapers = false}
+			request_redraw(1)
+		}
+		draw_wallpapers(x, y, width)
+	case .Overview, .Basics, .Bar, .Lock, .Notifications, .Launcher, .Ssh:
+	}
+	return
+}
+
+// Searching: the matching cards and settings of every page, under the page's name.
+@(private = "file")
+draw_results :: proc(x, y, width: f32, filter: string) -> (run: proc()) {
+	y := y
+	any := false
+	for page in Setup_Page {
+		if page == .Overview || page_matches(page, filter) == 0 {continue}
+		any = true
+		pi := SETUP_PAGES[page]
+		acc := page_accent(page)
+		// The page's name: a click opens it.
+		tsz := measure(fonts.bold, 17, pi.title)
+		im.SetCursorScreenPos({x, y})
+		if im.InvisibleButton(cstr(fmt.tprintf("##res:%v", page)), {tsz.x + 60, 26}) {go_page(page)}
+		hov := im.IsItemHovered()
+		if hov {
+			im.SetMouseCursor(.Hand)
+			tip(fmt.tprintf("Open %s", pi.title))
+		}
+		draw_icon_centered(fonts.ui, 17, {x + 10, y + 12}, col32(acc), pi.icon)
+		draw_text(fonts.bold, 17, {x + 28, y + 2}, col32(hov ? acc : C_TEXT), pi.title)
+		draw_text(fonts.ui, 15, {x + 36 + tsz.x, y + 4}, col32(C_FAINT), ICON_CHEVRON_RIGHT)
+		y += 34
+		if r, b := draw_comp_cards(x, y, width, pi.comps, filter); b > y {
+			if r != nil {run = r}
+			y = b + GAP
+		}
+		if settings_match_count(page, filter) > 0 {
+			draw_settings(x, y, width, page, filter)
+			y = im.GetCursorScreenPos().y + GAP
+		}
+		y += 14
+	}
+	if !any {
+		im.SetCursorScreenPos({x + 2, y})
+		wrapped(fonts.ui, SZ_BODY, C_MUTED, "Nothing matches. The rest of config.ini (panels, sensors, display presets, projects) is edited by hand: Basics, Settings file, Open.", width)
+	}
+	return
+}
+
+// ---- Sidebar -----------------------------------------------------------------------
+
+@(private = "file")
+focus_search: bool
+
+@(private = "file")
+search_box :: proc(width: f32) {
+	p := im.GetCursorScreenPos()
+	im.PushFontFloat(fonts.ui, SZ_BODY)
+	im.PushStyleVarImVec2(.FramePadding, {32, 7})
+	im.PushStyleVar(.FrameRounding, 9)
+	im.PushStyleVar(.FrameBorderSize, 1)
+	im.PushStyleColorImVec4(.FrameBg, rgba(C_WELL))
+	im.PushStyleColorImVec4(.FrameBgHovered, rgba(C_WELL))
+	im.PushStyleColorImVec4(.FrameBgActive, rgba(C_WELL))
+	im.PushStyleColorImVec4(.Border, rgba(C_BORDER))
+	im.PushStyleColorImVec4(.TextDisabled, rgba(C_FAINT))
+	im.SetNextItemWidth(width)
+	if focus_search {
+		im.SetKeyboardFocusHere()
+		focus_search = false
+	}
+	im.InputTextWithHint("##setup-search", "Search…", cstring(&setup_search[0]), len(setup_search), {.EscapeClearsAll})
+	if im.IsItemHovered() && !im.IsItemActive() {tip("Search every page's settings and parts (Ctrl+F)")}
+	im.PopStyleColor(5)
+	im.PopStyleVar(3)
+	im.PopFont()
+	draw_text(fonts.ui, 16, {p.x + 10, p.y + 7}, col32(C_MUTED), ICON_MAGNIFY)
+}
+
+// The sidebar: the logo, the search box and a row per page, with a badge
+// counting what's left to set up (orange: something needs attention), or the
+// matches while searching. Narrow windows get icons only.
+@(private = "file")
+draw_sidebar :: proc(p: Vec2, w, h: f32, compact: bool, filter: string) {
+	d := dl()
+	im.DrawList_AddRectFilled(d, p, {p.x + w, p.y + h}, col32(C_CARD), 14)
+	im.DrawList_AddRect(d, p, {p.x + w, p.y + h}, col32(C_BORDER), 14)
+	pad: f32 = compact ? 8 : 12
+	x, y := p.x + pad, p.y + 14
+	iw := w - 2 * pad
+
+	// Logo.
+	lx := compact ? p.x + w / 2 : x + 18
+	im.DrawList_AddCircleFilled(d, {lx, y + 18}, 18, col32(C_BLUE, 0.16))
+	draw_icon_centered(fonts.ui, 20, {lx, y + 18}, col32(C_BLUE), ICON_TUNE_BAR)
+	if !compact {
+		draw_text(fonts.bold, 20, {x + 46, y + 1}, col32(C_TEXT), "wlperch")
+		draw_text(fonts.ui, SZ_SMALL, {x + 46, y + 23}, col32(C_FAINT), fmt.tprintf("setup · %s", VERSION))
+	}
+	y += 52
+	if !compact {
+		im.SetCursorScreenPos({x, y})
+		search_box(iw)
+		y += 46
+	} else {
+		y += 4
+	}
+
+	ITEM_H :: 36
+	for page in Setup_Page {
+		pi := SETUP_PAGES[page]
+		acc := page_accent(page)
+		active := filter == "" && page == setup_page
+		count, attention := 0, false
+		dim := false
+		if filter != "" {
+			if page == .Overview {dim = true} else {
+				count = page_matches(page, filter)
+				dim = count == 0
+			}
+		} else {
+			count, attention = page_todo(page)
+		}
+		im.SetCursorScreenPos({x, y})
+		if im.InvisibleButton(cstr(fmt.tprintf("##page:%v", page)), {iw, ITEM_H - 2}) {go_page(page)}
+		hov := im.IsItemHovered()
+		if hov {
+			im.SetMouseCursor(.Hand)
+			if compact {tip(pi.title)}
+		}
+		switch {
+		case active: im.DrawList_AddRectFilled(d, {x, y}, {x + iw, y + ITEM_H - 2}, col32(acc, 0.16), 9)
+		case hov:    im.DrawList_AddRectFilled(d, {x, y}, {x + iw, y + ITEM_H - 2}, col32(C_OVERLAY, 0.06), 9)
+		}
+		alpha: f32 = dim ? 0.4 : 1
+		ix := compact ? x + iw / 2 : x + 16
+		draw_icon_centered(fonts.ui, 17, {ix, y + (ITEM_H - 2) / 2}, col32(active ? acc : C_MUTED, alpha), pi.icon)
+		if !compact {
+			draw_text(active ? fonts.bold : fonts.ui, SZ_BODY + 1, {x + 36, y + 8}, col32(active ? C_TEXT : C_TEXT, alpha * (active ? 1 : 0.85)), pi.title)
+		}
+		if count > 0 {
+			bc: u32 = filter != "" ? C_MUTED : (attention ? C_ORANGE : C_BLUE)
+			txt := fmt.tprintf("%d", count)
+			tsz := measure(fonts.bold, 11, txt)
+			bw := max(tsz.x + 10, 18)
+			bx := compact ? x + iw - bw + 6 : x + iw - bw - 8
+			by := compact ? y - 3 : y + (ITEM_H - 2 - 18) / 2
+			im.DrawList_AddRectFilled(d, {bx, by}, {bx + bw, by + 18}, col32(bc, filter != "" ? 0.18 : 0.9), 9)
+			draw_text(fonts.bold, 11, {bx + (bw - tsz.x) / 2, by + 2}, filter != "" ? col32(C_TEXT) : col32(0x111318), txt)
+			if hov && !compact && filter == "" {
+				tip(page == .Overview ? fmt.tprintf("%d part%s not set up yet", count, count == 1 ? "" : "s") : fmt.tprintf("%d part%s here not set up yet%s", count, count == 1 ? "" : "s", attention ? ", one needs attention" : ""))
+			}
+		}
+		y += ITEM_H
+	}
+}
+
+// ---- The window --------------------------------------------------------------------
+
 draw_setup :: proc() {
-	// Escape leaves a text field first; only then does it close the window.
-	if im.IsKeyPressed(.Escape, false) && !im.IsAnyItemActive() {plat.closed = true}
+	filter := setup_search_filter()
+	// Ctrl+F searches; Escape leaves a text field first, then clears the
+	// search, and only then closes the window.
+	if im.GetIO().KeyCtrl && im.IsKeyPressed(.F, false) {focus_search = true}
+	if im.IsKeyPressed(.Escape, false) && !im.IsAnyItemActive() {
+		if filter != "" {setup_search[0] = 0} else {plat.closed = true}
+	}
 
 	// The window's own frame: a rounded card with a shadow while floating,
 	// a plain rectangle filling its tile otherwise.
@@ -492,166 +964,91 @@ draw_setup :: proc() {
 	im.PushStyleColorImVec4(.WindowBg, rgba(C_BG, 0))
 	im.PushStyleVar(.WindowRounding, rounded ? WIN_RADIUS - FRAME_INSET : 0)
 	im.PushStyleVar(.WindowBorderSize, 0)
-	im.PushStyleVarImVec2(.WindowPadding, {26 - FRAME_INSET, 22 - FRAME_INSET})
-	im.Begin("setup", nil, {.NoTitleBar, .NoResize, .NoMove, .NoCollapse, .NoSavedSettings})
+	im.PushStyleVarImVec2(.WindowPadding, {20 - FRAME_INSET, 20 - FRAME_INSET})
+	im.Begin("setup", nil, {.NoTitleBar, .NoResize, .NoMove, .NoCollapse, .NoSavedSettings, .NoScrollbar, .NoScrollWithMouse})
 	im.PopStyleVar(3)
 	im.PopStyleColor()
 
-	width := im.GetContentRegionAvail().x
-	// ---- Header -------------------------------------------------------------
+	origin := im.GetCursorScreenPos()
+	full := im.GetContentRegionAvail()
+	// Narrow windows: icons only, the search box above the page.
+	compact := full.x < 1000
+	side_w: f32 = compact ? 56 : 224
+	draw_sidebar(origin, side_w, full.y, compact, filter)
+
+	// Thumbnail textures only while the wallpapers show.
+	if !(setup_page == .Look && filter == "") {wallpapers_release()}
+
+	// ---- The page: scrolls on its own, the sidebar stays -------------------------
+	cx := origin.x + side_w + 20
+	im.SetCursorScreenPos({cx, origin.y})
+	im.PushStyleColorImVec4(.ChildBg, rgba(C_BG, 0))
+	im.PushStyleVarImVec2(.WindowPadding, {0, 0})
+	im.BeginChild("##page", {origin.x + full.x - cx, full.y}, {}, {})
+	im.PopStyleVar()
+	im.PopStyleColor()
+	@(static) shown_page := Setup_Page.Overview
+	@(static) was_searching := false
+	if shown_page != setup_page || was_searching != (filter != "") {
+		im.SetScrollY(0)
+		shown_page, was_searching = setup_page, filter != ""
+	}
+	// Room for the scrollbar on the right.
+	width := im.GetContentRegionAvail().x - 14
 	p := im.GetCursorScreenPos()
-	im.DrawList_AddCircleFilled(dl(), {p.x + 22, p.y + 22}, 22, col32(C_BLUE, 0.16))
-	draw_icon_centered(fonts.ui, 24, {p.x + 22, p.y + 22}, col32(C_BLUE), ICON_TUNE_BAR)
-	draw_text(fonts.bold, 26, {p.x + 58, p.y - 2}, col32(C_TEXT), "wlperch")
-	// Components | Settings | Wallpapers, right-aligned; the recommended install left of it.
-	tabs := []string{"Components", "Settings", "Wallpapers"}
-	tw := f32(4)
-	for t in tabs {tw += measure(fonts.ui, SZ_SMALL + 1, t).x + 24}
-	right := p.x + width - tw
-	im.SetCursorScreenPos({right, p.y + 9})
-	if k := segmented("##tabs", tabs, int(setup_tab), C_BLUE); k >= 0 {
-		setup_tab = Setup_Tab(k)
+
+	// ---- Header -----------------------------------------------------------------
+	right := p.x + width
+	icon, title, sub: string
+	acc := page_accent(setup_page)
+	if filter != "" {
+		n := 0
+		for page in Setup_Page {if page != .Overview {n += page_matches(page, filter)}}
+		icon, title, acc = ICON_MAGNIFY, "Search", C_BLUE
+		sub = fmt.tprintf("%d match%s for “%s” · Escape clears", n, n == 1 ? "" : "es", strings.trim_space(string(cstring(raw_data(setup_search[:])))))
+	} else {
+		pi := SETUP_PAGES[setup_page]
+		icon, title, sub = pi.icon, pi.title, pi.sub
 	}
-	if setup_tab == .Components {
+	if compact {
+		sw := min(f32(280), width * 0.45)
+		right -= sw
+		im.SetCursorScreenPos({right, p.y + 7})
+		search_box(sw)
+		right -= 14
+	}
+	if setup_page == .Overview && filter == "" && len(todo_list()) > 0 {
 		rec := "Install recommended"
-		right -= 14 + pill_width(rec)
-		im.SetCursorScreenPos({right, p.y + 10})
-		if pill_button("##recommended", rec, C_BLUE, true) {setup_install_recommended(); setup_check()}
+		right -= pill_width(rec)
+		im.SetCursorScreenPos({right, p.y + 8})
+		if pill_button("##recommended", rec, C_BLUE, true) {
+			setup_install_recommended()
+			setup_check()
+		}
+		if im.IsItemHovered() {tip("Installs the parts most setups want, with backups of what they change")}
+		right -= 14
 	}
-	// The subtitle only where it fits next to the buttons.
-	sub: string
-	switch setup_tab {
-	case .Components: sub = "Pick the parts you want. Run `wlperch setup` any time to change them."
-	case .Settings:   sub = "Change wlperch's settings here instead of in config.ini."
-	case .Wallpapers: sub = "Pick wallpapers for the dark and the light theme; each switch shows one at random."
+	im.DrawList_AddCircleFilled(dl(), {p.x + 22, p.y + 22}, 22, col32(acc, 0.16))
+	draw_icon_centered(fonts.ui, 22, {p.x + 22, p.y + 22}, col32(acc), icon)
+	draw_text(fonts.bold, 24, {p.x + 56, p.y - 1}, col32(C_TEXT), title)
+	if p.x + 56 + measure(fonts.ui, SZ_BODY, sub).x + 16 <= right {
+		draw_text(fonts.ui, SZ_BODY, {p.x + 56, p.y + 27}, col32(C_MUTED), sub)
 	}
-	if p.x + 58 + measure(fonts.ui, SZ_BODY, sub).x + 16 <= right {
-		draw_text(fonts.ui, SZ_BODY, {p.x + 58, p.y + 28}, col32(C_MUTED), sub)
-	}
-	im.SetCursorScreenPos(p)
-	im.Dummy({width, 56})
-	im.Dummy({1, 6})
-	// Thumbnail textures only while the tab shows.
-	if setup_tab != .Wallpapers {wallpapers_release()}
-	if setup_tab == .Wallpapers {
-		q := im.GetCursorScreenPos()
-		draw_wallpapers(q.x, q.y, width)
-		im.Dummy({1, 8})
-		log_content_height()
-		im.End()
-		return
-	}
-	if setup_tab == .Settings {
-		q := im.GetCursorScreenPos()
-		draw_settings(q.x, q.y, width)
-		im.Dummy({1, 8})
-		log_content_height()
-		im.End()
-		return
-	}
+	top := p.y + 66
 
-	GAP :: 14
-	run: proc() = nil
-	{
-		sync.guard(&setup.mu)
-
-		// ---- Summary tiles: one row of four, or two rows of two ----------------
-		done, applicable, attention, missing := 0, 0, 0, 0
-		for id in Comp_Id {
-			s := setup.comps[id].state
-			if s == .Unavailable {continue}
-			applicable += 1
-			if is_done(s) {done += 1}
-			if needs_attention(s) {attention += 1}
-			if s == .Missing {missing += 1}
-		}
-		per_row := width >= 4 * 210 + 3 * GAP ? 4 : 2
-		tw := (width - GAP * f32(per_row - 1)) / f32(per_row)
-		ty := im.GetCursorScreenPos().y
-		svc_text, svc_col := state_pill(setup.comps[.Service].state)
-		ntf_text, ntf_col := state_pill(setup.comps[.Notifications].state)
-		tiles := [4]struct {
-			icon, caption, value, sub: string,
-			accent:                    u32,
-			progress:                  f32,
-		} {
-			// Green like the installed components once everything is set up.
-			{ICON_CHECK, "Set up", fmt.tprintf("%d / %d", done, applicable), "components", applicable > 0 && done == applicable ? C_GREEN : C_BLUE, applicable > 0 ? f32(done) / f32(applicable) : 0},
-			{ICON_POWER, "Daemon", svc_text, "", svc_col, -1},
-			{ICON_BELL, "Notifications", ntf_text, "", ntf_col, -1},
-			attention > 0 ? {ICON_ALERT, "Needs attention", fmt.tprintf("%d", attention), attention == 1 ? "component" : "components", C_ORANGE, -1} : missing > 0 ? {ICON_HOME, "Not installed", fmt.tprintf("%d", missing), "optional", C_MUTED, -1} : {ICON_CHECK, "Nothing left", "all set", "", C_GREEN, -1},
-		}
-		tile_h: f32 = 0
-		for t, i in tiles {
-			if i > 0 && i % per_row == 0 {ty += tile_h + GAP}
-			im.SetCursorScreenPos({p.x + f32(i % per_row) * (tw + GAP), ty})
-			// The count tiles point at the cards that aren't set up yet.
-			clickable := done < applicable && (i == 0 || i == 3)
-			if stat_tile(fmt.tprintf("tile:%d", i), tw, t.icon, t.caption, t.value, t.sub, t.accent, t.progress, clickable) {
-				pulse = {time.tick_now(), true}
-			}
-			tile_h = max(tile_h, im.GetItemRectSize().y)
-		}
-		top := ty + tile_h + 18
-
-		// ---- Component columns ------------------------------------------------
-		// As many columns as fit. With four or more, every group gets its own
-		// columns (the groups with the most cards get a second one) and its
-		// cards go into the shorter of them; with fewer, whole groups go into
-		// the shortest column.
-		HEAD_H :: 22
-		ncols := fit_columns(width, COMP_MIN_COL, GAP)
-		cw := (width - GAP * f32(ncols - 1)) / f32(ncols)
-		bottoms := make([]f32, ncols, context.temp_allocator)
-		for &b in bottoms {b = top}
-		spans: [len(COLUMNS)]int
-		if ncols >= len(COLUMNS) {
-			for &s in spans {s = 1}
-			for _ in len(COLUMNS) ..< ncols {
-				best := -1
-				for g, i in COLUMNS {
-					if spans[i] >= len(g.ids) {continue}
-					if best < 0 || len(g.ids) * spans[best] > len(COLUMNS[best].ids) * spans[i] {best = i}
-				}
-				if best < 0 {break}
-				spans[best] += 1
-			}
-		}
-		next := 0
-		for g, gi in COLUMNS {
-			first, span := 0, 1
-			if ncols >= len(COLUMNS) {
-				first, span = next, spans[gi]
-				next += span
-			} else {
-				for b, k in bottoms {if b < bottoms[first] - 1 {first = k}}
-			}
-			cols := bottoms[first:first + span]
-			y := cols[0]
-			for b in cols {y = max(y, b)}
-			x0 := p.x + f32(first) * (cw + GAP)
-			draw_text(fonts.bold, SZ_SMALL, {x0 + 2, y}, col32(C_FAINT), strings.to_upper(g.title, context.temp_allocator))
-			for &b in cols {b = y + HEAD_H}
-			for id in g.ids {
-				k := 0
-				for b, j in cols {if b < cols[k] - 1 {k = j}}
-				im.SetCursorScreenPos({x0 + f32(k) * (cw + GAP), cols[k]})
-				if r := comp_card(id, &setup.comps[id], cw); r != nil {run = r}
-				if s := setup.comps[id].state; s != .Unavailable && !is_done(s) {pulse_ring(needs_attention(s) ? C_ORANGE : C_BLUE)}
-				cols[k] = im.GetItemRectMax().y + GAP
-			}
-		}
-		bottom := top
-		for b in bottoms {bottom = max(bottom, b)}
-		im.SetCursorScreenPos({p.x, bottom - GAP})
-		im.Dummy({width, 0})
+	run: proc()
+	if filter != "" {
+		run = draw_results(p.x, top, width, filter)
+	} else {
+		run = draw_page(setup_page, p.x, top, width)
 	}
 	if run != nil {
 		run()
 		setup_check()
 	}
-	im.Dummy({1, 8})
+	im.Dummy({1, 12})
 	log_content_height()
+	im.EndChild()
 	im.End()
 }
 
@@ -662,6 +1059,6 @@ log_content_height :: proc() {
 	cur := [4]f32{im.GetCursorPosY(), im.GetWindowSize().y, im.GetScrollMaxY(), f32(plat.win.w)}
 	if cur != last {
 		last = cur
-		log.debugf("setup %v: content %.0f, scrolls %.0f (window %dx%d)", setup_tab, cur.x, cur.z, plat.win.w, plat.win.h)
+		log.debugf("setup %v: content %.0f, scrolls %.0f (window %dx%d)", setup_page, cur.x, cur.z, plat.win.w, plat.win.h)
 	}
 }

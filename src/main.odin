@@ -35,10 +35,9 @@ commands:
   daemon   start the background daemon without showing the popup
   quit     stop the running daemon
   setup    install / configure components (program, sway, waybar, udev rule…)
-  setup settings   the setup window on its Settings tab (common config.ini keys);
-                   the default once every component is set up
-  setup components the setup window on its Components tab
-  setup wallpapers the setup window on its Wallpapers tab (dark / light sets)
+  setup PAGE       the setup window on a page: overview, basics, bar, look, lock,
+                   notifications, launcher, time, ssh (or wallpapers: Look's
+                   dark / light sets)
   restart  restart the daemon (new binary, re-read config); keeps graph history
   audio refresh    fix stuck audio: switch the output's card profile and back
   audio restart    restart PipeWire, WirePlumber and pipewire-pulse
@@ -77,7 +76,7 @@ commands:
                    bar { swaybar_command wlperch-bar }
   bar restart      start a fresh bar; it takes over from the running one
   wallpaper        the desktop background (instead of swaybg): crossfades, the
-                   Wallpapers tab's dark / light sets, [wallpapers] rotate_minutes;
+                   dark / light sets (setup's Look page), [wallpapers] rotate_minutes;
                    sway runs it from config.d/wlperch-wallpaper.conf (setup)
   wallpaper restart|next|set <file>  a fresh one takes over; the next picture of
                    the current mode's set; show that picture

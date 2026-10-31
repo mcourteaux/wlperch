@@ -926,7 +926,7 @@ wallpaper_cli :: proc(args: []string) -> int {
 		m := theme_mode_load()
 		pick := wallpaper_for_mode(m)
 		if pick == "" {
-			fmt.eprintfln("wlperch wallpaper: no pictures marked for %s (the setup window's Wallpapers tab)", theme_mode_name(m))
+			fmt.eprintfln("wlperch wallpaper: no pictures marked for %s (the setup window's Look page)", theme_mode_name(m))
 			return 1
 		}
 		fmt.println(pick)

@@ -419,6 +419,7 @@ keysym_to_imgui :: proc(sym: u32) -> im.Key {
 	case xkb.KEY_Super_R:   return .RightSuper
 	case xkb.KEY_a:         return .A
 	case xkb.KEY_c:         return .C
+	case xkb.KEY_f:         return .F
 	case xkb.KEY_v:         return .V
 	case xkb.KEY_x:         return .X
 	case xkb.KEY_z:         return .Z

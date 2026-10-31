@@ -369,7 +369,7 @@ command =
 sway_colors = auto
 
 [wallpapers]
-# A folder of wallpapers (jpg, png). In the setup window's Wallpapers tab,
+# A folder of wallpapers (jpg, png). On the setup window's Look page,
 # mark each one for the dark theme, the light theme or both (kept in
 # wallpapers.tsv next to this file): a theme switch then shows a random one
 # of that mode's set instead of [theme.*] wallpaper.

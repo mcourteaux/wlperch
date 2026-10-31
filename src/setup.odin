@@ -1151,10 +1151,15 @@ run_setup :: proc() {
 	im_init()
 	im.GetIO().ConfigInputTextCursorBlink = false // frames only on input
 	setup_check()
-	// "wlperch setup settings", or nothing left to install: open on Settings.
-	if len(os.args) > 2 && os.args[2] == "settings" || setup_all_done() {setup_tab = .Settings}
-	if len(os.args) > 2 && os.args[2] == "components" {setup_tab = .Components}
-	if len(os.args) > 2 && os.args[2] == "wallpapers" {setup_tab = .Wallpapers}
+	update_state_load()
+	// "wlperch setup lock" etc. (the old tab names too); else the overview.
+	if len(os.args) > 2 {
+		if page, wallpapers, ok := setup_page_parse(os.args[2]); ok {
+			setup_page, setup_scroll_wallpapers = page, wallpapers
+		} else {
+			log.warnf("setup: no page %q; pages: overview basics bar look lock notifications launcher time ssh", os.args[2])
+		}
+	}
 	win_w, win_h := setup_window_size()
 	if !platform_open_window("wlperch setup", "wlperch-setup", win_w, win_h, SETUP_MIN_W, SETUP_MIN_H) {
 		log.error("couldn't open the setup window")

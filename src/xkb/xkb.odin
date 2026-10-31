@@ -163,6 +163,7 @@ KEY_Super_L :: 0xffeb
 KEY_Super_R :: 0xffec
 KEY_a :: 0x0061
 KEY_c :: 0x0063
+KEY_f :: 0x0066
 KEY_q :: 0x0071
 KEY_v :: 0x0076
 KEY_x :: 0x0078

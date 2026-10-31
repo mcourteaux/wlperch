@@ -214,7 +214,7 @@ free_texture :: proc(t: ^Thumb) {
 // From the setup loop's periodic check: the shown folder changed on disk
 // (a redraw rescans it).
 wallpapers_poll :: proc() -> bool {
-	return setup_tab == .Wallpapers && wp.loaded && dir_stamp(wp.dir) != wp.dir_mtime
+	return setup_page == .Look && wp.loaded && dir_stamp(wp.dir) != wp.dir_mtime
 }
 
 // Leaving the tab: no textures or pixels stay behind.
@@ -403,7 +403,7 @@ mode_chip :: proc(id, icon, text: string, on: bool, accent: u32) -> bool {
 	return clicked
 }
 
-// The Wallpapers tab, from (x, y) over `width`.
+// The Look page's wallpapers, from (x, y) over `width`.
 draw_wallpapers :: proc(x, y, width: f32) {
 	wp.frame += 1
 	wp.drawn = true
@@ -493,11 +493,10 @@ draw_wallpapers :: proc(x, y, width: f32) {
 	}
 	// Rotation (the wallpaper process does it; only with wlperch's wallpaper).
 	im.Dummy({1, 4})
-	settings_row("wallpapers", "rotate_minutes", inner, C_BLUE)
 	if config.wallpapers_rotate_minutes > 0 && !wallpaper_conf_installed() && wallpaper_running() == 0 {
-		hint(fmt.tprintf("%s Rotating needs wlperch's wallpaper instead of swaybg: the Wallpaper card on the Components tab.", ICON_INFO), inner, C_ORANGE)
+		hint(fmt.tprintf("%s Rotating (Next wallpaper every, above) needs wlperch's wallpaper instead of swaybg: the Wallpaper card at the top of this page.", ICON_INFO), inner, C_ORANGE)
 	}
-	hint("Switching to dark or light shows a random wallpaper of that set, never the one already showing. With an empty set, the theme's own Wallpaper setting (Settings, Dark / Light theme) is used. Click a picture to show it now.", inner, C_FAINT)
+	hint("Switching to dark or light shows a random wallpaper of that set, never the one already showing. With an empty set, the theme's own Wallpaper setting (the Dark / Light theme cards above) is used. Click a picture to show it now.", inner, C_FAINT)
 	card_end()
 
 	// ---- The grid ----------------------------------------------------------------------

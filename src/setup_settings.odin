@@ -1,5 +1,6 @@
-// The setup window's Settings tab: the config.ini keys people commonly change
-// (SETTINGS in config_edit.odin), grouped into cards, each with the right
+// The setup window's settings: the config.ini keys people commonly change
+// (SETTINGS in config_edit.odin), grouped into cards on the pages they belong
+// to (setup_pages.odin), each with the right
 // control, its help line and a reset. Edits are written with config_set_value
 // (comments and layout kept), debounced, and applied: the daemon restarts
 // (re-executes, keeping its state), the bar re-reads the file by itself, the
@@ -45,27 +46,31 @@ ss: struct {
 	row_h:         [len(SETTINGS)]f32, // drawn height of each row, last frame
 	loaded:        bool,
 	stamp:         [2]i64, // mtime, size of config.ini when last read
-	search:        [128]u8,
 	dragging:      int,    // row whose slider is held (-1)
 	restart_due:   time.Tick,
 	restart:       bool,
 	restart_rows:  [dynamic]int,
 	theme_due:     time.Tick,
 	theme:         bool,
-	// The card layout (order, and each group's starting column) is planned
-	// from measured row heights, then kept while editing: a row growing a
-	// "reset" link or a note mustn't make the cards jump. Re-planned when the
-	// column count, the window height or the filter changes.
-	plan_order:    [len(SETTINGS_GROUPS)]int,
-	plan_col:      [len(SETTINGS_GROUPS)]int,
-	plan_ncols:    int,
-	plan_limit:    int, // window height the plan was made for
-	plan_search:   [128]u8,
-	plan_frames:   int, // frames since the key changed; heights settle first
+	// Per page, the card layout (order, and each group's starting column) is
+	// planned from measured row heights, then kept while editing: a row
+	// growing a "reset" link or a note mustn't make the cards jump.
+	// Re-planned when the column count, the window height or the search changes.
+	plans:         [Setup_Page]Plan,
 } = {dragging = -1}
 
-Setup_Tab :: enum {Components, Settings, Wallpapers}
-setup_tab: Setup_Tab
+@(private = "file")
+Plan :: struct {
+	order:  [len(SETTINGS_GROUPS)]int, // indices into the page's groups
+	col:    [len(SETTINGS_GROUPS)]int,
+	ncols:  int,
+	limit:  int, // window height the plan was made for
+	search: string, // heap
+	frames: int, // frames since the key changed; heights settle first
+}
+
+// Under each page's settings: where they go.
+SETTINGS_NOTE :: "Saved to ~/.config/wlperch/config.ini as you change them (your comments stay). Reset removes the key, so the default applies."
 
 @(private = "file")
 set_str :: proc(dst: ^string, s: string) {
@@ -364,6 +369,13 @@ group_when :: proc(g: string) -> string {
 	return "applies right away"
 }
 
+// How many of the page's settings match the search ("" = all).
+settings_match_count :: proc(page: Setup_Page, filter: string) -> int {
+	n := 0
+	for g in SETUP_PAGES[page].groups {for s in SETTINGS {if s.group == g && matches(s, filter) {n += 1}}}
+	return n
+}
+
 @(private = "file")
 matches :: proc(s: Setting, filter: string) -> bool {
 	if filter == "" {return true}
@@ -609,64 +621,32 @@ expand_home_tmp :: proc(path: string) -> string {
 	return path
 }
 
-// The Settings tab, from (x, y) over `width`.
-draw_settings :: proc(x, y, width: f32) {
+// A page's settings groups as cards, from (x, y) over `width`; only the rows
+// matching `filter` (lowercase, "" = all). Returns false when none matched.
+draw_settings :: proc(x, y, width: f32, page: Setup_Page, filter: string) -> bool {
 	if !ss.loaded {settings_load()}
-
-	// ---- Filter box and where it goes -------------------------------------------
-	SEARCH_W :: 380
-	im.SetCursorScreenPos({x, y})
-	im.PushFontFloat(fonts.ui, SZ_BODY + 1)
-	im.PushStyleVarImVec2(.FramePadding, {36, 8})
-	im.PushStyleVar(.FrameRounding, 10)
-	im.PushStyleVar(.FrameBorderSize, 1)
-	im.PushStyleColorImVec4(.FrameBg, rgba(C_CARD))
-	im.PushStyleColorImVec4(.FrameBgHovered, rgba(C_CARD))
-	im.PushStyleColorImVec4(.FrameBgActive, rgba(C_CARD))
-	im.PushStyleColorImVec4(.Border, rgba(C_BORDER))
-	im.SetNextItemWidth(SEARCH_W)
-	im.InputTextWithHint("##settings-filter", "Filter settings…", cstring(&ss.search[0]), len(ss.search))
-	im.PopStyleColor(4)
-	im.PopStyleVar(3)
-	im.PopFont()
-	draw_text(fonts.ui, 17, {x + 12, y + 7}, col32(C_MUTED), ICON_MAGNIFY)
-	filter := strings.to_lower(strings.trim_space(buf_str(ss.search[:])), context.temp_allocator)
-	note := "Saved to ~/.config/wlperch/config.ini as you change them (your comments stay). Reset removes the key, so the default applies."
-	top := y + 50
-	if x + SEARCH_W + 18 + measure(fonts.ui, SZ_SMALL, note).x <= x + width {
-		draw_text(fonts.ui, SZ_SMALL, {x + SEARCH_W + 18, y + 11}, col32(C_MUTED), note)
-	} else {
-		// Narrow window: the note goes under the filter box, wrapped.
-		im.SetCursorScreenPos({x + 2, y + 46})
-		im.PushFontFloat(fonts.ui, SZ_SMALL)
-		im.PushStyleColorImVec4(.Text, rgba(C_MUTED))
-		im.PushTextWrapPos(im.GetCursorPosX() + width - 4)
-		b, e := str_range(note)
-		im.TextUnformatted(b, e)
-		im.PopTextWrapPos()
-		im.PopStyleColor()
-		im.PopFont()
-		top = im.GetItemRectMax().y + 12
-	}
+	groups := SETUP_PAGES[page].groups
+	if len(groups) == 0 {return false}
+	top := y
 
 	// ---- Group cards, each into the shortest column ------------------------------
 	// As many columns as fit: a wide window shows everything without scrolling.
 	GAP :: 14
-	ncols := min(fit_columns(width, SETTINGS_MIN_COL, GAP), len(SETTINGS_GROUPS))
+	ncols := min(fit_columns(width, SETTINGS_MIN_COL, GAP), len(groups))
 	cw := (width - GAP * f32(ncols - 1)) / f32(ncols)
 	bottoms := make([]f32, ncols, context.temp_allocator)
 	for &b in bottoms {b = top}
-	// A group that would run past the window's bottom continues in another
-	// column with room, so a wide window needs no scrolling even for the tall
-	// groups. Row heights come from the previous frame.
+	// The window's bottom: when the columns would run past it, the tallest
+	// groups go first (row heights come from the previous frame).
 	limit := im.GetWindowPos().y + im.GetWindowSize().y - im.GetStyle().WindowPadding.y - 8 - 12 - im.GetScrollY()
 	CARD_TAIL :: 20 // below the last row: padding, spacing
 	CARD_HEAD :: 60 // above the first row: padding, title
 	// Groups go in their usual order, unless that leaves a column too tall:
 	// then the tallest first, which balances the columns best.
+	ng := len(groups)
 	order: [len(SETTINGS_GROUPS)]int
 	est: [len(SETTINGS_GROUPS)]f32
-	for g, gi in SETTINGS_GROUPS {
+	for g, gi in groups {
 		order[gi] = gi
 		n := 0
 		for s, i in SETTINGS {
@@ -689,64 +669,44 @@ draw_settings :: proc(x, y, width: f32) {
 		for c in cols[:ncols] {m = max(m, c)}
 		return m
 	}
+	plan := &ss.plans[page]
 	win_h := int(im.GetWindowSize().y) // not limit: that moves with scrolling
-	if ncols != ss.plan_ncols || win_h != ss.plan_limit || ss.search != ss.plan_search {
-		ss.plan_ncols, ss.plan_limit, ss.plan_search, ss.plan_frames = ncols, win_h, ss.search, 0
+	if ncols != plan.ncols || win_h != plan.limit || filter != plan.search {
+		delete(plan.search)
+		plan.ncols, plan.limit, plan.search, plan.frames = ncols, win_h, strings.clone(filter), 0
 	}
-	if ss.plan_frames < 3 {
-		ss.plan_frames += 1
+	if plan.frames < 3 {
+		plan.frames += 1
 		col_of: [len(SETTINGS_GROUPS)]int
-		if top + simulate(order[:], est[:], ncols, &col_of) > limit {
+		if top + simulate(order[:ng], est[:], ncols, &col_of) > limit {
 			// Stable insertion sort, tallest first.
-			for i in 1 ..< len(order) {
+			for i in 1 ..< ng {
 				for j := i; j > 0 && est[order[j]] > est[order[j - 1]]; j -= 1 {
 					order[j], order[j - 1] = order[j - 1], order[j]
 				}
 			}
-			simulate(order[:], est[:], ncols, &col_of)
+			simulate(order[:ng], est[:], ncols, &col_of)
 		}
-		ss.plan_order, ss.plan_col = order, col_of
+		plan.order, plan.col = order, col_of
 		request_redraw(1) // until the heights have settled
 	}
-	order = ss.plan_order
+	order = plan.order
 	any := false
-	for gi in order {
-		g := SETTINGS_GROUPS[gi]
+	for gi in order[:ng] {
+		g := groups[gi]
 		rows := make([dynamic]int, context.temp_allocator)
 		for s, i in SETTINGS {
 			if s.group == g && matches(s, filter) {append(&rows, i)}
 		}
 		if len(rows) == 0 {continue}
 		any = true
-		col := clamp(ss.plan_col[gi], 0, ncols - 1)
+		col := clamp(plan.col[gi], 0, ncols - 1)
 		im.SetCursorScreenPos({x + f32(col) * (cw + GAP), bottoms[col]})
 		look := group_look(g)
-		part := 0
 		card_begin(fmt.tprintf("settings:%s:0", g), cw)
 		inner := im.GetContentRegionAvail().x
 		card_title(look.icon, g, look.accent, group_when(g))
 		for i, k in rows {
-			if k > 0 && im.GetCursorScreenPos().y + 4 + ss.row_h[i] + CARD_TAIL > limit {
-				to := -1
-				for b, c in bottoms {
-					if c == col || b + CARD_HEAD + ss.row_h[i] + CARD_TAIL > limit {continue}
-					if to < 0 || b < bottoms[to] {to = c}
-				}
-				if to >= 0 {
-					im.Dummy({inner, 2})
-					card_end()
-					bottoms[col] = im.GetItemRectMax().y + GAP
-					col = to
-					part += 1
-					im.SetCursorScreenPos({x + f32(col) * (cw + GAP), bottoms[col]})
-					card_begin(fmt.tprintf("settings:%s:%d", g, part), cw)
-					card_title(look.icon, g, look.accent, "continued")
-					y0 := im.GetCursorScreenPos().y
-					draw_row(i, inner, look.accent)
-					ss.row_h[i] = im.GetCursorScreenPos().y - y0
-					continue
-				}
-			}
 			if k > 0 {
 				lp := im.GetCursorScreenPos()
 				im.DrawList_AddLine(dl(), {lp.x, lp.y + 1}, {lp.x + inner, lp.y + 1}, col32(C_BORDER), 1)
@@ -762,16 +722,14 @@ draw_settings :: proc(x, y, width: f32) {
 	}
 	bottom := top
 	for b in bottoms {bottom = max(bottom, b)}
-	if !any {
-		draw_text(fonts.ui, SZ_BODY, {x + 4, top + 4}, col32(C_MUTED), "No setting matches. The rest of config.ini (panels, sensors, display presets, projects) is edited by hand: Open on the Settings file card.")
-		bottom = top + 30 + GAP
-	}
+	if !any {bottom = top + GAP}
 	im.SetCursorScreenPos({x, bottom - GAP}) // no gap after the last card
 	im.Dummy({width, 0})
+	return any
 }
 
-// One setting's row on another tab (the Wallpapers tab's rotation), with the
-// same editing, saving and notes as on the Settings tab.
+// One setting's row outside its group's card, with the same editing,
+// saving and notes.
 settings_row :: proc(section, key: string, inner: f32, accent: u32) {
 	if !ss.loaded {settings_load()}
 	for s, i in SETTINGS {

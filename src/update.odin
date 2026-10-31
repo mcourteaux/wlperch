@@ -247,6 +247,9 @@ install :: proc(version, tarball_url, sums_url: string) -> (string, bool) {
 
 // ---- Daemon side ------------------------------------------------------------------------
 
+// The last check's time and notified version, for the setup window.
+update_state_load :: proc() {state_load()}
+
 // A worker that checks once a day (and when asked), sleeping in between.
 update_start :: proc() {
 	state_load()

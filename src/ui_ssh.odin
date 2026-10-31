@@ -20,7 +20,7 @@ Ssh_Click :: struct {
 draw_ssh :: proc(w: f32) {
 	ck := draw_ssh_locked(w)
 	if ck.setup {
-		setup_launch("components")
+		setup_launch("ssh")
 		hide_requested = true
 	}
 	if !ck.set {return}
