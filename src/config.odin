@@ -98,8 +98,6 @@ Config :: struct {
 
 	// [theme], [theme.dark], [theme.light]
 	theme_links:        [dynamic]string,
-	theme_nvim_file:    string,
-	theme_nvim_background: bool,
 	theme_targets:      [Theme_Mode]Theme_Targets,
 	wallpapers_dir:     string, // [wallpapers] directory, "~" expanded, no trailing '/'
 	wallpapers_rotate_minutes: int, // [wallpapers] rotate_minutes (0: off)
@@ -324,15 +322,10 @@ dim_strength = 40
 # waybar-dark.css becomes waybar-light.css when that file exists. Waybar
 # reloads when one of its files changed.
 links = ~/.config/waybar/colors.css, ~/.config/wofi/colors.css
-# Written for nvim ("set background" + "colorscheme") when nvim_colorscheme is
-# set below; have nvim (or Vim) source it and watch it, to switch running
-# editors. Empty = none: setup's "Neovim theme" plugin reads the mode and
-# these keys itself, and empties this when installed (Remove restores it).
-nvim_file = ~/.vimrc.color
-# With no nvim_colorscheme for the mode, still flip nvim's 'background' (in
-# an existing nvim_file, keeping its colorscheme line, and through the
-# plugin): for colorschemes with a dark and a light variant (gruvbox,
-# tokyonight, catppuccin, …).
+# Neovim follows the mode through setup's "Neovim theme" plugin, which reads
+# the mode and the nvim keys here. With no nvim_colorscheme for the mode, it
+# still flips nvim's 'background': for colorschemes with a dark and a light
+# variant (gruvbox, tokyonight, catppuccin, …).
 nvim_background = true
 
 # Per mode. Empty = leave alone. gtk_theme "auto" switches Adwaita <->
@@ -761,8 +754,6 @@ config_load_theme :: proc(m, defaults: ini.Map) {
 	c := &config
 	clear(&c.theme_links)
 	for l in split_list(get(m, defaults, "theme", "links"), ",") {append(&c.theme_links, expand_home(l))}
-	c.theme_nvim_file = expand_home(get(m, defaults, "theme", "nvim_file"))
-	c.theme_nvim_background = parse_bool(get(m, defaults, "theme", "nvim_background"), true)
 	c.wallpapers_dir = strings.trim_right(expand_home(get(m, defaults, "wallpapers", "directory")), "/")
 	c.wallpapers_rotate_minutes = parse_int_lim(get(m, defaults, "wallpapers", "rotate_minutes"), LIM_WALLPAPER_ROTATE)
 	for mode in Theme_Mode {

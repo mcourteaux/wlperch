@@ -2,7 +2,6 @@
 // colour file in a user's nvim config, and the card's states.
 package main
 
-import "core:encoding/ini"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -88,7 +87,6 @@ nvim_test_paths :: proc(root: string) -> Nvim_Paths {
 		plugin      = fmt.tprintf("%s/.local/share/nvim/site/plugin/%s", home, NVIM_PLUGIN_NAME),
 		mode_file   = fmt.tprintf("%s/.local/share/wlperch/theme", home),
 		config_file = fmt.tprintf("%s/.config/wlperch/config.ini", home),
-		backup      = fmt.tprintf("%s/.local/share/wlperch/nvim-backup/nvim_file", home),
 		config_dir  = fmt.tprintf("%s/.config/nvim", home),
 		home        = home,
 	}
@@ -117,21 +115,19 @@ test_nvim_card_states :: proc(t: ^testing.T) {
 	testing.expect_value(t, check(ps, have_nvim = false).state, Comp_State.Unavailable)
 	c := check(ps)
 	testing.expect_value(t, c.state, Comp_State.Missing)
-	testing.expect(t, has(c, "empties [theme] nvim_file"))
-	// The user's config sources the colour file.
+	testing.expect(t, !has(c, "nvim_file"))
+	// The user's config still sources the old colour file: a hint, nothing more.
 	init_lua := "\nvim.cmd.source(vim.env.HOME .. '/.vimrc.color')\n"
 	_ = os.write_entire_file(fmt.tprintf("%s/init.lua", ps.config_dir), init_lua)
 	c = check(ps)
-	testing.expect_value(t, c.state, Comp_State.Custom)
-	testing.expect(t, len(c.detail) > 0 && strings.contains(c.detail[0], "(init.lua:2)"))
-	testing.expect(t, has(c, "Install replaces that"))
+	testing.expect_value(t, c.state, Comp_State.Missing)
+	testing.expect(t, has(c, "no longer writes") && has(c, "(init.lua:2)"))
 
 	// An install from before (sourcing the colour file): Outdated.
 	testing.expect(t, os.make_directory_all(ps.plugin[:strings.last_index_byte(ps.plugin, '/')]) == nil)
 	_ = os.write_entire_file(ps.plugin, NVIM_PLUGIN_MARK + "; remove there.\nlocal path = [==[/x/.vimrc.color]==]\n")
 	c = check(ps)
 	testing.expect_value(t, c.state, Comp_State.Outdated)
-	testing.expect(t, has(c, "Update also empties"))
 
 	ok, _ := nvim_install_at(ps)
 	testing.expect(t, ok)
@@ -165,8 +161,7 @@ test_nvim_card_states :: proc(t: ^testing.T) {
 	testing.expect_value(t, string(data), "-- mine\n")
 }
 
-// Install empties [theme] nvim_file (comments kept) and Remove puts back what
-// was there: the value, or no key at all.
+// Install and Remove leave config.ini alone, an old nvim_file key included.
 @(test)
 test_nvim_install_config :: proc(t: ^testing.T) {
 	root := fmt.tprintf("/tmp/wlperch-test/nvim-config-%d", posix.getpid())
@@ -174,59 +169,14 @@ test_nvim_install_config :: proc(t: ^testing.T) {
 	defer os.remove_all(root)
 	ps := nvim_test_paths(root)
 	testing.expect(t, os.make_directory_all(fmt.tprintf("%s/.config/wlperch", ps.home)) == nil)
-	read :: proc(path: string) -> string {
-		data, _ := os.read_entire_file(path, context.temp_allocator)
-		return string(data)
-	}
-
-	// Set explicitly.
 	orig := "[theme]\n# where nvim looks\nnvim_file = ~/colours.vim\nnvim_background = false\n"
 	_ = os.write_entire_file(ps.config_file, orig)
-	ok, msg := nvim_install_at(ps)
+	ok, _ := nvim_install_at(ps)
 	testing.expect(t, ok)
-	testing.expect(t, strings.contains(msg, "emptied"))
-	testing.expect_value(t, read(ps.config_file), "[theme]\n# where nvim looks\nnvim_file = \nnvim_background = false\n")
-	_, _, path := nvim_file_setting(ps.config_file, ps.home)
-	testing.expect_value(t, path, "")
-	// Update (installing again) keeps the first backup.
-	ok, _ = nvim_install_at(ps)
-	testing.expect_value(t, read(ps.backup), "value\t~/colours.vim\n")
+	data, _ := os.read_entire_file(ps.config_file, context.temp_allocator)
+	testing.expect_value(t, string(data), orig)
 	ok, _ = nvim_remove_at(ps)
 	testing.expect(t, ok)
-	testing.expect_value(t, read(ps.config_file), orig)
-	testing.expect(t, !os.exists(ps.backup))
-
-	// Not set: the default applied; Remove takes the key out again.
-	orig = "[theme.dark]\nnvim_colorscheme = x\n"
-	_ = os.write_entire_file(ps.config_file, orig)
-	_, set, path2 := nvim_file_setting(ps.config_file, ps.home)
-	testing.expect(t, !set)
-	testing.expect_value(t, path2, fmt.tprintf("%s/.vimrc.color", ps.home))
-	ok, _ = nvim_install_at(ps)
-	_, _, path2 = nvim_file_setting(ps.config_file, ps.home)
-	testing.expect_value(t, path2, "")
-	testing.expect_value(t, read(ps.backup), "unset\n")
-	ok, _ = nvim_remove_at(ps)
-	m, _, _ := ini.load_map_from_path(ps.config_file, context.temp_allocator)
-	if sec, has := m["theme"]; has {
-		_, has_key := sec["nvim_file"]
-		testing.expect(t, !has_key)
-	}
-	_, _, path2 = nvim_file_setting(ps.config_file, ps.home)
-	testing.expect_value(t, path2, fmt.tprintf("%s/.vimrc.color", ps.home))
-
-	// Changed again by hand while installed: Remove leaves the user's value.
-	ok, _ = nvim_install_at(ps)
-	_ = os.write_entire_file(ps.config_file, "[theme]\nnvim_file = ~/mine.vim\n")
-	ok, _ = nvim_remove_at(ps)
-	testing.expect_value(t, read(ps.config_file), "[theme]\nnvim_file = ~/mine.vim\n")
-	testing.expect(t, !os.exists(ps.backup))
-
-	// Vim reads the colour file: nvim_file stays.
-	_ = os.write_entire_file(fmt.tprintf("%s/.vimrc", ps.home), "\" colours\nsource ~/mine.vim\n")
-	testing.expect_value(t, vim_colour_ref(fmt.tprintf("%s/mine.vim", ps.home), ps.home), "~/.vimrc:2")
-	ok, msg = nvim_install_at(ps)
-	testing.expect(t, ok && strings.contains(msg, "Vim reads it"))
-	testing.expect_value(t, read(ps.config_file), "[theme]\nnvim_file = ~/mine.vim\n")
-	testing.expect(t, !os.exists(ps.backup))
+	data, _ = os.read_entire_file(ps.config_file, context.temp_allocator)
+	testing.expect_value(t, string(data), orig)
 }

@@ -317,8 +317,7 @@ SETTINGS_GROUPS := [?]string{"Panel", "Clock and weather", "Bar", "Memory", "Not
 @(private = "file") CH_LOCK_BG :: []Setting_Choice{{"", "Auto"}, {"color", "Colour"}, {"image", "Picture"}, {"blur", "Blurred screen"}}
 
 THEME_HELP_SWAY :: `sway's titlebars and borders (client.* colours) in wlperch's palette for this mode, set over IPC and again after "swaymsg reload". One class can be changed with sway_client_<class> = border background text [indicator child_border] in config.ini.`
-NVIM_HELP_SCHEME :: `nvim colorscheme for this mode, with 'background' set to match. Running nvims follow with Setup's "Neovim theme" plugin, or by sourcing [theme] nvim_file.`
-NVIM_HELP_FILE :: `A vimscript file wlperch theme writes ("set background" + "colorscheme") for an nvim or Vim config to source and watch. Empty = none: Setup's "Neovim theme" plugin reads the mode and these settings itself, and empties this when installed (Remove restores it).`
+NVIM_HELP_SCHEME :: `nvim colorscheme for this mode, with 'background' set to match. Running nvims follow through Setup's "Neovim theme" plugin.`
 THEME_HELP_GTK :: `GTK theme for this mode. "auto" switches Adwaita <-> Adwaita-dark while one of those is in use; empty = leave alone.`
 
 @(rodata)
@@ -398,7 +397,6 @@ SETTINGS := [?]Setting {
 	{group = "Wallpapers", section = "wallpapers", key = "rotate_minutes", label = "Next wallpaper every", kind = .Int, apply = .Wallpaper, ilim = LIM_WALLPAPER_ROTATE, step = 5, unit = "min", help = "wlperch's wallpaper (setup's Wallpaper card) crossfades to another picture of the current mode's set (the wallpapers below) this often. 0 = only when the theme switches or you pick one."},
 	{group = "Theme switcher", section = "theme", key = "links", label = "Dark / light file twins", kind = .Text, apply = .Theme, hint = "none", help = "Comma-separated symlinks to point at a -dark or -light twin on each switch: colors.css -> waybar-dark.css becomes waybar-light.css when that file exists. Waybar reloads when one of its files changed."},
 	{group = "Theme switcher", section = "theme", key = "nvim_background", label = "nvim: flip background", kind = .Bool, apply = .Theme, help = "With no nvim colorscheme for a mode, still switch nvim's 'background', for colorschemes with a dark and a light variant."},
-	{group = "Theme switcher", section = "theme", key = "nvim_file", label = "nvim colour file", kind = .Path, apply = .Theme, hint = "none", help = NVIM_HELP_FILE},
 	{group = "Dark theme", section = "theme.dark", key = "gtk_theme", label = "GTK theme", kind = .Text, apply = .Theme, hint = "leave alone", help = THEME_HELP_GTK},
 	{group = "Dark theme", section = "theme.dark", key = "icon_theme", label = "Icon theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "Icon theme name (gsettings icon-theme)."},
 	{group = "Dark theme", section = "theme.dark", key = "kitty_theme", label = "kitty theme", kind = .Text, apply = .Theme, hint = "leave alone", help = "A theme name from \"kitty +kitten themes\" (all kitty windows)."},

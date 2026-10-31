@@ -4,7 +4,7 @@
 -- of wlperch's config.ini for it (read anew each time, so edits need no
 -- reinstall): 'background', and `colorscheme` when [theme.<mode>]
 -- nvim_colorscheme is set. Without one, 'background' only flips while
--- [theme] nvim_background is true (as wlperch did in its nvim colour file).
+-- [theme] nvim_background is true.
 if vim.g.loaded_wlperch_theme then return end
 vim.g.loaded_wlperch_theme = true
 
@@ -113,7 +113,7 @@ end
 
 -- At VimEnter, after init.lua and everything it loads: lazy.nvim sources
 -- this file from within lazy.setup(), and a config may still set its own
--- colorscheme (or source an old colour file) after that.
+-- colorscheme after that.
 if vim.v.vim_did_enter == 1 then
   apply(true)
 else

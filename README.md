@@ -793,12 +793,9 @@ running, the CLI switches the desktop itself and prints what it changed.
 - **Per mode** (`[theme.dark]`, `[theme.light]`; empty = leave alone):
   `wallpaper` (sway's output background), `kitty_theme` (every kitty window,
   through `kitty +kitten themes`), `nvim_colorscheme` (the colorscheme, with
-  `background` set to match; running nvims follow through setup's **Neovim
-  theme** plugin, below, or through `[theme] nvim_file`, a vimscript file
-  wlperch writes for your config to source and watch, `~/.vimrc.color` by
-  default, empty = none; leave `nvim_colorscheme` empty for a colorscheme with
-  both variants, and `[theme] nvim_background = true` just flips
-  `background`), `icon_theme`, `kvantum_theme` (with
+  `background` set to match; nvim follows through setup's **Neovim theme**
+  plugin, below; leave `nvim_colorscheme` empty for a colorscheme with both
+  variants, and `[theme] nvim_background = true` just flips `background`), `icon_theme`, `kvantum_theme` (with
   `kvantummanager`), `vscode_theme` (`workbench.colorTheme` in the settings of
   Code, Code - OSS or VSCodium, when they set one) and `command` (anything
   else, through `sh -c`).
@@ -844,13 +841,10 @@ that are already running:
   (anew each time, so edits apply at the next switch) and sets `background`
   and `colorscheme`. A colorscheme that fails to load gives one warning.
   Running nvims pick up an Install or Update when restarted.
-- **No colour file:** Install empties `[theme] nvim_file`, so wlperch stops
-  writing `~/.vimrc.color` (not when `~/.vimrc` or `~/.vim/` reads it). The
-  file itself stays: if your config still sources it, that's harmless, as the
-  plugin applies the current mode at `VimEnter`, after `init.lua` (and after
-  lazy.nvim, which sources it from `lazy.setup()`); remove those
-  lines and the file when you like. **Remove** deletes the plugin and puts
-  `nvim_file` back.
+- **The only way:** wlperch writes no vimscript colour file for nvim or Vim
+  (older versions wrote `~/.vimrc.color`, `[theme] nvim_file`, which is now
+  ignored). If your config still sources that file, the card points at the
+  line; remove it and the file. **Remove** deletes the plugin.
 
 ### Wallpaper
 
