@@ -68,6 +68,11 @@ commands:
                    color-scheme, waybar, kitty, nvim, wallpaper… see [theme])
   calc <expression>  evaluate and print it as decimal, hex, octal, binary and
                    IEEE-754 (hex float, f64/f32 bits); "toggle calc" opens the popup
+  idle [status]    who locks on idle (wlperch or swayidle), after how long, and
+                   what keeps the session awake now
+  idle hold <name> [--pid PID]  keep the session awake (no idle lock, no
+                   monitors-off) until released, or until process PID exits
+  idle release <name>  end that hold
   bar              the status bar (instead of waybar); run it from sway:
                    bar { swaybar_command wlperch-bar }
   bar restart      start a fresh bar; it takes over from the running one
@@ -340,6 +345,8 @@ handle_command :: proc(line: string) -> string {
 		return theme_command(f[1:])
 	case "ssh":
 		return ssh_command(f[1:])
+	case "idle":
+		return idle_command(f[1:])
 	case "daemon", "ping":
 	case:
 		return "unknown command\n"
@@ -429,6 +436,8 @@ main :: proc() {
 		os.exit(theme_cli(os.args[2:]))
 	case "ssh":
 		os.exit(ssh_cli(os.args[2:]))
+	case "idle":
+		os.exit(idle_cli(os.args[2:]))
 	case "askpass":
 		os.exit(askpass_main(os.args[2:]))
 	case "sensors":
@@ -478,6 +487,7 @@ main :: proc() {
 			log.error("cannot create control socket", ipc_socket_path())
 			os.exit(1)
 		}
+		daemon_env_from_sway() // started by systemd (service.odin)
 	}
 	defer {
 		posix.close(app.ipc_fd)
@@ -513,6 +523,8 @@ main :: proc() {
 	notifications_start()
 	countdown_init()
 	screen_off_init()
+	idle_hold_init()
+	logind_init()
 	log.debugf("services_start took %v, rss %d kB", time.tick_since(t0), rss_kb())
 
 	if resume_show {
@@ -531,6 +543,7 @@ main :: proc() {
 	perf_save()
 	tracker_shutdown()
 	notifications_shutdown()
+	logind_shutdown()
 	placeholders_destroy_all()
 	hide_popup()
 	if plat.gl_ready {imgl.Shutdown()}
@@ -691,17 +704,27 @@ loop_iteration :: proc() {
 		ms := int(time.duration_milliseconds(sc)) + 1
 		timeout = timeout < 0 ? ms : min(timeout, ms)
 	}
+	if ht := idle_hold_timeout(); ht >= 0 {
+		ms := int(time.duration_milliseconds(ht)) + 1
+		timeout = timeout < 0 ? ms : min(timeout, ms)
+	}
+	if lt := logind_timeout(); lt >= 0 {
+		ms := int(time.duration_milliseconds(lt)) + 1
+		timeout = timeout < 0 ? ms : min(timeout, ms)
+	}
 	if st := ssh_timeout(); st >= 0 {
 		ms := int(time.duration_milliseconds(st)) + 1
 		timeout = timeout < 0 ? ms : min(timeout, ms)
 	}
 
 	bus_fd, bus_events := notifications_fd()
-	pfds := [4]posix.pollfd {
+	sys_fd, sys_events := logind_fd()
+	pfds := [5]posix.pollfd {
 		{fd = platform_fd(), events = {.IN}},
 		{fd = app.wake_r, events = {.IN}},
 		{fd = app.ipc_fd, events = {.IN}},
 		{fd = posix.FD(bus_fd), events = transmute(posix.Poll_Event)bus_events},
+		{fd = sys_fd, events = sys_events},
 	}
 	n := posix.poll(&pfds[0], len(pfds), i32(timeout))
 	if n < 0 {
@@ -744,6 +767,8 @@ loop_iteration :: proc() {
 	countdown_tick()
 	screen_off_tick()
 	game_hold_tick()
+	idle_hold_tick()
+	logind_tick()
 	ssh_tick()
 	update_tick()
 

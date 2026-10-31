@@ -154,7 +154,8 @@ SWAY_BANNER :: `# ==============================================================
 sway_file_text :: proc(keys: []Sway_Key) -> string {
 	changed := false
 	for &k in keys {if k.on != k.def_on || sway_key_text(&k) != k.def_key {changed = true}}
-	if !changed {return strings.concatenate({SWAY_BANNER, SWAY_FILE}, context.temp_allocator)}
+	// systemd may start the daemon instead (service.odin).
+	if !changed {return sway_file_daemon_line(strings.concatenate({SWAY_BANNER, SWAY_FILE}, context.temp_allocator), daemon_unit_enabled())}
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, SWAY_BANNER)
 	strings.write_string(&b, "# Key bindings as chosen in wlperch setup.\n")
@@ -182,7 +183,7 @@ sway_file_text :: proc(keys: []Sway_Key) -> string {
 			strings.write_byte(&b, '\n')
 		}
 	}
-	return strings.to_string(b)
+	return sway_file_daemon_line(strings.to_string(b), daemon_unit_enabled())
 }
 
 // Check the draft against the user's sway config with sway -C: a temporary

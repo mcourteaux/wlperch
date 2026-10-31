@@ -587,10 +587,10 @@ keyboard or the pointer.
   active (a playing video), so the countdown reaches 0 as the screen locks.
   If the daemon isn't running, the screen still locks, without the
   countdown. **Setup → Lock screen** shows what it found.
-- **Without an idle lock in swayidle** (only `before-sleep`, say), set
-  `[lock] idle_lock_seconds` to make wlperch lock by itself after that many
-  idle seconds, with the countdown before it. This needs the daemon
-  running. If swayidle would lock earlier, its lock still wins.
+- **wlperch instead of swayidle:** with `[lock] idle_lock_seconds` set,
+  wlperch locks by itself after that many idle seconds, with the countdown
+  before it (see below). If a swayidle still runs and would lock earlier,
+  its lock wins.
 - **Not shown** while the screen is locked, and a lock that comes another
   way (the lock key, `before-sleep`) ends it. `wlperch countdown-preview
   [seconds]` shows it without locking.
@@ -598,6 +598,9 @@ keyboard or the pointer.
 **Monitors off after a long idle.** After `[lock] screen_off_seconds` (600
 by default, 0 = off) without input, locked or not, the daemon powers off
 every monitor that is on; the next key or mouse move turns them back on.
+Once the screen is locked they go off sooner: `[lock]
+locked_screen_off_seconds` (60 by default, 0 = off) after the lock came up,
+or after the last key on the lock screen.
 It follows the same rule as the idle lock: only while an idle lock is in
 effect (swayidle has a lock timeout, or `idle_lock_seconds` is set), and
 not while an idle inhibitor is active. So whatever keeps the screen from
@@ -628,12 +631,65 @@ setup over:
 - **Backups:** each file is copied to `~/.local/share/wlperch/lock-backup/`
   first. Symlinked dotfiles are edited through the link.
 - **Without swaylock:** if nothing uses swaylock yet, setup adds
-  `config.d/wlperch-lock.conf` instead, with swayidle and `$mod+Alt+l`.
+  `config.d/wlperch-lock.conf` instead, with `$mod+Alt+l`; without a
+  swayidle either, wlperch locks on idle itself (see the next section).
 - **Applying it:** setup reloads sway and restarts this session's swayidle.
 - **Switch back:** restores the copies.
 
 To wire it up by hand, see the commented lines in
 [`contrib/sway/wlperch.conf`](contrib/sway/wlperch.conf).
+
+### Idle: wlperch instead of swayidle
+
+The daemon can do everything swayidle did, with the rules above in one
+place: lock after `[lock] idle_lock_seconds` (with the countdown), monitors
+off after `screen_off_seconds` and `locked_screen_off_seconds`, lock before
+the machine sleeps, and lock on `loginctl lock-session`. Fullscreen games,
+idle inhibitors (a playing video, a joystick waker, sway's `inhibit_idle`)
+and `wlperch idle hold` keep the session awake for all of it.
+
+**Setup → Idle → Use wlperch idle** switches a swayidle setup over:
+- **Timeouts:** swayidle's carry over: its lock (`timeout 300 'wlperch lock
+  -f'`), its monitors-off, and a monitors-off guarded by `pgrep
+  wlperch-lock` (the locked one). Without a swayidle: 300 / 360 / 60 s.
+- **What changes:** the sway `exec` lines that start swayidle, directly or
+  through a script, are commented out (other lines, such as `exec
+  wljoywake`, stay), with backups in `~/.local/share/wlperch/idle-backup/`.
+  This session's swayidle is stopped and the daemon restarted.
+- **Switch back** restores the files, sets `idle_lock_seconds = 0` and
+  starts swayidle again.
+- `wlperch idle status` says who locks, after how long, and what holds it.
+
+**Lock before sleep, `loginctl lock-session`.** The daemon takes a logind
+"delay" sleep inhibitor: before the machine suspends it locks, waits for
+the lock to be up (at most 5 s), and only then lets it sleep.
+`[lock] lock_before_sleep = false` turns that off. `loginctl lock-session`
+locks; `unlock-session` is ignored, because wlperch lock only unlocks with
+the password. This is only while wlperch is the idle manager: while any
+swayidle runs in the session, it keeps those jobs.
+
+**Without logind.** logind or elogind (same D-Bus API) is optional: without
+one on the system bus, the idle lock, monitors-off, holds and the countdown
+work as before; only locking before sleep and on `loginctl` isn't there,
+and setup's Idle card says "lock before sleep: not available (no logind)".
+The binary uses sd-bus from `libsystemd.so.0` (for notifications and the
+tray too), so that library has to be installed, but systemd itself doesn't
+have to run.
+
+**Holds.** `wlperch idle hold <name> [--pid PID]` keeps the session awake
+(no idle lock, no monitors-off) until `wlperch idle release <name>`, or
+until process PID exits, so a caller that crashes can't leave the session
+awake for good. Holds survive a daemon restart, and the bar's eye lists
+them. For a game stream, e.g. Sunshine's `global_prep_cmd`, instead of
+stopping swayidle:
+
+```json
+{"do": "sh -c \"$HOME/.local/bin/wlperch idle hold sunshine --pid $PPID\"",
+ "undo": "sh -c \"$HOME/.local/bin/wlperch idle release sunshine\""}
+```
+
+`$PPID` of that `sh` is Sunshine itself, so the hold also ends when
+Sunshine quits without running the undo command.
 
 ### Launcher
 
@@ -1150,6 +1206,9 @@ wlperch notify clear    # empty the notification history
 wlperch notify dismiss  # close the popups on screen
 wlperch notify status   # "<unread> <dnd 0|1> <serving 0|1>"
 wlperch ssh             # SSH keys in the agent (also: unlock <key>, forget <key>, forget-all, lock, unlock-agent)
+wlperch idle status     # who locks on idle, after how long, and what keeps the session awake
+wlperch idle hold NAME [--pid PID]   # keep it awake until released (or until PID exits)
+wlperch idle release NAME
 wlperch daemon     # start in the background without showing
 wlperch status     # waybar JSON for the bar button (see below)
 ```
@@ -1172,6 +1231,19 @@ Everything sway needs is in **one file**, [`contrib/sway/wlperch.conf`](contrib/
 unless a config already starts the daemon. Edit it there. At runtime, wlperch
 itself only adds the per-workspace placement rules for placeholder windows,
 because those depend on your project names.
+
+**Started by systemd instead (optional).** With systemd's graphical session
+running (setup's Desktop portal card starts it through sway-systemd),
+**Setup → Background service → Run under systemd** writes
+`~/.config/systemd/user/wlperch.service` and enables it. systemd then starts
+the daemon with the session and restarts it if it crashes
+(`Restart=on-failure`; `wlperch quit` stays quit), and the sway file's
+`exec wlperch daemon` is commented out. Only the daemon is stopped with the
+service (`KillMode=process`): apps started from the launcher and a running
+lock screen stay. The daemon takes sway's environment over at start, so
+apps it starts see the same environment as from a key binding; its log is in
+`journalctl --user -u wlperch`. **Back to sway** undoes it. Without systemd
+nothing changes: sway's `exec` line is the default.
 
 ### Waybar
 
@@ -1403,6 +1475,13 @@ src/softtext.odin        stb_truetype text into pixel buffers (placeholders, pop
 src/lock.odin            `wlperch lock`: ext-session-lock-v1 lock screen (own process, shm rendering)
 src/pam.odin             minimal PAM bindings for the lock screen
 src/setup_lock.odin      setup component: switch swayidle / the lock key from swaylock and back
+src/idle_countdown.odin  the idle policy (who locks, when), the countdown overlay and wlperch's own idle lock
+src/screen_off.odin      monitors off after a long idle, and sooner once locked
+src/game_hold.odin       fullscreen games hold an idle inhibitor
+src/idle_hold.odin       `wlperch idle hold/release/status`: named holds, ended when their process exits
+src/logind.odin          logind (optional): lock before sleep, loginctl lock-session, IdleHint
+src/setup_idle.odin      setup component: wlperch's idle lock instead of swayidle, and back
+src/service.odin         the daemon as a systemd user service (optional), sway's environment under it
 src/launcher.odin        launcher data: desktop entries, $PATH, matching, usage counts, starting apps
 src/ui_launcher.odin     the launcher module (search field, rows, calculator row, keys)
 src/setup_menu.odin      setup component: switch rofi/wofi/fuzzel/… key bindings to the launcher and back

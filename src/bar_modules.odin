@@ -583,6 +583,7 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 		held := make([dynamic]string, context.temp_allocator)
 		if idle_inhibit_on {append(&held, "manually (click to stop)")}
 		if bsway.game_app != "" {append(&held, fmt.tprintf("fullscreen game %s (%s)", bsway.game_app, bsway.game_why))}
+		for h in bsway.holds {append(&held, fmt.tprintf("%s (wlperch idle hold)", h))}
 		for s in bsway.inhibits {
 			// The game's own inhibitor is the same hold.
 			if bsway.game_app != "" && strings.has_prefix(s, fmt.tprintf("%s: ", bsway.game_app)) {continue}

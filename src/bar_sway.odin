@@ -35,6 +35,7 @@ Bar_Sway :: struct {
 	inhibits:    [dynamic]string, // views sway keeps the session awake for: "mpv: …"
 	game_app:    string, // the daemon's fullscreen-game hold ("": none)
 	game_why:    string,
+	holds:       [dynamic]string, // `wlperch idle hold` names
 	focused_out: string,
 	want_ws:     bool,
 	want_tree:   bool,
@@ -343,13 +344,23 @@ collect_inhibits :: proc(node: json.Value, out: ^[dynamic]string) {
 	}
 }
 
-// Re-read the daemon's game hold; true when it changed.
+// Re-read the daemon's game hold and named holds (`wlperch idle hold`);
+// true when they changed.
 bar_game_hold_read :: proc() -> bool {
 	app, why := game_hold_current()
-	if app == bsway.game_app && why == bsway.game_why {return false}
+	holds := make([dynamic]string, context.temp_allocator)
+	for h in idle_holds_current() {
+		append(&holds, h.pid > 0 ? fmt.tprintf("%s (while pid %d runs)", h.name, h.pid) : h.name)
+	}
+	same := app == bsway.game_app && why == bsway.game_why && len(holds) == len(bsway.holds)
+	if same {for h, i in holds {if h != bsway.holds[i] {same = false}}}
+	if same {return false}
 	delete(bsway.game_app)
 	delete(bsway.game_why)
 	bsway.game_app, bsway.game_why = strings.clone(app), strings.clone(why)
+	for h in bsway.holds {delete(h)}
+	clear(&bsway.holds)
+	for h in holds {append(&bsway.holds, strings.clone(h))}
 	bsway.changed = true
 	return true
 }

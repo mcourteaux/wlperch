@@ -55,6 +55,7 @@ Comp_Id :: enum {
 	Bar,
 	Ssh,
 	Wallpaper,
+	Idle,
 }
 
 Component :: struct {
@@ -75,6 +76,7 @@ Setup :: struct {
 	strs:      [dynamic]string,
 }
 setup: Setup
+setup_systemd_session: bool // systemd's graphical session runs: the daemon can be its service
 
 @(private = "file")
 home :: proc() -> string {return os.get_env("HOME", context.temp_allocator)}
@@ -193,6 +195,12 @@ setup_check :: proc() {
 		p := &c[.Service]
 		p.state = ipc_send("ping") ? .Running : .Stopped
 		detail(p, p.state == .Running ? "the background daemon is running" : "not running")
+		setup_systemd_session = graphical_session_active()
+		if daemon_unit_enabled() {
+			detail(p, fmt.tprintf("started by systemd (%s): restarted after a crash", daemon_unit_path()))
+		} else {
+			detail(p, "started by sway (exec wlperch daemon)")
+		}
 	}
 	// Config
 	{
@@ -326,6 +334,8 @@ setup_check :: proc() {
 	ssh_setup_check(&c[.Ssh], detail)
 	// wlperch's wallpaper instead of swaybg
 	wallpaper_setup_check(&c[.Wallpaper], detail)
+	// wlperch's idle lock instead of swayidle
+	idle_setup_check(&c[.Idle], detail)
 	// Launcher entry
 	{
 		p := &c[.Launcher]

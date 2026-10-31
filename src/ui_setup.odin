@@ -22,7 +22,7 @@ Comp_Info :: struct {
 info :: proc(id: Comp_Id) -> Comp_Info {
 	switch id {
 	case .Program:  return {ICON_DESKTOP, "Program", "Copies this binary to ~/.local/bin so `wlperch` works from anywhere. Run setup again from a newer download to update.", C_BLUE, ""}
-	case .Service:  return {ICON_POWER, "Background service", "The daemon samples CPU/GPU history, tracks time and serves the panels. Sway starts it at login (see Sway integration).", C_GREEN, ""}
+	case .Service:  return {ICON_POWER, "Background service", "The daemon samples CPU/GPU history, tracks time, serves the panels and locks on idle. Sway starts it at login (see Sway integration); optionally systemd does, and restarts it if it crashes.", C_GREEN, DAEMON_UNIT}
 	case .Config:   return {ICON_TUNE, "Settings file", "Panels, weather location, clocks, projects, sensors… Created with defaults. The common settings are on the Settings tab; the rest you edit in the file, then use the restart button in a panel.", C_TEAL, ""}
 	case .Sway:     return {ICON_KEYBOARD, "Sway integration", "One file in sway/config.d: starts the daemon, binds Mod+O (panel), Mod+P / Mod+Shift+P / Mod+Ctrl+P (project workspaces) and styles placeholder windows.", C_PURPLE, SWAY_FILE}
 	case .Waybar:   return {ICON_MONITOR, "Waybar buttons", "Panel button, timer, sensors, media and notification pills. Adds them to your bar (with backups), or replaces the whole bar with wlperch's own; Restore puts yours back.", C_CYAN, WAYBAR_JSONC}
@@ -36,6 +36,7 @@ info :: proc(id: Comp_Id) -> Comp_Info {
 	case .Bar:      return {ICON_MONITORS, "Bar", "wlperch's own bar instead of waybar: workspaces (project workspaces in their colour), tray, media, timer, sensors, notifications, clock. Switches sway's bar over (with backups).", C_TEAL, BAR_CONF}
 	case .Ssh:      return {ICON_KEY, "SSH agent", "OpenSSH's own ssh-agent (not GNOME Keyring's), started by systemd on first use, for the SSH keys panel and the bar's key icon: unlock keys for a while ([ssh] lifetime), forget them when the screen locks. Sets SSH_AUTH_SOCK for your next login (with backups).", C_YELLOW, SSH_PROFILE_BLOCK}
 	case .Wallpaper: return {ICON_IMAGE, "Wallpaper", "wlperch draws the wallpaper instead of swaybg: a soft crossfade on every change, the dark / light sets of the Wallpapers tab, and a new picture every few minutes if you like ([wallpapers] rotate_minutes). Turns sway's swaybg off.", C_BLUE, WALLPAPER_CONF}
+	case .Idle:     return {ICON_POWER, "Idle", "wlperch locks on idle instead of swayidle: the lock with its countdown, monitors off (sooner once locked), locking before sleep and on loginctl lock-session (with logind). Fullscreen games, idle inhibitors and `wlperch idle hold` keep the session awake. Comments out swayidle's exec lines (with backups).", C_PURPLE, ""}
 	case .Launcher: return {ICON_HOME, "App launcher entry", "Adds \"wlperch setup\" to your application launcher (rofi, wofi, fuzzel…).", C_YELLOW, ""}
 	}
 	return {}
@@ -121,10 +122,17 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 		if s == .Outdated {append(&out, Action{"Update", true, setup_install_program, false})}
 		if s != .Missing {append(&out, Action{"Remove", false, setup_remove_program, true})}
 	case .Service:
+		unit := daemon_unit_enabled()
 		if s == .Running {
 			append(&out, Action{"Restart", false, proc() {setup_start_service(true)}, false})
-			append(&out, Action{"Stop", false, setup_stop_service, false})
-		} else {append(&out, Action{"Start", true, proc() {setup_start_service(false)}, false})}
+			append(&out, Action{"Stop", false, unit ? setup_service_stop_systemd : setup_stop_service, false})
+		} else {append(&out, Action{"Start", true, unit ? setup_service_start_systemd : proc() {setup_start_service(false)}, false})}
+		// Optional: systemd keeps it running (needs its graphical session).
+		if unit {
+			append(&out, Action{"Back to sway", false, setup_service_sway, true})
+		} else if setup_systemd_session {
+			append(&out, Action{"Run under systemd", false, setup_service_systemd, false})
+		}
 	case .Config:
 		if s != .Missing {append(&out, Action{"Edit settings", true, proc() {setup_tab = .Settings}, false})}
 		append(&out, Action{s == .Missing ? "Create" : "Open", s == .Missing, setup_create_config, false})
@@ -236,6 +244,13 @@ actions_for :: proc(id: Comp_Id, s: Comp_State) -> []Action {
 		case .Installed, .Outdated, .Custom, .Unavailable, .Partial:
 		}
 		if s == .Running || s == .Stopped {append(&out, Action{"Switch back", false, setup_remove_wallpaper, true})}
+	case .Idle:
+		switch s {
+		case .Missing:   append(&out, Action{"Use wlperch idle", true, setup_install_idle, false})
+		case .Outdated:  append(&out, Action{"Switch the rest", true, setup_install_idle, false})
+		case .Installed, .Custom, .Running, .Stopped, .Unavailable, .Partial:
+		}
+		if s == .Running || s == .Outdated {append(&out, Action{"Switch back", false, setup_remove_idle, true})}
 	case .Lock:
 		switch s {
 		case .Missing:   append(&out, Action{"Use wlperch lock", true, setup_install_lock, false})
@@ -257,7 +272,7 @@ COLUMNS := [4]struct {
 	{"Basics", {.Program, .Service, .Config}},
 	{"Desktop", {.Sway, .Menu, .Launcher, .Portal}},
 	{"Bar and look", {.Bar, .Waybar, .Theme, .Wallpaper, .Nvim}},
-	{"Extras", {.Notifications, .Lock, .Ssh, .Rapl}},
+	{"Extras", {.Notifications, .Lock, .Idle, .Ssh, .Rapl}},
 }
 
 @(private = "file")

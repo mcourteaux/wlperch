@@ -1,6 +1,9 @@
 // Monitors off after a long idle: [lock] screen_off_seconds after the last
 // input the daemon powers off every monitor that is on, and the next input
-// powers those back on. Like the idle countdown it asks the compositor
+// powers those back on. While the screen is locked they go off sooner:
+// [lock] locked_screen_off_seconds after the lock came up (or after the last
+// input on the lock screen, whichever is later), like swayidle setups'
+// `timeout 60 'pgrep wlperch-lock && output * power off'`. Like the idle countdown it asks the compositor
 // (ext-idle-notify-v1) when there was no input for that long, so idle
 // inhibitors (a playing video) keep the screens on, and it runs whether or
 // not the screen is locked. It follows the same idle policy as the idle lock
@@ -16,6 +19,7 @@
 // the file up and wakes them at the next input.
 package main
 
+import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:strings"
@@ -55,6 +59,40 @@ screen_power_command :: proc(names: []string, on: bool) -> string {
 SHORT_WATCH :: time.Second // after a re-exec: is the user still away?
 @(private = "file")
 HELD_RECHECK :: 30 * time.Second // idle, but no idle lock in effect: look again
+@(private = "file")
+IDLE_PROBE :: 10 * time.Second // idle this long: from then on the deadlines below are tracked
+@(private = "file")
+LOCK_POLL :: 2 * time.Second // while idle: did a lock come up?
+
+// What to do at `now`, idle since idle_start (pure, tested). locked_since:
+// when the lock was first seen ({}: not locked). due: when to look again
+// ({}: nothing pending).
+Screen_Off_Step :: struct {
+	off:    bool, // power the monitors off now
+	locked: bool, // because of the lock (else the plain idle timeout)
+	due:    time.Tick,
+}
+
+screen_off_step :: proc(now, idle_start, locked_since: time.Tick, idle_off, locked_off: time.Duration, allowed: bool) -> (st: Screen_Off_Step) {
+	pick :: proc(st: ^Screen_Off_Step, t: time.Tick) {if st.due == {} || time.tick_diff(t, st.due) > 0 {st.due = t}}
+	if locked_since != {} && locked_off > 0 {
+		at := time.tick_add(locked_since, locked_off)
+		if time.tick_diff(at, now) >= 0 {return {off = true, locked = true}}
+		pick(&st, at)
+	}
+	if idle_off > 0 {
+		at := time.tick_add(idle_start, idle_off)
+		if time.tick_diff(at, now) >= 0 {
+			if allowed {return {off = true}}
+			pick(&st, time.tick_add(now, HELD_RECHECK))
+		} else {
+			pick(&st, at)
+		}
+	}
+	// A lock may come up while idle: look again soon.
+	if locked_since == {} && locked_off > 0 {pick(&st, time.tick_add(now, LOCK_POLL))}
+	return
+}
 
 @(private = "file")
 so: struct {
@@ -65,9 +103,11 @@ so: struct {
 	ev_idled:     bool,
 	ev_resumed:   bool,
 	idled_at:     time.Tick,
-	off_at:       time.Tick, // pending power-off ({}: none)
+	check_at:     time.Tick, // next look while idle ({}: none)
 	owned:        [dynamic]string, // monitors we powered off
 	idle_start:   time.Tick, // while idle ({}: active or unknown)
+	locked_since: time.Tick, // while idle and locked
+	first_look:   bool, // the first look of this idle period
 	held:         bool, // the last power-off was held back by the idle policy (logged once)
 }
 
@@ -117,8 +157,9 @@ watch :: proc(timeout: time.Duration, known_idle: time.Tick = {}) {
 	if so.note != nil {wl.ext_idle_notification_v1_destroy(so.note)}
 	so.note = nil
 	so.ev_idled, so.ev_resumed = false, false
-	so.off_at = {}
+	so.check_at = {}
 	so.idle_start = {}
+	so.locked_since = {}
 	if plat.idle_notifier == nil || plat.seat == nil || timeout <= 0 {return}
 	so.note_timeout = timeout
 	so.note_created = time.tick_now()
@@ -128,7 +169,19 @@ watch :: proc(timeout: time.Duration, known_idle: time.Tick = {}) {
 }
 
 @(private = "file")
-full_timeout :: proc() -> time.Duration {return time.Duration(config.lock_screen_off_seconds) * time.Second}
+idle_off :: proc() -> time.Duration {return time.Duration(config.lock_screen_off_seconds) * time.Second}
+@(private = "file")
+locked_off :: proc() -> time.Duration {return time.Duration(config.lock_locked_off_seconds) * time.Second}
+
+// The idle watch: from IDLE_PROBE on (or the shorter of the two timeouts).
+@(private = "file")
+full_timeout :: proc() -> time.Duration {
+	if idle_off() <= 0 && locked_off() <= 0 {return 0}
+	t := IDLE_PROBE
+	if idle_off() > 0 {t = min(t, idle_off())}
+	if locked_off() > 0 {t = min(t, locked_off())}
+	return t
+}
 
 // The monitors as sway has them now.
 @(private = "file")
@@ -145,7 +198,7 @@ sway_out_power :: proc() -> []Out_Power {
 }
 
 @(private = "file")
-power_off :: proc() {
+power_off :: proc(why: string) {
 	names := screens_to_power_off(sway_out_power())
 	if len(names) == 0 {return} // already dark (the lock screen's button, or by hand)
 	if !sway_command(screen_power_command(names, false)) {
@@ -154,7 +207,8 @@ power_off :: proc() {
 	}
 	for n in names {append(&so.owned, strings.clone(n))}
 	save_owned()
-	log.infof("screen off: %d monitor(s) off after %d s idle", len(names), config.lock_screen_off_seconds)
+	log.infof("screen off: %d monitor(s) off (%s)", len(names), why)
+	logind_idle_hint(true)
 }
 
 @(private = "file")
@@ -193,11 +247,12 @@ screen_off_init :: proc() {
 	if len(so.owned) > 0 || restored_idle != {} {
 		// The user may still be away: a short watch tells, and its `resumed` wakes our monitors.
 		watch(SHORT_WATCH, restored_idle)
-	} else if config.lock_screen_off_seconds > 0 {
+	} else {
 		watch(full_timeout())
 	}
 	restored_idle = {}
 	if config.lock_screen_off_seconds > 0 {log.infof("screen off: after %d s idle", config.lock_screen_off_seconds)}
+	if config.lock_locked_off_seconds > 0 {log.infof("screen off: %d s after locking", config.lock_locked_off_seconds)}
 }
 
 // Main loop.
@@ -208,30 +263,44 @@ screen_off_tick :: proc() {
 		// A watch made while the user was already away (no input since): idle since then.
 		if so.known_idle != {} && time.tick_diff(so.note_created, start) < 100 * time.Millisecond {start = so.known_idle}
 		so.idle_start = start
-		if len(so.owned) == 0 && config.lock_screen_off_seconds > 0 {
-			so.off_at = time.tick_add(start, full_timeout())
-		}
+		so.locked_since = {}
+		so.first_look = true
+		if len(so.owned) == 0 {so.check_at = time.tick_now()}
 	}
 	if so.ev_resumed {
 		so.ev_resumed = false
 		power_on()
-		watch(config.lock_screen_off_seconds > 0 ? full_timeout() : 0)
+		logind_idle_hint(false)
+		watch(full_timeout())
 	}
-	if now := time.tick_now(); so.off_at != {} && time.tick_diff(so.off_at, now) >= 0 {
-		so.off_at = {}
-		if screen_off_allowed(idle_policy()) {
-			so.held = false
-			power_off()
-		} else {
-			if !so.held {log.info("screen off: held, no idle lock in effect (swayidle not running, idle_lock_seconds = 0)")}
-			so.held = true
-			so.off_at = time.tick_add(now, HELD_RECHECK)
-		}
+	now := time.tick_now()
+	if so.check_at == {} || time.tick_diff(so.check_at, now) < 0 {return}
+	so.check_at = {}
+	if so.idle_start == {} || len(so.owned) > 0 {return}
+	pol := idle_policy()
+	if pol.locked {
+		// Locked already when the idle period began: count from its start.
+		if so.locked_since == {} {so.locked_since = so.first_look ? so.idle_start : now}
+	} else {
+		so.locked_since = {}
 	}
+	so.first_look = false
+	allowed := screen_off_allowed(pol)
+	st := screen_off_step(now, so.idle_start, so.locked_since, idle_off(), locked_off(), allowed)
+	if st.off {
+		so.held = false
+		power_off(st.locked ? fmt.tprintf("%d s after locking", config.lock_locked_off_seconds) : fmt.tprintf("%d s idle", config.lock_screen_off_seconds))
+		return
+	}
+	if idle_off() > 0 && time.tick_diff(time.tick_add(so.idle_start, idle_off()), now) >= 0 && !allowed {
+		if !so.held {log.info("screen off: held, no idle lock in effect (swayidle not running, idle_lock_seconds = 0)")}
+		so.held = true
+	}
+	so.check_at = st.due
 }
 
 // How long the main loop may sleep (-1: no limit).
 screen_off_timeout :: proc() -> time.Duration {
-	if so.off_at == {} {return -1}
-	return max(time.tick_diff(time.tick_now(), so.off_at), 0)
+	if so.check_at == {} {return -1}
+	return max(time.tick_diff(time.tick_now(), so.check_at), 0)
 }

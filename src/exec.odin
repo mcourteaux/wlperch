@@ -188,6 +188,30 @@ run_code_env :: proc(argv: []string, env: [^]cstring, stderr_too: bool, timeout 
 	return string(buf[:]), code
 }
 
+// Run a command with its output discarded and wait for it to exit, at most
+// `timeout` (then it's left running). ok: it exited with 0 in time.
+run_wait :: proc(argv: []string, timeout: time.Duration) -> (ok: bool) {
+	pid, spawned := spawn(argv, -1)
+	if !spawned {return false}
+	deadline := time.tick_add(time.tick_now(), timeout)
+	status: c.int
+	for {
+		r := posix.waitpid(pid, &status, {.NOHANG})
+		if r == pid {break}
+		if r < 0 && posix.errno() != .EINTR {
+			child_forget(pid)
+			return false
+		}
+		if time.tick_diff(time.tick_now(), deadline) <= 0 {
+			child_forget(pid) // still running: not ours to kill
+			return false
+		}
+		time.sleep(20 * time.Millisecond)
+	}
+	child_forget(pid)
+	return posix.WIFEXITED(status) && posix.WEXITSTATUS(status) == 0
+}
+
 // Start a long-running child whose stdout we read line by line (e.g. `pactl subscribe`).
 Stream :: struct {
 	pid: posix.pid_t,

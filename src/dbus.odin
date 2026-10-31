@@ -62,6 +62,7 @@ foreign sdbus {
 	sd_bus_get_unique_name :: proc(bus: ^Sd_Bus, unique: ^cstring) -> c.int ---
 	sd_bus_call_method_async :: proc(bus: ^Sd_Bus, slot: ^^Sd_Bus_Slot, dest, path, iface, member: cstring, callback: Sd_Bus_Handler, userdata: rawptr, types: cstring, #c_vararg args: ..any) -> c.int ---
 	sd_bus_get_property_string :: proc(bus: ^Sd_Bus, dest, path, iface, member: cstring, ret_error: ^Sd_Bus_Error, ret: ^cstring) -> c.int ---
+	sd_bus_get_property :: proc(bus: ^Sd_Bus, dest, path, iface, member: cstring, ret_error: ^Sd_Bus_Error, reply: ^^Sd_Bus_Message, type: cstring) -> c.int ---
 	sd_bus_set_property :: proc(bus: ^Sd_Bus, dest, path, iface, member: cstring, ret_error: ^Sd_Bus_Error, type: cstring, #c_vararg args: ..any) -> c.int ---
 	sd_bus_slot_unref :: proc(slot: ^Sd_Bus_Slot) -> ^Sd_Bus_Slot ---
 	sd_bus_message_get_member :: proc(m: ^Sd_Bus_Message) -> cstring ---

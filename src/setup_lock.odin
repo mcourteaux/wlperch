@@ -4,8 +4,9 @@
 // Switching rewrites the swaylock commands in the sway config, config.d/*,
 // scripts next to them (~/.config/sway/*.sh) and swayidle's own config, with
 // backups in ~/.local/share/wlperch/lock-backup/ (see config_switch.odin).
-// With no swaylock anywhere, a config.d/wlperch-lock.conf with swayidle + a
-// key binding is written instead.
+// With no swaylock anywhere, a config.d/wlperch-lock.conf with the key
+// binding is written instead, and (no swayidle either) the daemon locks on
+// idle itself: setup_idle.odin's defaults.
 package main
 
 import "core:encoding/ini"
@@ -23,8 +24,8 @@ import im "third_party:odin-imgui"
 LOCK_CONF_NAME :: "wlperch-lock.conf"
 
 LOCK_CONF :: `# wlperch lock screen (written by wlperch setup; "Switch back" removes it).
-# Lock after 5 minutes idle and before sleep; screens off a minute later.
-exec swayidle -w timeout 300 'wlperch lock -f' timeout 360 'swaymsg "output * power off"' resume 'swaymsg "output * power on"' before-sleep 'wlperch lock -f' lock 'wlperch lock -f'
+# Locking on idle and before sleep is the daemon's job (setup's Idle card,
+# [lock] idle_lock_seconds in ~/.config/wlperch/config.ini).
 bindsym $mod+Mod1+l exec wlperch lock
 `
 
@@ -131,7 +132,7 @@ lock_setup_check :: proc(p: ^Component, add_detail: proc(c: ^Component, line: st
 	}
 	// The countdown before the idle lock ([lock] countdown_seconds) follows swayidle.
 	if config.lock_countdown_seconds > 0 {
-		_, secs := session_lock_state()
+		_, secs, _ := session_lock_state()
 		plan := countdown_plan(secs, config.lock_idle_seconds, config.lock_countdown_seconds)
 		switch {
 		case plan.length > 0:
@@ -175,6 +176,8 @@ lock_switch :: proc(apply: bool) {
 		lock_done(true, "nothing to change")
 		return
 	}
+	// A fresh setup (no swayidle): the daemon locks on idle.
+	if apply && swayidle_exec_line() == "" && config.lock_idle_seconds == 0 {setup_install_idle()}
 	restarted := apply && apply_lock_change()
 	lock_done(true, restarted ? "switched to wlperch lock (sway reloaded, swayidle restarted)" : "switched to wlperch lock; reload sway / log in again to apply")
 }
@@ -206,17 +209,10 @@ apply_lock_change :: proc() -> bool {
 	if !sway_reload_if_valid() {return false}
 	cmd := swayidle_exec_line()
 	if cmd == "" {return true}
-	disp := os.get_env("WAYLAND_DISPLAY", context.temp_allocator)
 	out, _ := run({"pgrep", "-xu", fmt.tprintf("%d", posix.getuid()), "swayidle"}, 2 * time.Second, context.temp_allocator)
 	for pid in strings.fields(out, context.temp_allocator) {
 		// Only this session's swayidle (another sway may be running).
-		env, err := os.read_entire_file(fmt.tprintf("/proc/%s/environ", pid), context.temp_allocator)
-		if err != nil {continue}
-		mine := false
-		for kv in strings.split(string(env), "\x00", context.temp_allocator) {
-			if kv == fmt.tprintf("WAYLAND_DISPLAY=%s", disp) {mine = true}
-		}
-		if !mine {continue}
+		if !session_process(pid) {continue}
 		run({"kill", pid}, 2 * time.Second, context.temp_allocator)
 	}
 	time.sleep(200 * time.Millisecond)
@@ -226,7 +222,6 @@ apply_lock_change :: proc() -> bool {
 
 // The command of the sway `exec` line that starts swayidle (directly or
 // through a script), or "".
-@(private = "file")
 swayidle_exec_line :: proc() -> string {
 	for f in lock_candidate_files() {
 		if strings.has_suffix(f, ".sh") || strings.has_suffix(f, "/swayidle/config") {continue}

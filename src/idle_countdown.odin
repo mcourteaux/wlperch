@@ -30,6 +30,7 @@
 package main
 
 import "base:runtime"
+import "core:fmt"
 import "core:log"
 import "core:math"
 import "core:os"
@@ -187,15 +188,31 @@ Idle_Policy :: struct {
 	locked:        bool, // a screen locker runs
 	swayidle_secs: int, // swayidle's lock timeout (0: none)
 	lock_after:    int, // seconds of idleness before the lock (0: no idle lock in effect)
+	swayidle:      bool, // a swayidle runs in this session (it then handles sleep and loginctl lock)
 }
 
-idle_policy_of :: proc(locked: bool, swayidle_secs, own: int) -> Idle_Policy {
-	return {locked, swayidle_secs, countdown_plan(swayidle_secs, own, 0).lock_after}
+idle_policy_of :: proc(locked: bool, swayidle_secs, own: int, swayidle_running := false) -> Idle_Policy {
+	return {locked, swayidle_secs, countdown_plan(swayidle_secs, own, 0).lock_after, swayidle_running || swayidle_secs > 0}
 }
 
 idle_policy :: proc() -> Idle_Policy {
-	locked, secs := session_lock_state()
-	return idle_policy_of(locked, secs, config.lock_idle_seconds)
+	locked, secs, running := session_lock_state()
+	return idle_policy_of(locked, secs, config.lock_idle_seconds, running)
+}
+
+// wlperch is this session's idle manager: it locks on idle itself and no
+// swayidle runs, so locking before sleep and on `loginctl lock-session`
+// (logind.odin) is its job too.
+idle_managed :: proc(pol: Idle_Policy) -> bool {return !pol.swayidle && config.lock_idle_seconds > 0}
+
+// Lock now (the idle lock, before sleep, loginctl lock-session), unless a
+// locker already runs. -f: back once the screen is locked, never the
+// growing blur. Returns at once; logind.odin waits on its own.
+idle_lock_now :: proc(why: string) {
+	if locked, _, _ := session_lock_state(); locked {return}
+	ok := launch_detached({self_exe(), "lock", "-f"})
+	log.infof("idle: locking (%s)%s", why, ok ? "" : " failed")
+	logind_idle_hint(true)
 }
 
 // ---- This session's processes ---------------------------------------------------------
@@ -207,22 +224,32 @@ read_small :: proc(path: string) -> (string, bool) {
 	return string(data), true
 }
 
-// Started in this Wayland session (another sway may run for the same user).
+// Started in this Wayland session (another sway may run for the same user,
+// with the same display name in another runtime directory).
 @(private = "file")
 same_session :: proc(pid: string, display: string) -> bool {
 	if display == "" {return true}
 	env, ok := read_small(strings.concatenate({"/proc/", pid, "/environ"}, context.temp_allocator))
 	if !ok {return false}
 	want := strings.concatenate({"WAYLAND_DISPLAY=", display}, context.temp_allocator)
+	runtime_dir := os.get_env("XDG_RUNTIME_DIR", context.temp_allocator)
+	want_dir := strings.concatenate({"XDG_RUNTIME_DIR=", runtime_dir}, context.temp_allocator)
+	disp_ok, dir_ok := false, runtime_dir == ""
 	for kv in strings.split(env, "\x00", context.temp_allocator) {
-		if kv == want {return true}
+		if kv == want {disp_ok = true}
+		if kv == want_dir {dir_ok = true}
 	}
-	return false
+	return disp_ok && dir_ok
 }
 
-// Whether a screen locker runs in this session, and the lock timeout of
-// this session's swayidle (0 = none found).
-session_lock_state :: proc() -> (locked: bool, swayidle_secs: int) {
+// A process of this Wayland session (same display and runtime directory).
+session_process :: proc(pid: string) -> bool {
+	return same_session(pid, os.get_env("WAYLAND_DISPLAY", context.temp_allocator))
+}
+
+// Whether a screen locker runs in this session, the lock timeout of this
+// session's swayidle (0 = none found) and whether a swayidle runs at all.
+session_lock_state :: proc() -> (locked: bool, swayidle_secs: int, swayidle: bool) {
 	me := posix.getuid()
 	display := os.get_env("WAYLAND_DISPLAY", context.temp_allocator)
 	entries, err := os.read_all_directory_by_path("/proc", context.temp_allocator)
@@ -242,6 +269,7 @@ session_lock_state :: proc() -> (locked: bool, swayidle_secs: int) {
 			locked = true
 			continue
 		}
+		swayidle = true
 		cmdline, ok := read_small(strings.concatenate({"/proc/", e.name, "/cmdline"}, context.temp_allocator))
 		if !ok {continue}
 		args := strings.split(strings.trim_right(cmdline, "\x00"), "\x00", context.temp_allocator)
@@ -251,6 +279,47 @@ session_lock_state :: proc() -> (locked: bool, swayidle_secs: int) {
 			secs, found = swayidle_config_lock_timeout(conf)
 		}
 		if found && (swayidle_secs == 0 || secs < swayidle_secs) {swayidle_secs = secs}
+	}
+	return
+}
+
+// The arguments (without argv[0]) of this session's swayidle (nil: none).
+session_swayidle_args :: proc() -> []string {
+	display := os.get_env("WAYLAND_DISPLAY", context.temp_allocator)
+	entries, err := os.read_all_directory_by_path("/proc", context.temp_allocator)
+	if err != nil {return nil}
+	for e in entries {
+		if _, ok := strconv.parse_int(e.name); !ok {continue}
+		comm, cok := read_small(strings.concatenate({"/proc/", e.name, "/comm"}, context.temp_allocator))
+		if !cok || strings.trim_space(comm) != "swayidle" || !same_session(e.name, display) {continue}
+		cmdline, ok := read_small(strings.concatenate({"/proc/", e.name, "/cmdline"}, context.temp_allocator))
+		if !ok {continue}
+		args := strings.split(strings.trim_right(cmdline, "\x00"), "\x00", context.temp_allocator)
+		return len(args) > 0 ? args[1:] : nil
+	}
+	return nil
+}
+
+// swayidle's timeouts, to carry them over to wlperch's idle: the lock, the
+// monitors off, and the monitors off while locked (a power-off guarded by
+// a pgrep of the locker). 0: not there.
+swayidle_timeouts :: proc(args: []string) -> (lock, off, locked_off: int) {
+	smallest :: proc(cur: ^int, n: int) {if cur^ == 0 || n < cur^ {cur^ = n}}
+	for i := 0; i + 2 < len(args); i += 1 {
+		if args[i] != "timeout" {continue}
+		n, ok := strconv.parse_int(args[i + 1])
+		cmd := args[i + 2]
+		if !ok || n <= 0 {continue}
+		powers_off := strings.contains(cmd, "power off") || strings.contains(cmd, "dpms off")
+		switch {
+		case is_lock_command(cmd):
+			smallest(&lock, n)
+		case powers_off && (strings.contains(cmd, "pgrep") || strings.contains(cmd, "pidof")):
+			smallest(&locked_off, n)
+		case powers_off:
+			smallest(&off, n)
+		}
+		i += 2
 	}
 	return
 }
@@ -433,6 +502,8 @@ replan :: proc(pol: Idle_Policy) -> bool {
 	if changed {
 		if p.length > 0 {
 			log.infof("idle countdown: %d s before %s locks after %d s idle", p.length, p.self_lock ? "wlperch" : "swayidle", p.lock_after)
+		} else if p.self_lock {
+			log.infof("idle lock: wlperch locks after %d s idle, no countdown", p.lock_after)
 		} else {
 			log.infof("idle countdown: off (%s)", config.lock_countdown_seconds == 0 ? "countdown_seconds = 0" : "no idle lock found in swayidle")
 		}
@@ -458,11 +529,16 @@ countdown_restore :: proc(idle_since_ns: i64) {
 	if idle_since_ns > 0 {restored_idle = time.Tick{idle_since_ns}}
 }
 
+// The countdown's idle watch runs: there is a countdown to show, or wlperch
+// locks by itself (then at the end of a countdown of 0 s).
+@(private = "file")
+active :: proc() -> bool {return cd.plan.length > 0 || cd.plan.self_lock}
+
 // After platform_init: find the lock timeout and start watching.
 countdown_init :: proc() {
-	if config.lock_countdown_seconds <= 0 {return}
+	if config.lock_countdown_seconds <= 0 && config.lock_idle_seconds <= 0 {return}
 	replan(idle_policy())
-	if cd.plan.length == 0 {return}
+	if !active() {return}
 	if restored_idle != {} {
 		// The user has been away since before the re-exec: a short watch tells
 		// whether they still are; the countdown then counts from restored_idle.
@@ -476,7 +552,7 @@ countdown_init :: proc() {
 // The popup was hidden: a GPU-release re-exec will follow. Watch input
 // meanwhile so it can happen in a pause and hand the idle start over.
 countdown_on_popup_hidden :: proc() {
-	if cd.plan.length == 0 || plat.idle_notifier == nil || plat.seat == nil {return}
+	if !active() || plat.idle_notifier == nil || plat.seat == nil {return}
 	if cd.aux != nil {wl.ext_idle_notification_v1_destroy(cd.aux)}
 	cd.aux_idle = false
 	cd.aux = wl.ext_idle_notifier_v1_get_idle_notification(plat.idle_notifier, u32(time.duration_milliseconds(AUX_TIMEOUT)), plat.seat)
@@ -522,7 +598,7 @@ countdown_tick :: proc() {
 	if cd.detect_at != {} && time.tick_diff(cd.detect_at, now) >= 0 {
 		cd.detect_at = {}
 		cd.detect_wait = min(cd.detect_wait * 2, 5 * time.Minute)
-		if replan(idle_policy()) && cd.plan.length > 0 {watch(full_timeout())}
+		if replan(idle_policy()) && active() {watch(full_timeout())}
 	}
 	if cd.ev_idled {
 		cd.ev_idled = false
@@ -534,7 +610,13 @@ countdown_tick :: proc() {
 	}
 	if cd.show_at != {} && time.tick_diff(cd.show_at, now) >= 0 {
 		cd.show_at = {}
-		if !idle_policy().locked && cd.idle_now {show(time.tick_add(cd.idle_start, time.Duration(cd.plan.lock_after) * time.Second))}
+		if !idle_policy().locked && cd.idle_now {
+			if cd.plan.length == 0 {
+				if cd.plan.self_lock {idle_lock_now(fmt.tprintf("%d s idle", cd.plan.lock_after))}
+			} else {
+				show(time.tick_add(cd.idle_start, time.Duration(cd.plan.lock_after) * time.Second))
+			}
+		}
 	}
 	if cd.phase != .Off {overlay_tick(now)}
 }
@@ -550,7 +632,16 @@ on_idled :: proc() {
 	cd.locked_seen = false
 	pol := idle_policy()
 	replan(pol)
-	if pol.locked || cd.plan.length == 0 {return}
+	if pol.locked || !active() {return}
+	if cd.plan.length == 0 {
+		// No countdown: wlperch locks right away.
+		if time.tick_diff(time.tick_add(start, time.Duration(cd.plan.lock_after) * time.Second), now) >= 0 {
+			idle_lock_now(fmt.tprintf("%d s idle", cd.plan.lock_after))
+		} else {
+			cd.show_at = time.tick_add(start, time.Duration(cd.plan.lock_after) * time.Second)
+		}
+		return
+	}
 	show_at := time.tick_add(start, time.Duration(cd.plan.lock_after - cd.plan.length) * time.Second)
 	if time.tick_diff(show_at, now) >= 0 {
 		show(time.tick_add(start, time.Duration(cd.plan.lock_after) * time.Second))
@@ -567,7 +658,8 @@ on_resumed :: proc() {
 		if cd.locked_seen {destroy_overlay()} else {start_fade(time.tick_now())}
 	}
 	replan(idle_policy())
-	if cd.plan.length == 0 {
+	logind_idle_hint(false)
+	if !active() {
 		watch(0)
 	} else if cd.note_timeout != full_timeout() || cd.known_idle != {} || cd.note == nil {
 		watch(full_timeout())
@@ -742,16 +834,12 @@ overlay_tick :: proc(now: time.Tick) {
 			if cd.preview {
 				start_fade(now)
 			} else if cd.plan.self_lock {
-				locked, _ := session_lock_state()
-				if !locked {
-					ok := launch_detached({self_exe(), "lock", "-f"})
-					log.infof("idle countdown: locking%s", ok ? "" : " failed")
-				}
+				idle_lock_now("end of the countdown")
 			}
 		}
 	case .Ending:
 		if time.tick_diff(time.tick_add(cd.deadline, END_HOLD), now) >= 0 {
-			locked, _ := session_lock_state()
+			locked, _, _ := session_lock_state()
 			if locked {
 				destroy_overlay()
 				return

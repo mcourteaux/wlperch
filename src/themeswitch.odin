@@ -249,7 +249,7 @@ data_watch_changed :: proc(fd: linux.Fd) -> (theme, ssh, hold: bool) {
 			name := string(cstring(&buf[off + size_of(linux.Inotify_Event)])) if ev.len > 0 else ""
 			if name == "theme" {theme = true}
 			if name == SSH_RECORDS_NAME {ssh = true}
-			if name == GAME_HOLD_NAME {hold = true}
+			if name == GAME_HOLD_NAME || name == IDLE_HOLDS_NAME {hold = true}
 			off += size_of(linux.Inotify_Event) + int(ev.len)
 		}
 	}

@@ -90,6 +90,8 @@ Config :: struct {
 	lock_idle_seconds:      int, // > 0: wlperch itself locks after this much idle time
 	lock_screen_off_seconds: int, // > 0: monitors off after this much idle time (screen_off.odin)
 	lock_games_awake:        bool, // a fullscreen game holds off the idle lock and monitors-off (game_hold.odin)
+	lock_locked_off_seconds: int, // > 0: monitors off this long after locking (screen_off.odin)
+	lock_before_sleep:       bool, // lock before suspend, through logind (logind.odin)
 
 	// [launcher]
 	launcher_terminal:  string, // prefix for Terminal=true apps; "" = detect
@@ -264,8 +266,11 @@ all_monitors = true
 countdown_seconds = 15
 # 0 = swayidle locks on idle (nothing to change in its config). A number of
 # seconds: wlperch locks by itself after that much idle time, with the
-# countdown before it; for setups without an idle lock in swayidle. Needs
-# the daemon running; a swayidle lock that comes earlier still wins.
+# countdown before it, and does what swayidle did: it locks before sleep
+# and on "loginctl lock-session" (through logind, when there is one).
+# "wlperch setup" (card "Idle") switches a swayidle setup over. Needs the
+# daemon running; while a swayidle still runs, its earlier lock wins and it
+# keeps handling sleep.
 idle_lock_seconds = 0
 # Monitors off after this many seconds without input (locked or not); the
 # next key or mouse move turns them back on. It follows the idle lock: only
@@ -273,6 +278,12 @@ idle_lock_seconds = 0
 # swayidle (e.g. for a game stream) keeps the monitors on as well, and it
 # waits while an idle inhibitor (a playing video) is active. 0 = off.
 screen_off_seconds = 600
+# While the screen is locked: monitors off this many seconds after the
+# lock came up (or after the last key on the lock screen). 0 = off.
+locked_screen_off_seconds = 60
+# Lock before the machine goes to sleep (wlperch's idle lock only: a
+# logind sleep inhibitor, so the lock is up before it suspends).
+lock_before_sleep = true
 # While a fullscreen game runs (wine / Proton or another .exe, Steam,
 # gamescope, Lutris: the same rules as [notifications] fullscreen), wlperch
 # holds an idle inhibitor: no idle lock, no countdown and no monitors-off,
@@ -696,6 +707,9 @@ config_load :: proc() {
 	c.lock_screen_off_seconds = parse_int_lim(get(m, defaults, "lock", "screen_off_seconds"), LIM_LOCK_SCREEN_OFF)
 	if c.lock_screen_off_seconds > 0 {c.lock_screen_off_seconds = max(c.lock_screen_off_seconds, 10)}
 	c.lock_games_awake = parse_bool(get(m, defaults, "lock", "games_keep_awake"), true)
+	c.lock_locked_off_seconds = parse_int_lim(get(m, defaults, "lock", "locked_screen_off_seconds"), LIM_LOCK_LOCKED_OFF)
+	if c.lock_locked_off_seconds > 0 {c.lock_locked_off_seconds = max(c.lock_locked_off_seconds, 5)}
+	c.lock_before_sleep = parse_bool(get(m, defaults, "lock", "lock_before_sleep"), true)
 
 	c.launcher_terminal = strings.clone(get(m, defaults, "launcher", "terminal"))
 
@@ -891,6 +905,7 @@ LIM_BAR_VOLSTEP :: Int_Limits{1, 25, 5}
 LIM_LOCK_COUNTDOWN :: Int_Limits{0, 120, 15}
 LIM_LOCK_IDLE :: Int_Limits{0, 86400, 0}
 LIM_LOCK_SCREEN_OFF :: Int_Limits{0, 86400, 600}
+LIM_LOCK_LOCKED_OFF :: Int_Limits{0, 86400, 60}
 LIM_WALLPAPER_ROTATE :: Int_Limits{0, 10080, 0}
 LIM_SETUP_DIM :: Int_Limits{5, 90, 40}
 LIM_SSH_LIFETIME :: Int_Limits{0, 1440, 60}
