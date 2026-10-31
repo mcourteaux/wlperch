@@ -767,6 +767,7 @@ loop_iteration :: proc() {
 	screen_off_tick()
 	game_hold_tick()
 	idle_hold_tick()
+	awake_tick()
 	logind_tick()
 	ssh_tick()
 	update_tick()

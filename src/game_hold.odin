@@ -1,16 +1,14 @@
 // Fullscreen games keep the screen awake ([lock] games_keep_awake): while a
 // fullscreen view is a game (game_classify: wine / Proton or another .exe,
-// Steam, gamescope, Lutris), the daemon holds an idle inhibitor
-// (zwp_idle_inhibit_v1). Everything that waits for inactivity honours it:
+// Steam, gamescope, Lutris), the daemon holds its idle inhibitor
+// (awake.odin). Everything that waits for inactivity honours it:
 // swayidle's lock and `output * power off` timeouts, the idle countdown and
 // wlperch's own idle lock and monitors-off (ext-idle-notify), so a game
 // played with a controller only isn't locked or blanked. One mechanism for
 // all of them. Locking before sleep isn't idle-based and still happens.
 //
-// The inhibitor sits on a wl_surface without a role: sway counts an
-// inhibitor whose surface isn't a view as always active (a view's only while
-// it's visible). It goes away with the daemon (or a re-exec, after which the
-// new image takes it again), so nothing can stay held by accident.
+// The inhibitor goes away with the daemon (or a re-exec, after which the new
+// image takes it again), so nothing can stay held by accident.
 //
 // The setup window and the bar (other processes) read
 // $XDG_RUNTIME_DIR/wlperch-game-hold: "<daemon pid>\t<app>\t<why>" while held.
@@ -24,12 +22,10 @@ import "core:strings"
 import "core:sync"
 import "core:sys/posix"
 
-import "wl"
 
 @(private = "file")
 gh: struct {
-	surface:   ^wl.Surface,
-	inhibitor: ^wl.Zwp_Idle_Inhibitor_V1,
+	held:      bool,
 	seq:       int, // fullscreen_seq() last looked at (-1: never)
 	enabled:   bool,
 	app:       string,
@@ -63,12 +59,11 @@ game_hold_tick :: proc() {
 		hold, app, why = game_hold_pick(sway.fs[:], gh.enabled)
 		app, why = strings.clone(app, context.temp_allocator), strings.clone(why, context.temp_allocator)
 	}
-	if hold && gh.inhibitor == nil {
-		if plat.inhibit_mgr == nil || plat.compositor == nil {return}
-		gh.surface = wl.compositor_create_surface(plat.compositor)
-		gh.inhibitor = wl.zwp_idle_inhibit_manager_v1_create_inhibitor(plat.inhibit_mgr, gh.surface)
+	if hold && !gh.held {
+		gh.held = true
+		awake_want(.Game, true)
 		log.infof("idle: held by fullscreen game %s (%s): no idle lock or monitors-off", app, why)
-	} else if !hold && gh.inhibitor != nil {
+	} else if !hold && gh.held {
 		game_hold_release()
 		log.info("idle: no fullscreen game any more, released")
 		return
@@ -84,9 +79,8 @@ game_hold_tick :: proc() {
 }
 
 game_hold_release :: proc() {
-	if gh.inhibitor != nil {wl.zwp_idle_inhibitor_v1_destroy(gh.inhibitor)}
-	if gh.surface != nil {wl.surface_destroy(gh.surface)}
-	gh.inhibitor, gh.surface = nil, nil
+	if gh.held {awake_want(.Game, false)}
+	gh.held = false
 	delete(gh.app)
 	gh.app = ""
 	_ = os.remove(hold_path())

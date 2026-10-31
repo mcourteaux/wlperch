@@ -1,7 +1,7 @@
 // Named idle holds: `wlperch idle hold <name> [--pid PID]` keeps the
 // session awake (no idle lock, no monitors-off) until `wlperch idle release
 // <name>`, or until process PID exits. It is the same mechanism as the game
-// hold (game_hold.odin): an idle inhibitor, which everything that waits for
+// hold (game_hold.odin): the daemon's idle inhibitor (awake.odin), which everything that waits for
 // inactivity honours. With --pid a crashed or killed caller can't leave the
 // session awake for good: e.g. a game stream's prep command
 //   sh -c "wlperch idle hold sunshine --pid $PPID"
@@ -21,7 +21,6 @@ import "core:strings"
 import "core:sys/posix"
 import "core:time"
 
-import "wl"
 
 IDLE_HOLDS_NAME :: "wlperch-idle-holds"
 
@@ -33,8 +32,6 @@ Idle_Hold :: struct {
 @(private = "file")
 ih: struct {
 	holds:     [dynamic]Idle_Hold,
-	surface:   ^wl.Surface,
-	inhibitor: ^wl.Zwp_Idle_Inhibitor_V1,
 	check_at:  time.Tick, // next look at the holds' processes ({}: none)
 }
 
@@ -100,15 +97,7 @@ save :: proc() {
 // Take or drop the inhibitor to match the holds.
 @(private = "file")
 apply :: proc() {
-	want := len(ih.holds) > 0
-	if want && ih.inhibitor == nil && plat.inhibit_mgr != nil && plat.compositor != nil {
-		ih.surface = wl.compositor_create_surface(plat.compositor)
-		ih.inhibitor = wl.zwp_idle_inhibit_manager_v1_create_inhibitor(plat.inhibit_mgr, ih.surface)
-	} else if !want && ih.inhibitor != nil {
-		wl.zwp_idle_inhibitor_v1_destroy(ih.inhibitor)
-		wl.surface_destroy(ih.surface)
-		ih.inhibitor, ih.surface = nil, nil
-	}
+	awake_want(.Holds, len(ih.holds) > 0)
 	ih.check_at = {}
 	for h in ih.holds {if h.pid > 0 {ih.check_at = time.tick_add(time.tick_now(), CHECK_EVERY)}}
 	save()
