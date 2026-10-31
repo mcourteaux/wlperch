@@ -1022,6 +1022,10 @@ test_menu_rewrite :: proc(t: ^testing.T) {
 @(test)
 test_emoji_search :: proc(t: ^testing.T) {
 	emoji_load()
+	defer { // loaded once per process in the app
+		delete(emoji_table)
+		emoji_table = nil
+	}
 	testing.expect(t, len(emoji_table) > 3000)
 	best :: proc(words: []string) -> string {
 		tone := emoji_tone_asked(words)

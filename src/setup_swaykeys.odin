@@ -91,6 +91,28 @@ sway_keys_parse :: proc(text: string, allocator := context.allocator) -> [dynami
 	return out
 }
 
+// Forget the clashes found (their texts are ours).
+sway_keys_clash_clear :: proc(clash: ^map[int]string) {
+	for _, v in clash {delete(v)}
+	clear(clash)
+}
+
+// Drop the parsed bindings, so the next sway_keys_load reads them again.
+sway_keys_unload :: proc() {
+	for k in sway_keys.list {
+		delete(k.cmd)
+		delete(k.flags)
+		delete(k.desc)
+		delete(k.def_key)
+	}
+	delete(sway_keys.list)
+	sway_keys.list = nil
+	sway_keys_clash_clear(&sway_keys.clash)
+	delete(sway_keys.clash)
+	sway_keys.clash = nil
+	sway_keys.loaded = false
+}
+
 // wlperch.conf's bindings with the saved choices applied.
 sway_keys_load :: proc() {
 	if sway_keys.loaded {return}
@@ -190,7 +212,7 @@ sway_file_text :: proc(keys: []Sway_Key) -> string {
 // config includes theirs, then the draft's bindings (marked, so they can be
 // told apart from an older wlperch.conf the config already includes).
 sway_keys_check :: proc() {
-	clear(&sway_keys.clash)
+	sway_keys_clash_clear(&sway_keys.clash)
 	sway_keys.checked, sway_keys.check_ran = true, false
 	cfg := sway_running_config()
 	if !os.exists(cfg) {return}

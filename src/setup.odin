@@ -493,7 +493,7 @@ install_sway :: proc() {
 			if had_cfg {_ = write_file(cfg, old_cfg)} else {os.remove(cfg)}
 		}
 		// Show the clashes in the key editor.
-		clear(&sway_keys.clash)
+		sway_keys_clash_clear(&sway_keys.clash)
 		for x in check.conflicts {
 			for &k, i in sway_keys.list {
 				if k.on && k.cmd == x.ours {sway_keys.clash[i] = strings.clone(x.theirs)}

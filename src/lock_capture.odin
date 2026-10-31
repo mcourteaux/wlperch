@@ -400,7 +400,8 @@ lock_reduce_and_blur :: proc(t: ^Capture_Target) -> Blur_Image {
 	ss := sigma / f32(D)
 	r := max(1, int(math.round((math.sqrt(4 * ss * ss + 1) - 1) / 2)))
 	// The animation's copy, on another thread meanwhile.
-	Anim_Reduce :: struct {t: ^Capture_Target, D: int, img: Blur_Image}
+	// Its pixels come from our allocator: blur_anim_init frees them here.
+	Anim_Reduce :: struct {t: ^Capture_Target, D: int, img: Blur_Image, alloc: runtime.Allocator}
 	ar: Anim_Reduce
 	ar_th: ^thread.Thread
 	if t.animate {
@@ -410,8 +411,9 @@ lock_reduce_and_blur :: proc(t: ^Capture_Target) -> Blur_Image {
 		Dw := clamp(int(s_from / 2), 2, max(D, 2))
 		Dw = min(Dw, W, H)
 		t.anim = {D = Dw, D_static = D, s_from = s_from, s_static = s_static}
-		ar = {t, Dw, {}}
+		ar = {t, Dw, {}, context.allocator}
 		ar_th = thread.create_and_start_with_poly_data(&ar, proc(ar: ^Anim_Reduce) {
+			context.allocator = ar.alloc
 			ar.img = reduce_orient(ar.t, ar.D)
 			free_all(context.temp_allocator)
 		})

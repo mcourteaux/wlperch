@@ -111,6 +111,7 @@ test_claude_log :: proc(t: ^testing.T) {
 test_claude_export_and_rates :: proc(t: ^testing.T) {
 	saved := tracker
 	defer {
+		delete(tracker.projects)
 		tracker = saved
 		bridge_rules_update()
 	}

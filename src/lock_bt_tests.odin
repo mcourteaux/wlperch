@@ -27,6 +27,11 @@ bt_lockinfo :: proc(t: ^testing.T, powered: string) -> []Lock_BT {
 	os.set_env("PATH", strings.concatenate({dir, ":", old}, context.temp_allocator))
 	defer os.set_env("PATH", old)
 	bluetooth_refresh_now()
+	defer { // the daemon keeps its device list; a test doesn't
+		for d in bluetooth.devices {delete(d.path); delete(d.address); delete(d.name); delete(d.icon)}
+		delete(bluetooth.devices)
+		bluetooth.devices = nil
+	}
 
 	out: [dynamic]Lock_BT
 	out.allocator = context.temp_allocator

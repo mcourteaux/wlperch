@@ -85,6 +85,7 @@ test_sway_keys_clashes :: proc(t: ^testing.T) {
 		ov("Mod4+equal", "exec wlperch toggle calc --center", "exec firefox"),
 	}, context.temp_allocator)
 	clash := make(map[int]string, context.temp_allocator)
+	defer sway_keys_clash_clear(&clash)
 	sway_keys_clashes(out, &clash)
 	testing.expect_value(t, clash[4], "exec rofi -show run")
 	testing.expect_value(t, clash[0], "exec wofi")
@@ -108,14 +109,15 @@ test_sway_install_backs_out_on_conflict :: proc(t: ^testing.T) {
 	os.set_env("XDG_CONFIG_HOME", DIR)
 	old_data := strings.clone(os.get_env("XDG_DATA_HOME", context.temp_allocator), context.temp_allocator)
 	os.set_env("XDG_DATA_HOME", DIR + "/data") // the key choices file
-	sway_keys.loaded = false
+	sway_keys_unload()
 	os.unset_env("SWAYSOCK") // the default config under XDG_CONFIG_HOME, not the running sway's
 	defer {
 		if old_xdg != "" {os.set_env("XDG_CONFIG_HOME", old_xdg)} else {os.unset_env("XDG_CONFIG_HOME")}
 		if old_sock != "" {os.set_env("SWAYSOCK", old_sock)}
 		if old_data != "" {os.set_env("XDG_DATA_HOME", old_data)} else {os.unset_env("XDG_DATA_HOME")}
-		sway_keys.loaded = false
-		clear(&sway_keys.list)
+		sway_keys_unload()
+		delete(setup.comps[.Sway].message) // the last result line
+		setup.comps[.Sway].message = ""
 	}
 	// A key wlperch.conf binds, bound to something else by "the user".
 	key := ""
@@ -173,12 +175,11 @@ test_sway_adopts_renamed_symlinked_file :: proc(t: ^testing.T) {
 	old_data := strings.clone(os.get_env("XDG_DATA_HOME", context.temp_allocator), context.temp_allocator)
 	os.set_env("XDG_CONFIG_HOME", DIR + "/cfg")
 	os.set_env("XDG_DATA_HOME", DIR + "/data")
-	sway_keys.loaded = false
+	sway_keys_unload()
 	defer {
 		if old_xdg != "" {os.set_env("XDG_CONFIG_HOME", old_xdg)} else {os.unset_env("XDG_CONFIG_HOME")}
 		if old_data != "" {os.set_env("XDG_DATA_HOME", old_data)} else {os.unset_env("XDG_DATA_HOME")}
-		sway_keys.loaded = false
-		clear(&sway_keys.list)
+		sway_keys_unload()
 	}
 	// The template with its first active binding moved to $mod+F9 by hand.
 	moved_cmd := ""

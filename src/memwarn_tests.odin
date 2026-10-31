@@ -2,6 +2,7 @@
 // module states. No process is ever signalled here.
 package main
 
+import "core:mem/virtual"
 import "core:os"
 import "core:testing"
 
@@ -152,8 +153,19 @@ test_config_memory_section :: proc(t: ^testing.T) {
 	old_xdg := os.get_env("XDG_CONFIG_HOME", context.temp_allocator)
 	defer os.set_env("XDG_CONFIG_HOME", old_xdg)
 	os.set_env("XDG_CONFIG_HOME", dir)
-	saved := config
-	defer config = saved
+	// config_load fills process-lifetime state (config, panels, projects…)
+	// that the app never frees: load into an arena, then put it all back.
+	arena: virtual.Arena
+	_ = virtual.arena_init_growing(&arena)
+	defer virtual.arena_destroy(&arena)
+	saved, saved_bar, saved_tracker, saved_panels, saved_sensors := config, bar_cfg, tracker, panels, sensor_defs
+	defer {
+		config, bar_cfg, tracker, panels, sensor_defs = saved, saved_bar, saved_tracker, saved_panels, saved_sensors
+		bridge_rules_update()
+	}
+	config, bar_cfg, panels, sensor_defs = {}, {}, {}, {}
+	tracker = Tracker{running = -1, last = -1, pinned = -1}
+	context.allocator = virtual.arena_allocator(&arena)
 
 	_ = os.write_entire_file(DIR + "/wlperch/config.ini", "[popup]\nwidth = 860\n\n[system]\nhistory_seconds = 120\nmemory_warn_percent = 70\n")
 	config_load()

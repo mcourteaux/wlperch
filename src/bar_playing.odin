@@ -12,6 +12,7 @@ package main
 
 import "core:encoding/json"
 import "core:os"
+import "core:fmt"
 import "core:strconv"
 import "core:strings"
 import "core:sync"
@@ -114,8 +115,7 @@ playing_workspaces :: proc(streams: []Play_Stream, windows: []Play_Window, playe
 // The parent of `pid`, from /proc (0 if it's gone).
 @(private = "file")
 proc_parent :: proc(pid: i32) -> i32 {
-	buf: [64]u8
-	path := strings.concatenate({"/proc/", strconv.itoa(buf[:], int(pid)), "/stat"}, context.temp_allocator)
+	path := fmt.tprintf("/proc/%d/stat", pid)
 	data, err := os.read_entire_file(path, context.temp_allocator)
 	if err != nil {return 0}
 	s := string(data)

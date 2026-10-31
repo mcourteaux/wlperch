@@ -1,6 +1,7 @@
 package main
 
 import "core:encoding/ini"
+import "core:mem/virtual"
 import "core:testing"
 
 @(test)
@@ -63,6 +64,11 @@ test_cpu_graph_ring :: proc(t: ^testing.T) {
 test_cpu_graph_config :: proc(t: ^testing.T) {
 	saved := bar_cfg
 	defer bar_cfg = saved
+	// The bar never frees a loaded config (its worker may still read it).
+	arena: virtual.Arena
+	_ = virtual.arena_init_growing(&arena)
+	defer virtual.arena_destroy(&arena)
+	context.allocator = virtual.arena_allocator(&arena)
 	defaults, _ := ini.load_map_from_string(DEFAULT_CONFIG, context.temp_allocator)
 	bar_cfg = {}
 	bar_config_load(defaults, defaults)
