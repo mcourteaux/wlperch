@@ -397,8 +397,11 @@ comp_card :: proc(id: Comp_Id, c: ^Component, width: f32) -> (run: proc()) {
 	ROW :: 30
 	CHEV :: 26
 	// Sway's keys clash: the key editor (in the details) is how to fix that.
+	// It opens and stays open, so fixing the clash while typing doesn't close
+	// the field being edited.
 	keys := id == .Sway && c.state != .Custom && c.state != .Unavailable
-	open := expanded[id] || keys && sway_keys_clash_count() > 0
+	if keys && sway_keys_clash_count() > 0 {expanded[id] = true}
+	open := expanded[id]
 
 	// The line: badge, name, state.
 	im.DrawList_AddCircleFilled(dl(), {cp.x + 15, cp.y + ROW / 2}, 15, col32(inf.accent, 0.16))
