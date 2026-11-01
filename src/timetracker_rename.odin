@@ -164,7 +164,7 @@ workspace_rename_plan :: proc(names: []string, old, new: string) -> (moves: [][2
 	for n in names {
 		if !strings.has_prefix(n, old) || len(n) < len(old) + 2 || n[len(old)] != ' ' {continue}
 		num := n[len(old) + 1:]
-		if _, ok := strconv.parse_int(num); !ok {continue}
+		if _, _, ok := ws_suffix_parse(num); !ok {continue}
 		to := fmt.tprintf("%s %s", new, num)
 		if slice.contains(names, to) {
 			append(&bl, n)
@@ -438,6 +438,7 @@ tracker_rename :: proc(old, new: string, opts: Rename_Opts, in_daemon: bool) -> 
 // (or, merged, dropped in favour of the existing one), indices kept valid.
 @(private = "file")
 tracker_apply_rename :: proc(p: Rename_Plan) {
+	last_ws_rename(p.old, p.new)
 	for e in tracker.entries {delete(e.project)}
 	clear(&tracker.entries)
 	timelog_parse(p.log_out, &tracker.entries)

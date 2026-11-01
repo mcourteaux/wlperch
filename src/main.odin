@@ -44,6 +44,8 @@ commands:
   track <project>  create/focus the project's workspaces (one per monitor) to track time
   track go [project]    go to the current (or last used) project's workspaces
   track move [project]  move the focused window to that project's workspace on this monitor
+  track new [project]   another workspace of the project on this monitor ("<name> 1b", "1c", …)
+  track next|prev [project]  step through the project's workspaces on this monitor
   track pin [project|off]  for a minute, go/move target this project wherever you are
                            (to gather misplaced windows); each move extends it
   track lock [on|off]  group-lock monitors: they follow each other into/out of projects
@@ -303,6 +305,15 @@ handle_command :: proc(line: string) -> string {
 			} else if !tracker_move_window(i) {
 				return "move failed\n"
 			}
+			return "ok\n"
+		}
+		// track new|next|prev [project]: more of its workspaces on this monitor.
+		if f[1] == "new" || f[1] == "next" || f[1] == "prev" {
+			i := tracker_current_project()
+			if len(f) > 2 {i = project_find(strings.join(f[2:], " ", context.temp_allocator))}
+			if i < 0 {return "no project (name one, or work in one first)\n"}
+			ws := f[1] == "new" ? tracker_new_workspace(i) : tracker_step_workspace(i, f[1] == "next" ? 1 : -1)
+			if ws == "" {return "no free workspace letter\n"}
 			return "ok\n"
 		}
 		i := project_find(strings.join(f[1:], " ", context.temp_allocator))

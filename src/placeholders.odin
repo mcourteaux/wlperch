@@ -240,9 +240,11 @@ placeholders_tick :: proc() {
 			p.moved = true
 		}
 	}
-	// Every existing, empty project workspace gets one.
+	// Every existing, empty project workspace gets one; not the extras
+	// ("<name> 1b"), which sway may remove once they're empty and left.
 	for ws, n in counts {
-		if n > 0 || project_for_workspace(ws) < 0 || placeholders.dismissed[ws] {continue}
+		if n > 0 || placeholders.dismissed[ws] {continue}
+		if pi, _, sub := project_ws_parse(ws); pi < 0 || sub > 0 {continue}
 		has := false
 		for p in placeholders.list {if p.ws == ws {has = true}}
 		if !has {spawn(ws)}

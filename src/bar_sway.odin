@@ -400,10 +400,7 @@ bar_ws_groups :: proc(output: string) -> []Bar_Ws_Group {
 	}
 	rank :: proc(w: Bar_Ws) -> (class, sub: int, name: string) {
 		if w.num >= 0 {return 0, w.num, w.name}
-		if p := project_for_workspace(w.name); p >= 0 {
-			n, _ := strconv.parse_int(w.name[strings.last_index_byte(w.name, ' ') + 1:])
-			return 1, p * 10000 + n, w.name
-		}
+		if p, n, sub := project_ws_parse(w.name); p >= 0 {return 1, p * 100000 + n * 100 + sub, w.name}
 		return 2, 0, w.name
 	}
 	slice.sort_by(mine[:], proc(a, b: Bar_Ws) -> bool {

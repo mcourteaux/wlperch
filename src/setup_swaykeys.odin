@@ -389,6 +389,9 @@ key_label :: proc(cmd, comment: string) -> string {
 		{"track go", "Go to the project's workspaces"},
 		{"track move", "Move the window to the project"},
 		{"track pin", "Pin the current project"},
+		{"track new", "New workspace of the project"},
+		{"track next", "Next workspace of the project"},
+		{"track prev", "Previous workspace of the project"},
 	}
 	for l in LABELS {if strings.contains(cmd, l[0]) {return l[1]}}
 	s := comment

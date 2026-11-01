@@ -169,6 +169,16 @@ used last: `$mod+p` runs `track go` and `$mod+Shift+p` runs `track move`.
 `track move` puts the window on the project's workspace for the monitor you're
 on, creating it if needed, and leaves your view alone (like `$mod+Shift+N`).
 
+**More workspaces of a project on one monitor:** `track new`
+(`$mod+Alt+p`) adds another one on the monitor you're on: `ACME 1b`, then
+`ACME 1c`, … (`ACME 1` stays the first). `track next` / `track prev`
+(`$mod+]` / `$mod+[`) step through the project's workspaces on that monitor.
+They all count as the project, and the bar shows them in the project's pill
+as `1`, `1b`, `1c`. wlperch remembers which one each monitor showed last:
+`track go`, `$mod+p`, `track move` and the group lock bring every monitor
+back to that one. An extra that's empty disappears once you leave it (the
+placeholder windows only keep `ACME 1`, `ACME 2`, … alive).
+
 **Gathering misplaced windows:** `track pin` (`$mod+Ctrl+p`, or right-click a
 project in the Time panel) locks the current project as the target for a minute.
 Every move extends it. While pinned, you can visit any workspaces, including

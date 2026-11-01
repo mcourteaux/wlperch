@@ -535,9 +535,11 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 				label.tooltip = fmt.tprintf("%s: %d workspaces on this monitor\nRight-click one: switch only this monitor", proj.name, len(g.ws))
 				add(lay, label)
 				for w in g.ws {
-					n := w.name[strings.last_index_byte(w.name, ' ') + 1:]
+					// "1", then the extras on that monitor as "1" with a small "b", "c", …
+					_, n, sub := project_ws_parse(w.name)
+					letter := sub > 0 ? fmt.tprintf("%c", rune('a' + sub)) : ""
 					it := Bar_Item{mod = .Workspaces, key = w.name, pad = 7, margin = 1, min_w = 10, inset = 7, hover = true, group = len(lay.groups), icon_alpha = 1}
-					ws_style(&it, w, n, col)
+					ws_style(&it, w, fmt.tprintf("%d", n), col, letter)
 					add(lay, it)
 				}
 			}
@@ -796,7 +798,8 @@ build_module :: proc(mod: Bar_Mod, output: string, lay: ^Bar_Layout) {
 }
 
 @(private = "file")
-ws_style :: proc(it: ^Bar_Item, w: Bar_Ws, label: string, col: u32) {
+// `small`: a smaller letter after the label (the project's extra workspaces, "1b").
+ws_style :: proc(it: ^Bar_Item, w: Bar_Ws, label: string, col: u32, small := "") {
 	p := &bar_pal
 	switch {
 	case w.urgent:
@@ -810,6 +813,10 @@ ws_style :: proc(it: ^Bar_Item, w: Bar_Ws, label: string, col: u32) {
 		bar_seg(it, label, p.text)
 	case:
 		bar_seg(it, label, bar_ink(col))
+	}
+	if small != "" {
+		last := it.segs[len(it.segs) - 1]
+		bar_seg(it, small, last.color, last.font, PX - 3)
 	}
 	ws_speaker(it, w)
 }

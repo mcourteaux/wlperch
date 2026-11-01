@@ -90,6 +90,8 @@ Tracker :: struct {
 	lock_path:    string,
 	last_visible: map[string]string, // output -> workspace at the previous tick
 	return_ws:    map[string]string, // output -> workspace to go back to when leaving
+	last_ws:      map[string]string, // "<name> N" -> the project's workspace last shown on monitor N
+	last_ws_path: string,
 	sync_at:      time.Tick,         // our own switch; ignore the events it causes
 	nosync_ws:    string,            // a switch to this workspace leaves the other outputs be
 	nosync_at:    time.Tick,
@@ -165,16 +167,10 @@ project_find :: proc(name: string) -> int {
 	return -1
 }
 
-// "NeonRAW 2" -> index of NeonRAW
+// "NeonRAW 2" (or "NeonRAW 2b") -> index of NeonRAW
 project_for_workspace :: proc(ws: string) -> int {
-	for p, i in tracker.projects {
-		if !strings.has_prefix(ws, p.name) {continue}
-		rest := ws[len(p.name):]
-		if len(rest) >= 2 && rest[0] == ' ' {
-			if _, ok := strconv.parse_int(rest[1:]); ok {return i}
-		}
-	}
-	return -1
+	p, _, _ := project_ws_parse(ws)
+	return p
 }
 
 project_workspace :: proc(p: Project, n: int) -> string {
@@ -265,12 +261,14 @@ tracker_paths :: proc() {
 	tracker.lock_path = strings.concatenate({dir, "/timetracker.lock"})
 	tracker.away_path = strings.concatenate({dir, "/timetracker.away"})
 	tracker.claude_path = strings.concatenate({dir, "/timetracker.claude"})
+	tracker.last_ws_path = strings.concatenate({dir, "/timetracker.lastws"})
 }
 
 // Read the log and recover a segment left open by a crash.
 tracker_init :: proc() {
 	tracker_paths()
 	tracker.lock = os.exists(tracker.lock_path)
+	last_ws_load()
 	if data, err := os.read_entire_file(tracker.log_path, context.temp_allocator); err == nil {
 		timelog_parse(string(data), &tracker.entries)
 	}
@@ -315,6 +313,7 @@ tracker_tick :: proc() {
 	if len(tracker.projects) == 0 {return}
 	tracker_pin_tick()
 	tracker_sync()
+	last_ws_note()
 	ws: string
 	{
 		sync.guard(&sway.mu)
@@ -552,17 +551,21 @@ tracker_start :: proc(index: int) {
 	outs, focused := project_outputs()
 	remember_return_workspaces()
 	b := strings.builder_make(context.temp_allocator)
+	// Each monitor gets the project's workspace it showed last ("<name> N" or an extra).
+	existing, _, _ := sway_workspace_list()
+	targets := make([]string, len(outs), context.temp_allocator)
 	for o, i in outs {
-		fmt.sbprintf(&b, "workspace \"%s\" output %s; ", project_workspace(p, i + 1), o)
+		targets[i] = project_target(p, i + 1, existing)
+		fmt.sbprintf(&b, "workspace \"%s\" output %s; ", targets[i], o)
 	}
 	// Visit the others first and end on the output the user was on.
 	last := ""
 	for o, i in outs {
 		if o == focused {
-			last = fmt.tprintf("focus output %s; workspace \"%s\"", o, project_workspace(p, i + 1))
+			last = fmt.tprintf("focus output %s; workspace \"%s\"", o, targets[i])
 			continue
 		}
-		fmt.sbprintf(&b, "focus output %s; workspace \"%s\"; ", o, project_workspace(p, i + 1))
+		fmt.sbprintf(&b, "focus output %s; workspace \"%s\"; ", o, targets[i])
 	}
 	strings.write_string(&b, last)
 	tracker.sync_at = time.tick_now()
@@ -611,7 +614,7 @@ Sync_Move :: struct {
 // workspaces. Given what the focused output showed before (`prev`) and now
 // (`cur`): entering a project brings the other outputs to its workspaces;
 // leaving it sends the outputs still showing it back where they came from.
-plan_sync :: proc(prev, cur, focused_out: string, outs: []string, visible: map[string]string, return_ws: ^map[string]string) -> []Sync_Move {
+plan_sync :: proc(prev, cur, focused_out: string, outs: []string, visible: map[string]string, return_ws: ^map[string]string, existing: []string = nil) -> []Sync_Move {
 	moves: [dynamic]Sync_Move
 	moves.allocator = context.temp_allocator
 	if prev == cur || prev == "" {return nil}
@@ -632,7 +635,7 @@ plan_sync :: proc(prev, cur, focused_out: string, outs: []string, visible: map[s
 					return_ws[strings.clone(o)] = strings.clone(shown)
 				}
 			}
-			append(&moves, Sync_Move{o, project_workspace(tracker.projects[p_cur], i + 1), true})
+			append(&moves, Sync_Move{o, project_target(tracker.projects[p_cur], i + 1, existing), true})
 		} else {
 			if shown_p != p_prev {continue}
 			if ret, had := return_ws[o]; had {append(&moves, Sync_Move{o, ret, false})}
@@ -679,8 +682,10 @@ tracker_sync :: proc() {
 	// Our own switching produces a burst of events: let it settle.
 	if time.tick_since(tracker.sync_at) < 400 * time.Millisecond {return}
 
+	prev, cur := tracker.last_visible[focused_out], visible[focused_out]
+	if prev == cur {return}
 	outs, _ := project_outputs()
-	moves := plan_sync(tracker.last_visible[focused_out], visible[focused_out], focused_out, outs, visible, &tracker.return_ws)
+	moves := plan_sync(prev, cur, focused_out, outs, visible, &tracker.return_ws, ws_names())
 	if len(moves) == 0 {return}
 	b := strings.builder_make(context.temp_allocator)
 	for m in moves {
@@ -1042,7 +1047,7 @@ tracker_move_window :: proc(index: int) -> bool {
 	outs, focused := project_outputs()
 	n := 1
 	for o, i in outs {if o == focused {n = i + 1}}
-	ws := project_workspace(p, n)
+	ws := project_target(p, n, ws_names())
 	return sway_command(fmt.tprintf(`workspace "%s" output %s; move container to workspace "%s"`, ws, focused, ws))
 }
 
