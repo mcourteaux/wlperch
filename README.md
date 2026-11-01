@@ -173,6 +173,10 @@ on, creating it if needed, and leaves your view alone (like `$mod+Shift+N`).
 (`$mod+Alt+p`) adds another one on the monitor you're on: `ACME 1b`, then
 `ACME 1c`, … (`ACME 1` stays the first). `track next` / `track prev`
 (`$mod+]` / `$mod+[`) step through the project's workspaces on that monitor.
+With Shift (`track move-new`, `track move-next`, `track move-prev`:
+`$mod+Alt+Shift+p`, `$mod+Shift+]`, `$mod+Shift+[`) the focused window comes
+along and the view follows it; with a single workspace, next and previous do
+nothing.
 They all count as the project, and the bar shows them in the project's pill
 as `1`, `1b`, `1c`. wlperch remembers which one each monitor showed last:
 `track go`, `$mod+p`, `track move` and the group lock bring every monitor

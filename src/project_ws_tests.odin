@@ -95,3 +95,24 @@ test_project_ws_last_used :: proc(t: ^testing.T) {
 	mv, _ := workspace_rename_plan([]string{"Pallas 1", "Pallas 1b", "Pallas 2c", "Pallas"}, "Pallas", "Athena")
 	testing.expect_value(t, len(mv), 3)
 }
+
+@(test)
+test_project_ws_step :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	saved := with_projects()
+	defer tracker = saved
+
+	existing := []string{"Pallas 1", "Pallas 1c", "Pallas 1b", "Pallas 2", "Home Lab 1"}
+	on := project_ws_on(0, 1, existing)
+	ws, ok := project_ws_step(on, "Pallas 1", 1)
+	testing.expect(t, ok && ws == "Pallas 1b")
+	ws, ok = project_ws_step(on, "Pallas 1c", 1)
+	testing.expect(t, ok && ws == "Pallas 1", "next wraps to the first")
+	ws, ok = project_ws_step(on, "Pallas 1", -1)
+	testing.expect(t, ok && ws == "Pallas 1c", "previous wraps to the last")
+	_, ok = project_ws_step(on, "Home Lab 1", 1)
+	testing.expect(t, !ok, "from elsewhere: no step")
+	// A single workspace steps onto itself (move-next/prev then do nothing).
+	ws, ok = project_ws_step(project_ws_on(0, 2, existing), "Pallas 2", 1)
+	testing.expect(t, ok && ws == "Pallas 2")
+}

@@ -4,7 +4,8 @@
 // The daemon remembers, per project and monitor, which of them was shown
 // last: `track go`, Mod+P and the group lock bring each monitor back there.
 // `track new` adds the next free letter on the focused monitor and
-// `track next|prev` steps through the project's workspaces on it.
+// `track next|prev` steps through the project's workspaces on it;
+// `track move-new|move-next|move-prev` take the focused window along.
 package main
 
 import "core:fmt"
@@ -132,12 +133,42 @@ tracker_step_workspace :: proc(index, dir: int) -> string {
 	tracker.last = index
 	existing, cur, output := sway_workspace_list()
 	n := monitor_number(output)
-	list := project_ws_on(index, n, existing)
-	ws := project_target(tracker.projects[index], n, existing)
-	if i, found := slice.linear_search(list, cur); found {
-		ws = list[(i + dir + len(list)) % len(list)]
-	}
+	ws := project_ws_step(project_ws_on(index, n, existing), cur, dir) or_else project_target(tracker.projects[index], n, existing)
 	sway_command(fmt.tprintf(`workspace "%s" output %s; workspace "%s"`, ws, output, ws))
+	return ws
+}
+
+// The workspace after (dir 1) or before (-1) `cur` in `list`, wrapping;
+// false when `cur` isn't one of them.
+project_ws_step :: proc(list: []string, cur: string, dir: int) -> (string, bool) {
+	i, found := slice.linear_search(list, cur)
+	if !found {return "", false}
+	return list[(i + dir + len(list)) % len(list)], true
+}
+
+// `track move-next|move-prev` (dir 1 / -1) and `track move-new` (dir 0):
+// the focused window to the project's next / previous / a new workspace on
+// this monitor, and the view follows it. From another workspace, next and
+// prev take it to the one this monitor showed last. "" when there's nowhere
+// to go: a single workspace (nothing is created) or no free letter.
+tracker_move_window_step :: proc(index, dir: int) -> string {
+	if index < 0 || index >= len(tracker.projects) {return ""}
+	tracker.last = index
+	existing, cur, output := sway_workspace_list()
+	n := monitor_number(output)
+	ws: string
+	if dir == 0 {
+		ws = project_ws_free(index, n, existing)
+	} else {
+		list := project_ws_on(index, n, existing)
+		ok: bool
+		if ws, ok = project_ws_step(list, cur, dir); !ok {
+			ws = project_target(tracker.projects[index], n, existing)
+		}
+		if ws == cur {return ""}
+	}
+	if ws == "" {return ""}
+	sway_command(fmt.tprintf(`workspace "%s" output %s; move container to workspace "%s"; workspace "%s"`, ws, output, ws, ws))
 	return ws
 }
 

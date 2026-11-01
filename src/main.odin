@@ -46,6 +46,8 @@ commands:
   track move [project]  move the focused window to that project's workspace on this monitor
   track new [project]   another workspace of the project on this monitor ("<name> 1b", "1c", …)
   track next|prev [project]  step through the project's workspaces on this monitor
+  track move-new|move-next|move-prev [project]
+                       the same, taking the focused window along
   track pin [project|off]  for a minute, go/move target this project wherever you are
                            (to gather misplaced windows); each move extends it
   track lock [on|off]  group-lock monitors: they follow each other into/out of projects
@@ -314,6 +316,17 @@ handle_command :: proc(line: string) -> string {
 			if i < 0 {return "no project (name one, or work in one first)\n"}
 			ws := f[1] == "new" ? tracker_new_workspace(i) : tracker_step_workspace(i, f[1] == "next" ? 1 : -1)
 			if ws == "" {return "no free workspace letter\n"}
+			return "ok\n"
+		}
+		// track move-new|move-next|move-prev [project]: the window comes along.
+		if f[1] == "move-new" || f[1] == "move-next" || f[1] == "move-prev" {
+			i := tracker_current_project()
+			if len(f) > 2 {i = project_find(strings.join(f[2:], " ", context.temp_allocator))}
+			if i < 0 {return "no project (name one, or work in one first)\n"}
+			dir := f[1] == "move-new" ? 0 : f[1] == "move-next" ? 1 : -1
+			if tracker_move_window_step(i, dir) == "" {
+				return dir == 0 ? "no free workspace letter\n" : "no other workspace of the project here\n"
+			}
 			return "ok\n"
 		}
 		i := project_find(strings.join(f[1:], " ", context.temp_allocator))
