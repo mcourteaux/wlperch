@@ -214,9 +214,14 @@ without input (default 300; the older `idle_minutes` is still read), and the
 idle time itself is not counted. wlperch asks the compositor for its own
 `ext-idle-notify-v1` notification with that timeout, so it is independent of
 the screen lock: e.g. `idle_seconds = 60` for breaks while swayidle still locks
-after 300 s. Idle inhibitors (a fullscreen video with sway's `inhibit_idle`, an
-app holding an inhibitor, the bar's idle button) count as presence, as they do
-for swayidle: watching a talk or sitting in a call is not a break.
+after 300 s. Only real input counts: idle inhibitors (the bar's eye, a
+fullscreen video with sway's `inhibit_idle`, a fullscreen game, `wlperch idle
+hold`) keep the screen on and unlocked, but not the timer, so the eye can keep
+the screen awake for automated UI tests without logging work. (This needs
+version 2 of `ext-idle-notify-v1`, sway 1.10 and later; with version 1 the
+compositor can't tell the two apart and an inhibitor still counts as presence.)
+Watching a talk or sitting in a call without touching anything does become a
+break; `bridge_breaks` can count short ones as work.
 
 Finished segments are appended to `~/.local/share/wlperch/timelog.tsv`, one
 per line: start and end (UTC, ISO 8601), project, client.

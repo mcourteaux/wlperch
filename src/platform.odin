@@ -34,6 +34,7 @@ Platform :: struct {
 	viewporter:       ^wl.Wp_Viewporter,
 	frac_scale_mgr:   ^wl.Wp_Fractional_Scale_Manager_V1,
 	idle_notifier:    ^wl.Ext_Idle_Notifier_V1,
+	idle_notifier_v:  u32, // 2+: input-only idle notifications
 	inhibit_mgr:      ^wl.Zwp_Idle_Inhibit_Manager_V1, // game_hold.odin
 	xdg_wm_base:      ^wl.Xdg_Wm_Base, // for placeholder windows
 	deco_mgr:         ^wl.Zxdg_Decoration_Manager_V1,
@@ -144,7 +145,8 @@ registry_listener := wl.Registry_Listener {
 		case "zxdg_decoration_manager_v1":
 			plat.deco_mgr = cast(^wl.Zxdg_Decoration_Manager_V1)wl.registry_bind(registry, name, &wl.zxdg_decoration_manager_v1_interface, 1)
 		case "ext_idle_notifier_v1":
-			plat.idle_notifier = cast(^wl.Ext_Idle_Notifier_V1)wl.registry_bind(registry, name, &wl.ext_idle_notifier_v1_interface, 1)
+			plat.idle_notifier_v = min(version, 2)
+			plat.idle_notifier = cast(^wl.Ext_Idle_Notifier_V1)wl.registry_bind(registry, name, &wl.ext_idle_notifier_v1_interface, plat.idle_notifier_v)
 		case "zwp_idle_inhibit_manager_v1":
 			plat.inhibit_mgr = cast(^wl.Zwp_Idle_Inhibit_Manager_V1)wl.registry_bind(registry, name, &wl.zwp_idle_inhibit_manager_v1_interface, 1)
 		case "wp_single_pixel_buffer_manager_v1":
@@ -686,13 +688,21 @@ idle_listener := wl.Ext_Idle_Notification_V1_Listener {
 	},
 }
 
-// Ask the compositor to tell us when there was no input for `timeout`
-// (idle inhibitors, e.g. a playing video, count as activity).
+// Ask the compositor to tell us when there was no input for `timeout`, for
+// the time tracker: only real input counts, so an idle inhibitor (the bar's
+// eye, a playing video, a fullscreen game) keeps the screen on without
+// keeping the timer running. Compositors with only v1 of the protocol
+// can't tell the two apart: there an inhibitor still counts as activity.
 platform_watch_idle :: proc(timeout: time.Duration) -> bool {
 	if plat.idle_notifier == nil || plat.seat == nil {return false}
 	if plat.idle_note != nil {wl.ext_idle_notification_v1_destroy(plat.idle_note)}
 	idle_timeout = timeout
-	plat.idle_note = wl.ext_idle_notifier_v1_get_idle_notification(plat.idle_notifier, u32(time.duration_milliseconds(timeout)), plat.seat)
+	ms := u32(time.duration_milliseconds(timeout))
+	if plat.idle_notifier_v >= 2 {
+		plat.idle_note = wl.ext_idle_notifier_v1_get_input_idle_notification(plat.idle_notifier, ms, plat.seat)
+	} else {
+		plat.idle_note = wl.ext_idle_notifier_v1_get_idle_notification(plat.idle_notifier, ms, plat.seat)
+	}
 	wl.ext_idle_notification_v1_add_listener(plat.idle_note, &idle_listener, nil)
 	return true
 }

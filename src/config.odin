@@ -404,8 +404,9 @@ cpu_graph_width = 48
 [timetracker]
 # Seconds without input after which you're on a break: counting pauses and the
 # break is logged from your last input. Independent of the screen lock (that's
-# swayidle's timeout); idle inhibitors (fullscreen video, the bar's idle
-# button) count as presence. The old idle_minutes is still honoured.
+# the idle lock's); only real input counts: idle inhibitors (the bar's eye, a
+# playing video, a fullscreen game) keep the screen on but not the timer. The
+# old idle_minutes is still honoured.
 idle_seconds = 300
 # Breaks shorter than this many minutes, between two stretches of work on the
 # same project, count as work for it (e.g. waiting for a build). 0 = off, up to
