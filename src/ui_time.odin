@@ -13,10 +13,44 @@ import im "third_party:odin-imgui"
 @(private = "file")
 DAY_LETTERS := [7]string{"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"}
 
+// The day the panel shows: `back` days before today. Reopening the panel
+// returns to today. `lanes` is the most timeline lanes shown since then, so
+// the timeline (and the panel) doesn't change height while browsing.
+@(private = "file")
+tday: struct {
+	back:  int,
+	lanes: int,
+}
+
+time_on_show :: proc() {tday = {}}
+
+// How many days back the log goes (the oldest day there is to browse to).
+@(private = "file")
+oldest_back :: proc(now: i64) -> int {
+	if len(tracker.entries) == 0 {return 0}
+	first := tracker.entries[0].start
+	for e in tracker.entries[:min(len(tracker.entries), 64)] {first = min(first, e.start)}
+	return max(int((local_day_start(now) - local_day_start(first) + 43200) / 86400), 0)
+}
+
 draw_time :: proc(w: f32) {
 	now := time.to_unix_seconds(time.now())
 	today := local_day_start(now)
-	week_from := today - 6 * 86400
+	week_from, _ := local_day_range(now, 6)
+	max_back := oldest_back(now)
+	tday.back = clamp(tday.back, 0, max_back)
+	// Left / right browse the days (not while typing in a field).
+	if !im.GetIO().WantTextInput {
+		if im.IsKeyPressed(.LeftArrow) && tday.back < max_back {tday.back += 1}
+		if im.IsKeyPressed(.RightArrow) && tday.back > 0 {tday.back -= 1}
+	}
+	day_from, day_to := local_day_range(now, tday.back)
+	// The timeline is as tall as the busiest day this week needs (and never
+	// shrinks while the panel is open), so browsing doesn't move the panel.
+	tday.lanes = max(tday.lanes, timeline_lanes(min(week_from, day_from), now + 1))
+	day_end := tday.back == 0 ? now + 1 : day_to
+	// "today", "yesterday" or the date, for counts on the selected day.
+	day_word := tday.back == 0 ? "today" : tday.back == 1 ? "yesterday" : day_label(now, tday.back)
 	week := tracker_totals(week_from, now + 1)
 	week_total: i64
 	for _, s in week {week_total += s}
@@ -32,6 +66,7 @@ draw_time :: proc(w: f32) {
 		return
 	}
 	totals_today := tracker_totals(today, now + 1)
+	totals_day := tday.back == 0 ? totals_today : tracker_totals(day_from, day_end)
 
 	// ---- Status -----------------------------------------------------------
 	p := im.GetCursorScreenPos()
@@ -204,7 +239,7 @@ draw_time :: proc(w: f32) {
 				return x + sz.x + 8
 			}
 			if pr.paying {
-				t := pr.rate > 0 ? fmt.tprintf("Paying job: %s/h\n%s today", fmt_money(pr.rate), fmt_money(f64(totals_today[pr.name]) / 3600 * pr.rate)) : "Paying job (no rate set: the pencil sets one)"
+				t := pr.rate > 0 ? fmt.tprintf("Paying job: %s/h\n%s %s", fmt_money(pr.rate), fmt_money(f64(totals_day[pr.name]) / 3600 * pr.rate), day_word) : "Paying job (no rate set: the pencil sets one)"
 				nx = mark(nx, rp.y + 9, ICON_PAYING, C_GREEN, 0.9, t)
 			}
 			if pr.claude {
@@ -218,7 +253,7 @@ draw_time :: proc(w: f32) {
 				draw_text(fonts.ui, SZ_SMALL, {nx, rp.y + 10}, col32(pr.color, 0.75), bt)
 				nx += measure(fonts.ui, SZ_SMALL, bt).x + 12
 			}
-			tt := fmt_duration(totals_today[pr.name])
+			tt := fmt_duration(totals_day[pr.name])
 			tx := rp.x + inner - measure(fonts.mono, SZ_BODY, tt).x - 26 - PENCIL_W
 			// Left of today's total, where there's room.
 			if by_claude {
@@ -227,9 +262,12 @@ draw_time :: proc(w: f32) {
 				if nx + csz.x + 12 < tx {draw_text(fonts.ui, SZ_SMALL, {tx - csz.x - 12, rp.y + 10}, col32(C_GREEN), cap)}
 			}
 		}
-		tt := fmt_duration(totals_today[pr.name])
+		tt := fmt_duration(totals_day[pr.name])
 		tsz := measure(fonts.mono, SZ_BODY, tt)
-		draw_text(fonts.mono, SZ_BODY, {rp.x + inner - tsz.x - 26 - PENCIL_W, rp.y + 8}, col32(by_claude ? pr.color : totals_today[pr.name] > 0 ? C_TEXT : C_FAINT), tt)
+		draw_text(fonts.mono, SZ_BODY, {rp.x + inner - tsz.x - 26 - PENCIL_W, rp.y + 8}, col32(by_claude && tday.back == 0 ? pr.color : totals_day[pr.name] > 0 ? C_TEXT : C_FAINT), tt)
+		if tday.back > 0 && im.IsMouseHoveringRect({rp.x + inner - tsz.x - 26 - PENCIL_W, rp.y}, {rp.x + inner - 26 - PENCIL_W, rp.y + h}) {
+			tip(fmt.tprintf("%s on %s", pr.name, day_label(now, tday.back)))
+		}
 		icon := active ? ICON_MONITORS : ICON_PLAY
 		draw_text(fonts.ui, 15, {rp.x + inner - 16 - PENCIL_W, rp.y + 8}, col32(hovered || active ? pr.color : C_FAINT, active && !hovered ? 0.6 : 1), icon)
 		if editing && draw_rename_editor(pr, inner) {rename_go = true}
@@ -254,32 +292,52 @@ draw_time :: proc(w: f32) {
 		hide_requested = true // get out of the way of the new workspaces
 	}
 
-	// ---- Today ----------------------------------------------------------
+	// ---- The day: today, or a past one (‹ › and the arrow keys) ---------
 	day_total: i64
-	for _, s in totals_today {day_total += s}
-	sub_heading(fmt.tprintf("Today   ·   %s", fmt_duration(day_total)))
-	draw_day_timeline(today, now, inner)
+	for _, s in totals_day {day_total += s}
+	{
+		hp := im.GetCursorScreenPos()
+		BS :: f32(26)
+		title := strings.to_upper(fmt.tprintf("%s   ·   %s", day_label(now, tday.back), fmt_duration(day_total)), context.temp_allocator)
+		draw_text(fonts.bold, SZ_SMALL, {hp.x, hp.y + 8}, col32(tday.back == 0 ? C_FAINT : C_TEAL), title)
+		x := hp.x + inner - 2 * BS
+		if tday.back > 0 {
+			lbl := "Today"
+			lw := measure(fonts.bold, SZ_SMALL, lbl).x + 18
+			x -= lw + 6
+			im.SetCursorScreenPos({x, hp.y})
+			if text_button("##day-today", lbl, lw, BS) {tday.back = 0}
+			x += lw + 6
+		}
+		im.SetCursorScreenPos({x, hp.y})
+		if day_button("##day-prev", -1, tday.back < max_back, "Previous day (←)") {tday.back += 1}
+		im.SetCursorScreenPos({x + BS, hp.y})
+		if day_button("##day-next", 1, tday.back > 0, "Next day (→)") {tday.back -= 1}
+		im.SetCursorScreenPos({hp.x, hp.y})
+		im.Dummy({inner, BS + 2})
+	}
+	draw_day_timeline(day_from, day_to, now, inner, fmt.tprintf("Nothing tracked on %s", day_label(now, tday.back)))
 	im.Dummy({1, 4})
 
 	// ---- Breaks (away from keyboard) ------------------------------------
 	{
-		breaks_today := tracker_breaks(today, now + 1)
+		breaks_day := tracker_breaks(day_from, day_end)
 		breaks_week := tracker_breaks(week_from, now + 1)
-		n_today, n_week: int
-		for _, b in breaks_today {n_today += b.count}
+		n_day, n_week: int
+		for _, b in breaks_day {n_day += b.count}
 		for _, b in breaks_week {n_week += b.count}
-		sub_heading(fmt.tprintf("Away from keyboard   ·   today %d×   ·   7 days %d×", n_today, n_week))
+		sub_heading(fmt.tprintf("Away from keyboard   ·   %s %d×   ·   7 days %d×", day_word, n_day, n_week))
 		any_bridged := false
 		for _, b in breaks_week {any_bridged ||= b.bridged > 0}
-		if n_week == 0 && !tracker.away && !any_bridged {
+		if n_week == 0 && n_day == 0 && !tracker.away && !any_bridged {
 			label(fonts.ui, SZ_SMALL, col32(C_FAINT), fmt.tprintf("No breaks yet (a break = no input for %s)", fmt_idle(tracker.idle)))
 		}
-		row :: proc(name, client: string, color: u32, bt, bw: Break_Stats, work_week: i64, inner: f32) {
+		row :: proc(name, client: string, color: u32, bt, bw: Break_Stats, work_week: i64, day_word: string, inner: f32) {
 			rp := im.GetCursorScreenPos()
 			h: f32 = 30
 			im.DrawList_AddCircleFilled(dl(), {rp.x + 6, rp.y + h / 2}, 4, col32(color, 0.8))
 			draw_text(fonts.ui, SZ_BODY, {rp.x + 18, rp.y + 6}, col32(C_TEXT), name)
-			counts := fmt.tprintf("%d× today  ·  %d× this week", bt.count, bw.count)
+			counts := fmt.tprintf("%d× %s  ·  %d× this week", bt.count, day_word, bw.count)
 			if bw.bridged > 0 {counts = fmt.tprintf("%s  ·  %d short, counted as work", counts, bw.bridged)}
 			nsz := measure(fonts.ui, SZ_BODY, name)
 			draw_text(fonts.ui, SZ_SMALL, {rp.x + 26 + nsz.x, rp.y + 8}, col32(C_FAINT), counts)
@@ -294,13 +352,16 @@ draw_time :: proc(w: f32) {
 		}
 		for pr in tracker.projects {
 			bw, has := breaks_week[pr.name]
-			if !has {continue}
-			row(pr.name, pr.client, pr.color, breaks_today[pr.name], bw, week[pr.name], inner)
+			_, on_day := breaks_day[pr.name]
+			if !has && !on_day {continue}
+			row(pr.name, pr.client, pr.color, breaks_day[pr.name], bw, week[pr.name], day_word, inner)
 		}
-		if bw, has := breaks_week[NO_PROJECT]; has {
-			row("No project", "", C_FAINT, breaks_today[NO_PROJECT], bw, 0, inner)
+		_, nop_week := breaks_week[NO_PROJECT]
+		_, nop_day := breaks_day[NO_PROJECT]
+		if nop_week || nop_day {
+			row("No project", "", C_FAINT, breaks_day[NO_PROJECT], breaks_week[NO_PROJECT], 0, day_word, inner)
 		}
-		if tracker.away {
+		if tracker.away && tday.back == 0 {
 			if left, waiting := tracker_waiting(now); waiting {
 				label(fonts.ui, SZ_SMALL, col32(C_MUTED), fmt.tprintf("Away right now since %s: counts as work if you're back on %s within %s", fmt_duration(now - tracker.away_start), tracker.away_project, fmt_duration(left, true)))
 			} else {
@@ -310,7 +371,10 @@ draw_time :: proc(w: f32) {
 	}
 
 	// ---- Week -----------------------------------------------------------
-	sub_heading("Last 7 days")
+	// The last 7 days, or the 7 up to the day shown when that's longer ago;
+	// the day shown is highlighted, and a click on a day shows it.
+	base := max(tday.back - 6, 0) // days back of the rightmost column
+	sub_heading(base == 0 ? "Last 7 days" : fmt.tprintf("7 days to %s", day_label(now, base)))
 	gp := im.GetCursorScreenPos()
 	d := dl()
 	gh: f32 = 110
@@ -318,8 +382,8 @@ draw_time :: proc(w: f32) {
 	days: [7]map[string]i64
 	most: i64 = 4 * 3600
 	for i in 0 ..< 7 {
-		from := week_from + i64(i) * 86400
-		days[i] = tracker_totals(from, from + 86400)
+		from, to := local_day_range(now, base + 6 - i)
+		days[i] = tracker_totals(from, to)
 		tot: i64
 		for _, s in days[i] {tot += s}
 		most = max(most, tot)
@@ -345,18 +409,25 @@ draw_time :: proc(w: f32) {
 			im.DrawList_AddRectFilled(d, {x0, y - hseg}, {x1, y}, col32(pr.color), 3)
 			y -= hseg
 		}
-		day := week_from + i64(i) * 86400
+		back := base + 6 - i
+		day, _ := local_day_range(now, back)
 		wd := 0
 		if r, ok := clock_read(local_region, time.unix(day + 43200, 0)); ok {wd = weekday_of(r.dt)}
 		lbl := DAY_LETTERS[wd]
-		is_today := i == 6
-		lsz := measure(is_today ? fonts.bold : fonts.ui, SZ_SMALL, lbl)
-		draw_text(is_today ? fonts.bold : fonts.ui, SZ_SMALL, {(x0 + x1) / 2 - lsz.x / 2, gp.y + gh + 3}, col32(is_today ? C_TEXT : C_MUTED), lbl)
-		if tot > 0 && im.IsMouseHoveringRect({x0 - 4, gp.y}, {x1 + 4, gp.y + gh}) {
+		shown := back == tday.back
+		if shown {im.DrawList_AddRectFilled(d, {x0 - colw * 0.18, gp.y + 3}, {x1 + colw * 0.18, gp.y + gh - 2}, col32(C_OVERLAY, 0.06), 5)}
+		lsz := measure(shown ? fonts.bold : fonts.ui, SZ_SMALL, lbl)
+		draw_text(shown ? fonts.bold : fonts.ui, SZ_SMALL, {(x0 + x1) / 2 - lsz.x / 2, gp.y + gh + 3}, col32(shown ? C_TEXT : C_MUTED), lbl)
+		if im.IsMouseHoveringRect({x0 - 4, gp.y}, {x1 + 4, gp.y + gh + label_h}) {
 			lines: [dynamic]string
 			lines.allocator = context.temp_allocator
+			append(&lines, day_label(now, back))
 			for pr in tracker.projects {
 				if s := days[i][pr.name]; s > 0 {append(&lines, fmt.tprintf("%s  %s", pr.name, fmt_duration(s)))}
+			}
+			if back <= max_back {
+				im.SetMouseCursor(.Hand)
+				if im.IsMouseClicked(.Left) {tday.back = back}
 			}
 			tip(strings.join(lines[:], "\n", context.temp_allocator))
 		}
@@ -687,7 +758,7 @@ tl_clamp_view :: proc() {
 // hatched in the project's color, Claude's counted work is a lighter fill
 // with a solid top edge.
 @(private = "file")
-draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
+draw_day_timeline :: proc(day_start, day_end, now: i64, inner: f32, empty: string) {
 	Seg :: struct {
 		s, e:    i64,
 		project: string,
@@ -698,7 +769,6 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 	}
 	segs: [dynamic]Seg
 	segs.allocator = context.temp_allocator
-	day_end := day_start + 86400
 	any_bridged, any_claude := false, false
 	for e in tracker_view(now) {
 		if e.end > day_start && e.start < day_end {
@@ -759,7 +829,9 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 
 	p := im.GetCursorScreenPos()
 	// One lane: as tall as it always was; more share a little more height.
-	n_lanes := len(lanes)
+	// Never fewer lanes than shown since the panel opened: no jumps while browsing.
+	n_lanes := max(len(lanes), tday.lanes)
+	tday.lanes = n_lanes
 	lane_h: f32 = n_lanes == 1 ? 18 : 13
 	LANE_GAP :: f32(3)
 	bh := 4 + f32(n_lanes) * lane_h + f32(n_lanes - 1) * LANE_GAP
@@ -854,9 +926,14 @@ draw_day_timeline :: proc(day_start, now: i64, inner: f32) {
 			im.DrawList_AddRectFilled(d, {x0, y0}, {x1, y1}, c, 2)
 		}
 	}
-	// "Now" marker.
-	nx := x_of(now, view_from, view_span, p.x, inner)
-	im.DrawList_AddLine(d, {nx, p.y}, {nx, p.y + bh}, col32(C_TEXT, 0.9), 1.5)
+	// "Now" marker, on today.
+	if now >= day_start && now < day_end {
+		nx := x_of(now, view_from, view_span, p.x, inner)
+		im.DrawList_AddLine(d, {nx, p.y}, {nx, p.y + bh}, col32(C_TEXT, 0.9), 1.5)
+	} else if len(segs) == 0 {
+		esz := measure(fonts.ui, SZ_SMALL, empty)
+		draw_text(fonts.ui, SZ_SMALL, {p.x + (inner - esz.x) / 2, p.y + (bh - esz.y) / 2}, col32(C_FAINT), empty)
+	}
 	im.DrawList_PopClipRect(d)
 	im.Dummy({inner, bh})
 
@@ -1248,4 +1325,49 @@ draw_rename_result :: proc(inner: f32) {
 	}
 	im.SetCursorScreenPos({top.x, bot + 6})
 	im.Dummy({inner, 1})
+}
+
+// ‹ (dir -1) or › (dir 1), drawn as a chevron; dim and inert when disabled.
+@(private = "file")
+day_button :: proc(id: string, dir: int, enabled: bool, tooltip: string) -> bool {
+	S :: f32(26)
+	p := im.GetCursorScreenPos()
+	clicked := im.InvisibleButton(cstr(id), {S, S}) && enabled
+	hovered := im.IsItemHovered() && enabled
+	d := dl()
+	if hovered {
+		im.DrawList_AddRectFilled(d, p, {p.x + S, p.y + S}, col32(C_OVERLAY, 0.07), 7)
+		im.SetMouseCursor(.Hand)
+		tip(tooltip)
+	}
+	c := enabled ? col32(hovered ? C_TEXT : C_MUTED) : col32(C_FAINT, 0.5)
+	cx, cy := p.x + S / 2, p.y + S / 2
+	tipx, armx := cx + f32(dir) * 3, cx - f32(dir) * 3
+	im.DrawList_AddLine(d, {armx, cy - 6}, {tipx, cy}, c, 2)
+	im.DrawList_AddLine(d, {tipx, cy}, {armx, cy + 6}, c, 2)
+	return clicked
+}
+
+// A small text button (the day bar's "Today").
+@(private = "file")
+text_button :: proc(id, text: string, w, h: f32) -> bool {
+	p := im.GetCursorScreenPos()
+	clicked := im.InvisibleButton(cstr(id), {w, h})
+	hovered := im.IsItemHovered()
+	im.DrawList_AddRectFilled(dl(), p, {p.x + w, p.y + h}, col32(C_TEAL, hovered ? 0.2 : 0.1), 7)
+	if hovered {im.SetMouseCursor(.Hand)}
+	tsz := measure(fonts.bold, SZ_SMALL, text)
+	draw_text(fonts.bold, SZ_SMALL, {p.x + (w - tsz.x) / 2, p.y + (h - tsz.y) / 2}, col32(C_TEAL), text)
+	return clicked
+}
+
+// How many timeline lanes [from, to) needs: one per project (or name only
+// the log knows) with entries there, plus one for breaks outside projects.
+@(private = "file")
+timeline_lanes :: proc(from, to: i64) -> int {
+	names := make(map[string]bool, 16, context.temp_allocator)
+	for e in tracker_view(time.to_unix_seconds(time.now())) {
+		if e.end > from && e.start < to {names[e.project] = true}
+	}
+	return max(len(names), 1)
 }

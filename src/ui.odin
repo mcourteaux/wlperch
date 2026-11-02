@@ -61,6 +61,7 @@ services_start :: proc() {
 on_show :: proc() {
 	ui.shown_frames = 0
 	perf_view.back, perf_view.frozen = 0, {} // reopened: live again (zoom kept)
+	time_on_show() // back to today
 	weather_on_show()
 	media_refresh_async()
 	network_on_show()

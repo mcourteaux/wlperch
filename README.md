@@ -351,6 +351,12 @@ The panel shows:
   the pointer), drag to pan, double-click to see the whole day again.
 - a 7-day stacked chart (hover a day for its breakdown).
 
+‹ and › next to the day's title (or the ← and → keys) browse back through
+earlier days, as far as the log goes; a click on a day in the 7-day chart
+jumps to it, and "Today" comes back. A past day's totals, project rows,
+timeline and breaks are that day's, counted the same way as the export.
+Reopening the panel shows today again.
+
 `wlperch status timer` feeds a waybar pill (`⏱ ACME 1:23`, class `running`;
 `waiting` while a bridgeable break may still count).
 

@@ -699,11 +699,46 @@ tracker_sync :: proc() {
 
 // ---- Aggregation ---------------------------------------------------------
 
-// Local midnight (unix) of the day containing `t`, using the current UTC offset.
+// Local midnight (unix) of the day containing `t`.
 local_day_start :: proc(t: i64) -> i64 {
-	off: i64
-	if r, ok := clock_read(local_region, time.unix(t, 0)); ok {off = i64(r.offset_min) * 60}
-	return (t + off) / 86400 * 86400 - off
+	offset_at :: proc(t: i64) -> i64 {
+		if r, ok := clock_read(local_region, time.unix(t, 0)); ok {return i64(r.offset_min) * 60}
+		return 0
+	}
+	// The date is t's own; midnight uses the offset in force at midnight,
+	// which differs from t's on the days summer time starts or ends.
+	date := (t + offset_at(t)) / 86400 * 86400
+	start := date - offset_at(t)
+	for _ in 0 ..< 2 {
+		next := date - offset_at(start)
+		if next == start {break}
+		start = next
+	}
+	return start
+}
+
+// The local day `back` days before the one holding `now`, as [from, to):
+// one local midnight to the next, so 23 or 25 hours across a DST change.
+local_day_range :: proc(now: i64, back: int) -> (from, to: i64) {
+	today := local_day_start(now)
+	// Noon of the wanted day: DST shifts on the way can't move it off it.
+	from = local_day_start(today - i64(back) * 86400 + 43200)
+	to = local_day_start(from + 86400 + 43200)
+	return
+}
+
+// "Today", "Yesterday", "Mon 27 Oct", or "Mon 27 Oct 2025" in another year.
+day_label :: proc(now: i64, back: int) -> string {
+	switch back {
+	case 0: return "Today"
+	case 1: return "Yesterday"
+	}
+	from, _ := local_day_range(now, back)
+	r, _ := clock_read(local_region, time.unix(from + 43200, 0))
+	n, _ := clock_read(local_region, time.unix(now, 0))
+	label := fmt.tprintf("%s %d %s", WEEKDAYS[weekday_of(r.dt)][:3], r.dt.day, MONTHS[r.dt.month - 1][:3])
+	if r.dt.year != n.dt.year {label = fmt.tprintf("%s %d", label, r.dt.year)}
+	return label
 }
 
 // ---- Bridging short breaks ------------------------------------------------
