@@ -188,8 +188,17 @@ fetch() {
 	fi
 	if [[ ! -f $dest ]]; then
 		mkdir -p "$(dirname "$dest")"
-		curl -fsSL --retry 4 --retry-delay 2 --connect-timeout 30 -o "$dest.part" "$url" ||
-			{ rm -f "$dest.part"; die "download failed: $url"; }
+		# snapshot.debian.org is often overloaded (502/503/504 for minutes):
+		# curl's own retries back off exponentially for up to 10 minutes, and
+		# a few rounds of those on top.
+		local round
+		for round in 1 2 3; do
+			curl -fsSL --retry 10 --retry-max-time 600 --connect-timeout 30 -o "$dest.part" "$url" && break
+			rm -f "$dest.part"
+			((round < 3)) || die "download failed: $url"
+			warn "download failed (round $round of 3), trying again in 60 s: $url"
+			sleep 60
+		done
 		mv -f "$dest.part" "$dest"
 	fi
 	if [[ -n $want ]]; then
