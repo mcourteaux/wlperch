@@ -20,6 +20,8 @@ import "core:sync"
 Play_Window :: struct {
 	ws, app, title: string,
 	pid:            i32,
+	con:            i64, // sway's con id
+	urgent:         bool,
 }
 
 Play_Player :: struct {
@@ -113,7 +115,6 @@ playing_workspaces :: proc(streams: []Play_Stream, windows: []Play_Window, playe
 }
 
 // The parent of `pid`, from /proc (0 if it's gone).
-@(private = "file")
 proc_parent :: proc(pid: i32) -> i32 {
 	path := fmt.tprintf("/proc/%d/stat", pid)
 	data, err := os.read_entire_file(path, context.temp_allocator)
@@ -146,7 +147,6 @@ playing_streams :: proc() -> []Play_Stream {
 }
 
 // Every window, with its workspace, owner process and title.
-@(private = "file")
 tree_windows :: proc() -> []Play_Window {
 	out := make([dynamic]Play_Window, context.temp_allocator)
 	reply, ok := sway_request(IPC_GET_TREE, "")
@@ -160,7 +160,7 @@ tree_windows :: proc() -> []Play_Window {
 		if pid := jint(jobj(n, "pid")); pid > 0 && (t == "con" || t == "floating_con") && ws != "" && ws != "__i3_scratch" {
 			app := jstr(jobj(n, "app_id"))
 			if app == "" {app = jstr(jobj(jobj(n, "window_properties"), "class"))}
-			append(out, Play_Window{ws, app, jstr(jobj(n, "name")), i32(pid)})
+			append(out, Play_Window{ws, app, jstr(jobj(n, "name")), i32(pid), i64(jint(jobj(n, "id"))), jbool(jobj(n, "urgent"))})
 		}
 		for list in ([]string{"nodes", "floating_nodes"}) {
 			for c in jarr(jobj(n, list)) {walk(c, ws, out)}

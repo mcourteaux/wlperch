@@ -14,10 +14,10 @@ test_parent :: proc(pid: i32) -> i32 {
 @(test)
 test_playing_workspaces :: proc(t: ^testing.T) {
 	wins := []Play_Window{
-		{"1", "firefox", "Mail — Mozilla Firefox", 500},
-		{"5", "firefox", "Some Video - YouTube — Mozilla Firefox", 500},
-		{"2", "mpv", "song.flac - mpv", 600},
-		{"3", "kitty", "zsh", 700},
+		{"1", "firefox", "Mail — Mozilla Firefox", 500, 0, false},
+		{"5", "firefox", "Some Video - YouTube — Mozilla Firefox", 500, 0, false},
+		{"2", "mpv", "song.flac - mpv", 600, 0, false},
+		{"3", "kitty", "zsh", 700, 0, false},
 	}
 	ws :: proc(r: []Playing_Ws) -> [dynamic]string {
 		out := make([dynamic]string, context.temp_allocator)

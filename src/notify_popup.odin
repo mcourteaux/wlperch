@@ -321,10 +321,25 @@ render :: proc(p: ^Popup, n: ^Notification) {
 	app := n.app != "" ? n.app : "Notification"
 	stamp := ""
 	if r, ok := clock_read(local_region, time.unix(n.at, 0)); ok {stamp = fmt.tprintf("%02d:%02d", r.dt.hour, r.dt.minute)}
-	head := ellipsize(&soft_regular, PX_APP, tw - 60, app)
+	// The workspace it came from, in the project's colour on a project's.
+	ws_chip := ""
+	ws_col: u32 = C_MUTED
+	ws_w: f32 = 0
+	if n.origin_ws != "" {
+		ws_chip = ellipsize(&soft_bold, PX_APP - 1, 120, n.origin_ws)
+		if pi := project_for_workspace(n.origin_ws); pi >= 0 {ws_col = tracker.projects[pi].color}
+		ws_w = soft_text_width(&soft_bold, PX_APP - 1, ws_chip) + 12
+	}
+	defer if n.origin_ws != "" {delete(ws_chip)}
+	head := ellipsize(&soft_regular, PX_APP, max(tw - 60 - (ws_w > 0 ? ws_w + 7 : 0), 40), app)
 	defer delete(head)
 	text(&cv, &soft_regular, PX_APP, tx, y, head, critical ? C_RED : C_MUTED)
 	cx := tx + soft_text_width(&soft_regular, PX_APP, head) + 7
+	if ws_chip != "" {
+		fill_rr(&cv, {cx, y - 1, ws_w, 16}, 8, ws_col, ws_col == C_MUTED ? 0.12 : 0.18)
+		text(&cv, &soft_bold, PX_APP - 1, cx + 6, y, ws_chip, ws_col == C_MUTED ? C_MUTED : bar_ink(ws_col))
+		cx += ws_w + 6
+	}
 	// More messages from this app came in before this one: how many are new.
 	if run := notif_run_unread(notifs.list[:], n); run > 1 {
 		more := fmt.tprintf("· %d new", run)

@@ -442,10 +442,21 @@ can't start it again, and stops it. **Hand back** unmasks it, sets
 gets the name again.
 
 Popups stack in the top-right corner, newest on top, at most four at a time.
-- **Click:** runs the notification's default action, or focuses the app's window.
+- **Click:** runs the notification's default action, or focuses the window it
+  came from.
 - **Action buttons:** invoke that action.
 - **× or right click:** dismisses it; **middle click** dismisses all.
 - **Hover:** pauses the timeout.
+
+Next to the app's name, a popup shows the workspace it came from, in the
+project's colour on a project workspace. wlperch asks the bus which process
+sent it and finds that process's window in sway, walking up its parents (so
+`notify-send` from a shell in a terminal, or a hook of a program running
+there, finds the terminal). A sender without a window (a portal relaying a
+sandboxed app) falls back to windows whose app id matches the desktop entry or
+app name. When one app has windows on several workspaces, an urgent window or
+one whose title shares the notification's text decides; otherwise no
+workspace is shown.
 
 Timeouts are 5 s for low urgency and 8 s for normal; critical notifications stay
 until dismissed, and an app may set its own timeout.

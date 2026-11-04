@@ -36,6 +36,11 @@ Notification :: struct {
 	summary:   string,
 	body:      string, // markup stripped
 	desktop:   string, // desktop-entry hint
+	// Where it came from (notif_origin.odin): the sender's workspace ("" =
+	// unknown or ambiguous) and window (0 = unknown, or several there).
+	// Not kept in the history file.
+	origin_ws:  string,
+	origin_con: i64,
 	tag:       string, // x-canonical-private-synchronous / x-dunst-stack-tag
 	icon:      ^Notif_Icon,
 	urgency:   u8, // 0 low, 1 normal, 2 critical
@@ -88,7 +93,7 @@ notif_find :: proc(id: u32) -> (^Notification, int) {
 
 @(private = "file")
 notif_free :: proc(n: ^Notification) {
-	delete(n.app); delete(n.summary); delete(n.body); delete(n.desktop); delete(n.tag)
+	delete(n.app); delete(n.summary); delete(n.body); delete(n.desktop); delete(n.tag); delete(n.origin_ws)
 	for a in n.actions {delete(a.key); delete(a.label)}
 	delete(n.actions)
 	free(n)
@@ -141,6 +146,9 @@ notif_invoke :: proc(id: u32, key: string) {
 }
 
 focus_app :: proc(n: ^Notification) {
+	// The window it came from, or at least its workspace.
+	if n.origin_con != 0 && sway_command(fmt.tprintf("[con_id=%d] focus", n.origin_con)) {return}
+	if n.origin_ws != "" && sway_command(fmt.tprintf(`workspace "%s"`, sway_quote(n.origin_ws))) {return}
 	name := n.desktop != "" ? n.desktop : n.app
 	if name == "" {return}
 	// Desktop entries look like org.gnome.Nautilus or firefox; app_ids match either.
@@ -450,7 +458,7 @@ handle_notify :: proc(m: ^Sd_Bus_Message) -> u32 {
 		// Moves to the newest position.
 		_, i := notif_find(n.id)
 		ordered_remove(&notifs.list, i)
-		delete(n.app); delete(n.summary); delete(n.body); delete(n.desktop); delete(n.tag)
+		delete(n.app); delete(n.summary); delete(n.body); delete(n.desktop); delete(n.tag); delete(n.origin_ws)
 		for a in n.actions {delete(a.key); delete(a.label)}
 		delete(n.actions)
 		id := n.id
@@ -477,6 +485,10 @@ handle_notify :: proc(m: ^Sd_Bus_Message) -> u32 {
 	// only, like dunst's OSD stack: they don't fill the history.
 	n.transient = transient || (tag != "" && value >= 0)
 	n.resident = resident
+	if !n.transient {
+		ows, ocon := notif_origin_lookup(notifs.bus, string(sd_bus_message_get_sender(m)), n.app, n.desktop, n.summary, n.body)
+		n.origin_ws, n.origin_con = strings.clone(ows), ocon
+	}
 	n.open = true
 	n.popup = !notifs.dnd || n.urgency == 2 || (tag != "" && value >= 0) // OSDs answer something you just did
 	switch {
