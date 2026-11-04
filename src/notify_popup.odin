@@ -342,7 +342,9 @@ render :: proc(p: ^Popup, n: ^Notification) {
 		ink := ws_plain ? ws_col : bar_ink(ws_col)
 		fill_rr(&cv, chip, 8, ws_col, ws_plain ? 0.08 : 0.18)
 		stroke_rr(&cv, chip, 8, ink, ws_plain ? 0.5 : 0.85)
-		text(&cv, &soft_bold, PX_APP - 1, cx + 6, y, ws_chip, ink)
+		// Centred on the letters: baseline half a cap height below the middle.
+		base := chip.y + chip.h / 2 + soft_cap_height(&soft_bold, PX_APP - 1) / 2
+		text(&cv, &soft_bold, PX_APP - 1, cx + 6, base - soft_ascent(&soft_bold, PX_APP - 1), ws_chip, ink)
 		cx += ws_w + 6
 	}
 	// More messages from this app came in before this one: how many are new.

@@ -442,6 +442,14 @@ soft_ascent :: proc(f: ^Soft_Font, px: f32) -> f32 {
 	return f32(asc) * px * f.scale1
 }
 
+// Cap height in pixels (the top of "H" above the baseline), for centring
+// text on its letters rather than on the line box.
+soft_cap_height :: proc(f: ^Soft_Font, px: f32) -> f32 {
+	x0, y0, x1, y1: c.int
+	if stbtt.GetCodepointBox(&f.info, 'H', &x0, &y0, &x1, &y1) == 0 {return soft_ascent(f, px) * 0.7}
+	return f32(y1) * px * f.scale1
+}
+
 // ---- Glyph cache -------------------------------------------------------------------------------
 //
 // Glyphs are drawn at their exact horizontal position, in quarter pixels (the
