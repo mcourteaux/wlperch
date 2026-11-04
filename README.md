@@ -456,7 +456,12 @@ there, finds the terminal). A sender without a window (a portal relaying a
 sandboxed app) falls back to windows whose app id matches the desktop entry or
 app name. When one app has windows on several workspaces, an urgent window or
 one whose title shares the notification's text decides; otherwise no
-workspace is shown.
+workspace is shown. The Notifications panel shows the same chip, dimmed since
+the window may have moved since: once on the app line when all of a group's
+messages came from one workspace, otherwise after each message. A click on it
+goes to that window or workspace, while sway still has it. The workspace is
+kept in the history file (format `WLN3`; older files still load, but an older
+wlperch can't read the new one).
 
 Timeouts are 5 s for low urgency and 8 s for normal; critical notifications stay
 until dismissed, and an app may set its own timeout.

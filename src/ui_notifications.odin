@@ -95,6 +95,38 @@ clip :: proc(s: string, max: int) -> string {
 	return s
 }
 
+// The workspace a notification came from, as on its popup but dimmed: it may
+// have changed since. A click goes there while sway still has it.
+@(private = "file")
+ws_chip :: proc(n: ^Notification, pos: Vec2, room: f32) {
+	if n.origin_ws == "" || room < 30 {return}
+	col, plain := C_TEXT, true
+	if pi := project_for_workspace(n.origin_ws); pi >= 0 {col, plain = tracker.projects[pi].color, false}
+	ink := plain ? col : bar_ink(col)
+	lab := clip(n.origin_ws, 24)
+	sz := measure(fonts.bold, SZ_SMALL, lab)
+	if sz.x + 12 > room {return}
+	H :: 17
+	r0, r1 := pos, Vec2{pos.x + sz.x + 12, pos.y + H}
+	window, workspace := notif_origin_alive(n)
+	alive := window || workspace
+	back := im.GetCursorScreenPos()
+	im.SetCursorScreenPos(r0)
+	clicked := im.InvisibleButton(cstr(fmt.tprintf("##ws%d", n.id)), r1 - r0)
+	hov := im.IsItemHovered()
+	im.SetCursorScreenPos(back)
+	k: f32 = hov && alive ? 1 : 0.6
+	d := dl()
+	im.DrawList_AddRectFilled(d, r0, r1, col32(col, (plain ? 0.08 : 0.18) * k), H / 2)
+	im.DrawList_AddRect(d, r0, r1, col32(ink, (plain ? 0.5 : 0.85) * k), H / 2)
+	draw_text(fonts.bold, SZ_SMALL, {r0.x + 6, r0.y + (H - sz.y) / 2}, col32(ink, hov && alive ? 1 : 0.7), lab)
+	if hov {
+		if alive {im.SetMouseCursor(.Hand)}
+		tip(alive ? fmt.tprintf("From workspace %s (may have changed since): click to go there", n.origin_ws) : fmt.tprintf("From workspace %s, which is gone now", n.origin_ws))
+	}
+	if clicked && alive && notif_go_origin(n) {hide_requested = true}
+}
+
 draw_notifications :: proc(w: f32) {
 	card_begin("notifications", w)
 	defer card_end()
@@ -195,12 +227,17 @@ draw_notifications :: proc(w: f32) {
 	day := ""
 	group_id: u32 // the group's newest entry
 	group_size, group_at := 0, 0
+	group_ws_same := true // every message of the group came from one workspace: its chip once, on the app line
 	prev_bottom: f32 // the row above's bottom edge, where a group's thread comes from
 	prev_icon: ^Notif_Icon // the row above's (icons are shared by content)
 	for n, k in rows {
 		if !cont[k] {
 			group_id, group_at, group_size = n.id, 0, 1
-			for j := k + 1; j < len(rows) && cont[j]; j += 1 {group_size += 1}
+			group_ws_same = true
+			for j := k + 1; j < len(rows) && cont[j]; j += 1 {
+				group_size += 1
+				if rows[j].origin_ws != n.origin_ws {group_ws_same = false}
+			}
 		} else {
 			group_at += 1
 		}
@@ -306,10 +343,13 @@ draw_notifications :: proc(w: f32) {
 			app_col := n.urgency == 2 ? col32(C_RED) : col32(C_MUTED)
 			app := n.app != "" ? n.app : "Notification"
 			draw_text(fonts.ui, SZ_SMALL, {tx, y}, app_col, app)
+			gx := tx + measure(fonts.ui, SZ_SMALL, app).x + 6
 			if group_size > 1 {
-				gx := tx + measure(fonts.ui, SZ_SMALL, app).x + 6
-				draw_text(fonts.ui, SZ_SMALL, {gx, y}, col32(C_FAINT), fmt.tprintf("· %d", group_size))
+				more := fmt.tprintf("· %d", group_size)
+				draw_text(fonts.ui, SZ_SMALL, {gx, y}, col32(C_FAINT), more)
+				gx += measure(fonts.ui, SZ_SMALL, more).x + 6
 			}
+			if group_ws_same {ws_chip(n, {gx, y - 1}, lw - (gx - p.x) - 50)}
 			y += 16
 		} else {
 			y = p.y + top
@@ -325,6 +365,12 @@ draw_notifications :: proc(w: f32) {
 			im.DrawList_AddRectFilled(d, {cx, y}, {cx + csz.x + 12, y + 17}, col32(C_PURPLE, 0.18), 8.5)
 			draw_text(fonts.bold, SZ_SMALL, {cx + 6, y + 1}, col32(C_PURPLE), cnt)
 			if im.IsMouseHoveringRect({cx, y}, {cx + csz.x + 12, y + 17}) {tip(fmt.tprintf("%d times in a row", n.count))}
+		}
+		// Messages of one group from different workspaces: each its own.
+		if !group_ws_same {
+			cx := tx + measure(fonts.bold, SZ_BODY, sum_s).x + 7
+			if n.count > 1 {cx += measure(fonts.bold, SZ_SMALL, fmt.tprintf("×%d", n.count)).x + 12 + 6}
+			ws_chip(n, {cx, y}, lw - (cx - p.x) - 50)
 		}
 		y += 19
 		if body != "" {

@@ -10,6 +10,7 @@ import "core:log"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:sync"
 import "core:sys/posix"
 import "core:time"
 
@@ -38,7 +39,8 @@ Notification :: struct {
 	desktop:   string, // desktop-entry hint
 	// Where it came from (notif_origin.odin): the sender's workspace ("" =
 	// unknown or ambiguous) and window (0 = unknown, or several there).
-	// Not kept in the history file.
+	// The workspace is kept in the history file; the window only while this
+	// daemon runs (con ids don't outlive sway).
 	origin_ws:  string,
 	origin_con: i64,
 	tag:       string, // x-canonical-private-synchronous / x-dunst-stack-tag
@@ -146,9 +148,7 @@ notif_invoke :: proc(id: u32, key: string) {
 }
 
 focus_app :: proc(n: ^Notification) {
-	// The window it came from, or at least its workspace.
-	if n.origin_con != 0 && sway_command(fmt.tprintf("[con_id=%d] focus", n.origin_con)) {return}
-	if n.origin_ws != "" && sway_command(fmt.tprintf(`workspace "%s"`, sway_quote(n.origin_ws))) {return}
+	if notif_go_origin(n) {return}
 	name := n.desktop != "" ? n.desktop : n.app
 	if name == "" {return}
 	// Desktop entries look like org.gnome.Nautilus or firefox; app_ids match either.
@@ -727,17 +727,38 @@ notifications_tick :: proc() {
 }
 
 // Popups on screen: the GPU-release re-exec waits for them.
+// The window a notification came from, or at least its workspace, while
+// sway still has them (an entry from history may name a workspace that's
+// gone: going there would make an empty one).
+notif_go_origin :: proc(n: ^Notification) -> bool {
+	window, workspace := notif_origin_alive(n)
+	if window && sway_command(fmt.tprintf("[con_id=%d] focus", n.origin_con)) {return true}
+	if workspace && sway_command(fmt.tprintf(`workspace "%s"`, sway_quote(n.origin_ws))) {return true}
+	return false
+}
+
+// Whether the origin window and workspace still exist (sway's last tree).
+notif_origin_alive :: proc(n: ^Notification) -> (window, workspace: bool) {
+	sync.guard(&sway.mu)
+	if n.origin_con != 0 {_, window = sway.views[n.origin_con]}
+	if n.origin_ws != "" {_, workspace = sway.ws_windows[n.origin_ws]}
+	return
+}
+
 notifications_busy :: proc() -> bool {
 	for n in notifs.list {if n.popup {return true}}
 	return false
 }
 
 // ---- History file ---------------------------------------------------------------
-// Binary: "WLN1", next_id, dnd, icons (key, rounded, ICON_PX² pixels), then
+// Binary: "WLN3", next_id, dnd, icons (key, rounded, ICON_PX² pixels), then
 // entries (id, time, urgency, read, value, icon key, app, summary, body,
-// desktop). Rewritten whole; only the last NOTIFY_HISTORY_DAYS are kept.
+// desktop, count, origin workspace). Rewritten whole; only the last
+// NOTIFY_HISTORY_DAYS are kept. Older files still load: WLN2 has no origin
+// workspace, WLN1 no counts either.
 
-NOTIFY_MAGIC :: 0x324e4c57 // "WLN2" (WLN1: no counts)
+NOTIFY_MAGIC :: 0x334e4c57 // "WLN3"
+NOTIFY_MAGIC_V2 :: 0x324e4c57
 NOTIFY_MAGIC_V1 :: 0x314e4c57
 
 @(private = "file")
@@ -782,6 +803,7 @@ notifications_encode :: proc(list: []^Notification, next_id: u32, dnd: bool, all
 		put_str(&b, n.body)
 		put_str(&b, n.desktop)
 		put(&b, u32(max(n.count, 1)))
+		put_str(&b, n.origin_ws)
 	}
 	return b[:]
 }
@@ -816,7 +838,7 @@ get_str :: proc(r: ^Reader) -> string {
 notifications_decode :: proc(data: []u8, cutoff: i64) -> (list: [dynamic]^Notification, next_id: u32, dnd: bool) {
 	r := Reader{data = data, ok = true}
 	magic := get(&r, u32)
-	if magic != NOTIFY_MAGIC && magic != NOTIFY_MAGIC_V1 {return}
+	if magic != NOTIFY_MAGIC && magic != NOTIFY_MAGIC_V2 && magic != NOTIFY_MAGIC_V1 {return}
 	next_id = get(&r, u32)
 	dnd = get(&r, u8) != 0
 	n_icons := int(get(&r, u32))
@@ -845,7 +867,8 @@ notifications_decode :: proc(data: []u8, cutoff: i64) -> (list: [dynamic]^Notifi
 		n.summary = get_str(&r)
 		n.body = get_str(&r)
 		n.desktop = get_str(&r)
-		n.count = magic == NOTIFY_MAGIC ? int(get(&r, u32)) : 1
+		n.count = magic != NOTIFY_MAGIC_V1 ? int(get(&r, u32)) : 1
+		if magic == NOTIFY_MAGIC {n.origin_ws = get_str(&r)}
 		if !r.ok || n.at < cutoff {
 			notif_free(n)
 			continue

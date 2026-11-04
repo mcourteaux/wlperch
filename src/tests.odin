@@ -498,7 +498,8 @@ test_notification_repeats :: proc(t: ^testing.T) {
 		pos += 4 + 8 + 1 + 1 + 4 + 8
 		for _ in 0 ..< 4 {pos += 2 + int((^u16)(&data[pos])^)}
 		append(&old, ..data[start:pos])
-		pos += 4
+		pos += 4 // count
+		pos += 2 + int((^u16)(&data[pos])^) // origin workspace (WLN3)
 	}
 	// A run from one app: the popup knows how many are new.
 	sig := mk(4, "Signal", "Bob")

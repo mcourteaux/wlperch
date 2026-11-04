@@ -53,3 +53,51 @@ test_notif_origin_pick :: proc(t: ^testing.T) {
 	ws, _ = notif_origin_pick(500, "Firefox", "", "Ping", "", urgent, parent)
 	testing.expect_value(t, ws, "2")
 }
+
+// The origin workspace is kept in the history file (WLN3); a WLN2 file,
+// from before, loads without one. The window isn't kept.
+@(test)
+test_notification_origin_history :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	mk :: proc(id: u32, summary, ws: string, con: i64 = 0) -> ^Notification {
+		n := new(Notification)
+		n^ = {id = id, app = "Shell", summary = summary, value = -1, count = 1, origin_ws = ws, origin_con = con}
+		return n
+	}
+	list := make([dynamic]^Notification)
+	append(&list, mk(1, "Build finished", "Pallas 1b", 42), mk(2, "From a script", ""))
+	data := notifications_encode(list[:], 2, false)
+	testing.expect_value(t, (^u32)(raw_data(data))^, u32(NOTIFY_MAGIC))
+	back, _, _ := notifications_decode(data, 0)
+	testing.expect_value(t, len(back), 2)
+	if len(back) == 2 {
+		testing.expect_value(t, back[0].origin_ws, "Pallas 1b")
+		testing.expect_value(t, back[0].origin_con, i64(0))
+		testing.expect_value(t, back[1].origin_ws, "")
+		testing.expect_value(t, back[1].summary, "From a script")
+	}
+
+	// A WLN2 file: the same entries, without the origin after each count.
+	old := make([dynamic]u8)
+	append(&old, ..data[:4])
+	(^u32)(raw_data(old[:]))^ = NOTIFY_MAGIC_V2
+	r := 4 + 4 + 1 + 4 // magic, next_id, dnd, icon count (no icons here)
+	append(&old, ..data[4:r])
+	append(&old, ..data[r:r + 4]) // entry count
+	pos := r + 4
+	for _ in 0 ..< 2 {
+		start := pos
+		pos += 4 + 8 + 1 + 1 + 4 + 8
+		for _ in 0 ..< 4 {pos += 2 + int((^u16)(&data[pos])^)}
+		pos += 4 // count
+		append(&old, ..data[start:pos])
+		pos += 2 + int((^u16)(&data[pos])^)
+	}
+	v2, _, _ := notifications_decode(old[:], 0)
+	testing.expect_value(t, len(v2), 2)
+	if len(v2) == 2 {
+		testing.expect_value(t, v2[0].summary, "Build finished")
+		testing.expect_value(t, v2[0].origin_ws, "")
+		testing.expect_value(t, v2[1].count, 1)
+	}
+}
