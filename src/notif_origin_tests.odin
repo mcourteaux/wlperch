@@ -101,3 +101,27 @@ test_notification_origin_history :: proc(t: ^testing.T) {
 		testing.expect_value(t, v2[1].count, 1)
 	}
 }
+
+@(test)
+test_notif_origin_claude_terminal :: proc(t: ^testing.T) {
+	parent :: proc(pid: i32) -> i32 {return 0}
+	// One kitty process with a music player and a Claude Code window on
+	// different workspaces: Claude's notification goes to Claude's window.
+	wins := []Play_Window {
+		{"1", "kitty", "Lucky — Dermot Kennedy", 3473, 152, false},
+		{"SilverNode 1", "kitty", "✳ resizable_file_open enomem", 3473, 9, false},
+	}
+	ws, con := notif_origin_pick(3473, "kitty", "", "Claude Code", "Claude is waiting for your input", wins, parent)
+	testing.expect_value(t, ws, "SilverNode 1")
+	testing.expect_value(t, con, 9)
+	// Two Claude windows: the one that's done (✳) rather than still working.
+	wins2 := []Play_Window {
+		{"Pallas 1", "kitty", "◐ refactor", 3473, 30, false},
+		{"Ghost 1", "kitty", "✳ tests", 3473, 31, false},
+	}
+	ws, con = notif_origin_pick(3473, "kitty", "", "Claude Code", "Claude is waiting for your input", wins2, parent)
+	testing.expect_value(t, ws, "Ghost 1")
+	// Not Claude's: still ambiguous.
+	ws, _ = notif_origin_pick(3473, "kitty", "", "Bell", "", wins, parent)
+	testing.expect_value(t, ws, "")
+}

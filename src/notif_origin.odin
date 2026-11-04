@@ -72,6 +72,20 @@ origin_choose :: proc(cands: []Play_Window, summary, body: string) -> (ws: strin
 	titled := make([dynamic]Play_Window, context.temp_allocator)
 	for w in cands {if origin_title_matches(w.title, summary, body) {append(&titled, w)}}
 	if w, c, ok := one(titled[:]); ok {return w, c}
+	// Claude Code's own notifications ("Claude Code"; the terminal sends
+	// them, so a terminal with several windows is ambiguous): the window
+	// whose title shows Claude, and of those the one that's done or waiting
+	// (✳) rather than still working.
+	if strings.contains(summary, "Claude") {
+		claude := make([dynamic]Play_Window, context.temp_allocator)
+		done := make([dynamic]Play_Window, context.temp_allocator)
+		for w in cands {
+			if claude_spinning(w.title) {append(&claude, w)}
+			if strings.has_prefix(w.title, "✳") {append(&claude, w); append(&done, w)}
+		}
+		if w, c, ok := one(claude[:]); ok {return w, c}
+		if w, c, ok := one(done[:]); ok {return w, c}
+	}
 	return
 }
 
